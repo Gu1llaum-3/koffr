@@ -6,11 +6,18 @@
 *.test
 *.out
 
-# Throwaway M0 probe code (see spikes/README.md)
-/spikes/**/data/
+# Probe artifacts and probe key material. The rig regenerates all of it; none
+# of it belongs in a public repository, least of all the private keys.
+/spikes/out/
+/spikes/tls/
+/spikes/ssh/
+/spikes/bastion/authorized_keys
 /spikes/**/*.tar
 /spikes/**/*.zst
 /spikes/**/*.age
+/spikes/**/*.key
+/spikes/**/*.crt
+/spikes/**/*.jsonl
 
 # Local working documents (French), deliberately kept out of the repository
 /cahier-des-charges.md

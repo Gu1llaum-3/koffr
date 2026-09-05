@@ -1,0 +1,98 @@
+# Throwaway rig for the M0 probes. Nothing here is production configuration:
+# passwords are literals on purpose so the probes stay reproducible.
+name: koffr-spikes
+
+services:
+  # P-002, P-005, P-006, P-007
+  pg17:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: probe
+      POSTGRES_DB: probe
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      # P-005: incremental backup needs the WAL summarizer.
+      - -c
+      - summarize_wal=on
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - checkpoint_timeout=30min
+    volumes:
+      - pg17data:/var/lib/postgresql/data
+      - pg17tblspc:/tablespaces      # P-007
+      - ./out:/out
+    ports: ["55432:5432"]
+    shm_size: 1gb
+
+  # P-001
+  mariadb11:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: probe
+      MARIADB_DATABASE: probe
+    command:
+      - --innodb-buffer-pool-size=1G
+      - --log-bin=mariadb-bin
+      - --binlog-format=ROW
+    volumes:
+      - maria11data:/var/lib/mysql
+      - ./out:/out
+    ports: ["53306:3306"]
+
+  # P-004: this one is reachable ONLY through the bastion.
+  pg-hidden:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: probe
+      POSTGRES_DB: probe
+    volumes:
+      - ./tls:/tls:ro
+    # PostgreSQL refuses a key it does not own, and a bind mount carries the
+    # host's uid, so the material is installed with the right ownership before
+    # the real entrypoint takes over.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        install -o postgres -g postgres -m 0600 /tls/server.key /var/lib/postgresql/server.key
+        install -o postgres -g postgres -m 0644 /tls/server.crt /var/lib/postgresql/server.crt
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_cert_file=/var/lib/postgresql/server.crt \
+          -c ssl_key_file=/var/lib/postgresql/server.key
+    networks: [private]
+    profiles: [p004]
+
+  # Sits where Koffr sits: public network only, no route to pg-hidden.
+  koffr-client:
+    build: ./client
+    container_name: koffr-client
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./out:/out
+      - ./ssh:/ssh:ro
+      - ./tls:/tls:ro
+    networks: [public]
+    profiles: [p004]
+
+  bastion:
+    build: ./bastion
+    networks: [public, private]
+    ports: ["52222:22"]
+    profiles: [p004]
+
+volumes:
+  pg17data:
+  pg17tblspc:
+  maria11data:
+
+networks:
+  public:
+  private:
+    internal: true

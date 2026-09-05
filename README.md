@@ -56,7 +56,7 @@ recorded in [`adr/`](./adr):
 
 ## Building
 
-Requires Go 1.24 or later.
+Requires Go 1.26 or later.
 
 ```sh
 make build     # bin/koffr

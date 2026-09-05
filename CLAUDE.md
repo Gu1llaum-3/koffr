@@ -7,6 +7,9 @@ Koffr**.
 The project is at milestone **M0**: interfaces only, nothing implemented. Do not
 assume a package has behaviour just because its interface exists.
 
+The M0 probes are done and their findings are binding: read
+`docs/spikes/M0-report.md` before implementing any of the pipeline.
+
 ## Non-negotiable rules
 
 ### Language
@@ -59,7 +62,8 @@ When a design question comes up, these settle it. They are not aspirations.
 
 ## Code conventions
 
-- Go 1.24. `CGO_ENABLED=0` always: a single statically linked binary is a
+- Go 1.26 (required by `golang.org/x/crypto`, which `internal/executor/ssh`
+  depends on). `CGO_ENABLED=0` always: a single statically linked binary is a
   requirement (ENF-030), which rules out any C-backed dependency.
 - Errors wrap with `%w` and carry a class (`catalog.ErrorClass`). The class
   decides whether an operation is retried; the message never does.
@@ -141,3 +145,28 @@ make vuln      # govulncheck
 - Restoring a MariaDB physical backup requires `--prepare`, which needs the
   uncompressed backup on disk. This is the tool's design, not something to work
   around.
+
+## Rules established by the M0 probes
+
+These are measured facts, not opinions. `docs/spikes/M0-report.md` has the
+evidence.
+
+- **Streamed physical backup requires a single tablespace.** `pg_basebackup`
+  refuses `--pgdata=-` on a cluster with a non-default tablespace. `Probe` must
+  count tablespaces and reject the configuration at load time. It also creates
+  the output file before failing, so never create a destination object before
+  the source stream has produced its first byte.
+- **Skip `pg_wal/<24 hex chars>` when reconstructing a manifest.** WAL segments
+  carried in the tar are absent from `backup_manifest`; `WAL-Ranges` covers
+  them. Everything else under `pg_wal/` belongs in the manifest.
+- **Never trust `tar.Header.Format`.** It reports `<unknown>` on PostgreSQL's
+  archives even though they are strict USTAR.
+- **Do not add buffering around age.** A 1 MiB buffer measurably slows the
+  chain: zstd already emits large blocks. age sustains 1.3 GiB/s on its own.
+- **Write `.pgpass` after the tunnel is bound.** libpq matches it on host *and*
+  port, and the tunnel port is chosen by the kernel. Writing it earlier fails
+  with a misleading "no password supplied". libpq verifies the certificate
+  against the `-h` value, not `PGHOSTADDR`, so TLS `verify-full` keeps working.
+- **A generated `RESTORE.md` must not use `set -o pipefail`.** `pg_restore`
+  stops reading at the archive end marker, so the decompressor exits 141
+  (SIGPIPE) on a perfectly successful restore.
