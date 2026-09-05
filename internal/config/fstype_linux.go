@@ -23,7 +23,10 @@ const (
 // and most of what runs on it is local. Calling every FUSE mount unsafe would
 // make the check noisy enough to be turned off.
 func fsTypeName(st *unix.Statfs_t) string {
-	switch int64(st.Type) {
+	// Compared against untyped constants rather than converted: Statfs_t.Type
+	// is int64 on amd64 and arm64 but not on every architecture, and a
+	// conversion that is redundant on one is a lint failure there.
+	switch st.Type {
 	case nfsSuperMagic:
 		return "nfs"
 	case smbSuperMagic:

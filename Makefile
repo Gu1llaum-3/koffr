@@ -25,7 +25,7 @@ define tool
 	fi
 endef
 
-.PHONY: all build test cover lint vet vuln cross clean tidy hooks ci
+.PHONY: all build test cover lint lint-only vet vuln cross clean tidy hooks ci
 
 all: lint test build
 
@@ -41,7 +41,19 @@ cover:
 vet:
 	go vet ./...
 
+# Linted for the platform Koffr ships on as well as the one it is written on.
+#
+# Build-tagged files are invisible to a linter running under another GOOS, and
+# CI found a Linux-only finding this cannot see otherwise. Discovering that
+# there costs a round trip; discovering it here costs two seconds.
 lint: vet
+	$(call tool,golangci-lint,run)
+	@echo "linting for linux/amd64"
+	@GOOS=linux GOARCH=amd64 $(MAKE) --no-print-directory lint-only
+	@echo "linting for linux/arm64"
+	@GOOS=linux GOARCH=arm64 $(MAKE) --no-print-directory lint-only
+
+lint-only:
 	$(call tool,golangci-lint,run)
 
 vuln:

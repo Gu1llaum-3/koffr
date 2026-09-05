@@ -120,10 +120,15 @@ make hooks     # install the git hooks, once per clone
 make build     # bin/koffr
 make test      # go test -race ./...
 make cover     # coverage
-make lint      # go vet + golangci-lint
+make lint      # go vet + golangci-lint, for this host and for linux/amd64+arm64
 make cross     # linux/amd64 and linux/arm64, CGO disabled
 make vuln      # govulncheck
 ```
+
+`make lint` runs golangci-lint three times: for this machine, and for
+linux/amd64 and linux/arm64. Build-tagged files are invisible to a linter
+running under another GOOS, and CI caught a Linux-only finding a macOS run
+could not see. Two seconds here beats a round trip there.
 
 `make ci` runs **everything the GitHub workflow runs**, locally, in about four
 seconds. Nothing in the pipeline needs GitHub, so a red build should never be a
