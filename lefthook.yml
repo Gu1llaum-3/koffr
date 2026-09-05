@@ -1,0 +1,66 @@
+# Git hooks for Koffr. Install them with `make hooks`.
+#
+# The split is by cost, measured rather than guessed. Everything CI runs takes
+# under four seconds on this codebase, so the question is not what is affordable
+# but what is worth interrupting a commit for.
+#
+#   pre-commit  formatting, linting and key material -- things that are cheap
+#               and that should never enter history in the first place.
+#   pre-push    tests with the race detector, cross-compilation and
+#               vulnerabilities -- things that should never reach the remote.
+#
+# A hook that is slow is a hook that gets bypassed, and a bypassed hook is worse
+# than none because it produces false confidence. Keep pre-commit under a
+# second.
+#
+# `git commit --no-verify` skips these deliberately. That is a valid escape
+# hatch, not a failure of the setup.
+
+min_version: 2.0.0
+
+pre-commit:
+  parallel: true
+  # During a merge or rebase the content is not the author's to fix, and a
+  # failing hook turns a conflict resolution into a fight with the tooling.
+  skip:
+    - merge
+    - rebase
+  jobs:
+    - name: gofmt
+      glob: "*.go"
+      run: gofmt -l -w {staged_files}
+      stage_fixed: true
+
+    - name: lint
+      glob: "*.go"
+      # Whole-repo rather than per-file: golangci-lint needs the package to do
+      # type-aware analysis, and it costs 0.4s here anyway.
+      run: golangci-lint run
+
+    - name: vet
+      glob: "*.go"
+      run: go vet ./...
+
+    - name: secrets
+      run: ./scripts/check-secrets.sh
+
+commit-msg:
+  jobs:
+    - name: format
+      run: ./scripts/check-commit-msg.sh {1}
+
+pre-push:
+  parallel: false
+  jobs:
+    # -count=1 defeats the test cache: a push is exactly when a cached pass from
+    # before the last edit is worth distrusting.
+    - name: test
+      run: go test -count=1 -race ./...
+
+    # ENF-030: the release artifact is a single statically linked binary, and a
+    # dependency that quietly needs cgo would only surface at release time.
+    - name: cross-compile
+      run: make cross
+
+    - name: govulncheck
+      run: make vuln

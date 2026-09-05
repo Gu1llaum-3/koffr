@@ -56,14 +56,22 @@ recorded in [`adr/`](./adr):
 
 ## Building
 
-Requires Go 1.26 or later.
+Requires Go 1.26 or later. The full toolchain is pinned in `mise.toml`.
 
 ```sh
+mise install   # go, golangci-lint, lefthook, govulncheck
+make hooks     # install the git hooks, once per clone
+make ci        # everything CI runs, locally, in about 4 seconds
+
 make build     # bin/koffr
 make test
-make lint
 make cross     # linux/amd64 and linux/arm64, statically linked
 ```
+
+Git hooks are managed by [lefthook](https://lefthook.dev) and split by cost:
+`pre-commit` formats, lints and refuses key material in under a second;
+`pre-push` runs the race detector, cross-compiles and checks for known
+vulnerabilities. `--no-verify` skips them when you need it to.
 
 ## Prior art
 

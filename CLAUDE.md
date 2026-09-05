@@ -114,26 +114,52 @@ Never build a key by hand elsewhere.
 ## Commands
 
 ```sh
+make ci        # everything the GitHub workflow runs, in about 4 seconds
+make hooks     # install the git hooks, once per clone
+
 make build     # bin/koffr
 make test      # go test -race ./...
-make cover     # coverage, scoped to internal/
+make cover     # coverage
 make lint      # go vet + golangci-lint
 make cross     # linux/amd64 and linux/arm64, CGO disabled
 make vuln      # govulncheck
 ```
 
-Run `make lint` before pushing. golangci-lint v2 is installed locally, and CI
-runs the same configuration, so a lint failure discovered in CI is a wasted
-round trip.
+`make ci` runs **everything the GitHub workflow runs**, locally, in about four
+seconds. Nothing in the pipeline needs GitHub, so a red build should never be a
+surprise. Discovering a lint failure in CI is a wasted round trip.
 
-Two local quirks worth knowing:
+Git hooks are managed by lefthook; run `make hooks` once per clone. They are
+split by cost:
 
-- The auto-downloaded Go toolchain module has no `covdata`, so `-cover` warns on
-  packages that have no tests. That is why `make cover` is scoped to
-  `internal/`. CI installs a full toolchain and is unaffected.
-- Golden files are regenerated with `UPDATE_GOLDEN=1 go test ./...`. Review the
-  diff before committing: a golden test that is updated without being read is a
-  test that has stopped testing anything.
+| Hook | Checks | Budget |
+|---|---|---|
+| `pre-commit` | gofmt (auto-fixes and re-stages), golangci-lint, go vet, key material | < 1 s |
+| `commit-msg` | subject length, no trailing period, blank line before the body | instant |
+| `pre-push` | `go test -count=1 -race`, cross-compilation, govulncheck | a few seconds |
+
+`--no-verify` skips them. That is a valid escape hatch, not a failure of the
+setup; say why in the commit message when you use it.
+
+The hook scripts are themselves tested (`test/hooks`). They are safety controls,
+and the secret guard already failed open once: BSD grep read a pattern starting
+with `-` as an option, so the private key armour it exists to catch passed
+silently. A control that fails open is worse than no control, because it
+produces confidence instead of protection.
+
+The toolchain is pinned in `mise.toml`: Go, golangci-lint, lefthook and
+govulncheck. Run `mise install` once, and `make` resolves each tool from PATH or
+from mise, whichever has it. A missing tool is a hard failure rather than a
+skip: a security check that reports success because it never ran is the same
+failure mode as a backup that reports success because it never started.
+
+Without mise the Go toolchain is downloaded on demand, and that module ships
+without `covdata`, so `-cover` warns on packages that have no tests. Using the
+pinned toolchain avoids it.
+
+Golden files are regenerated with `UPDATE_GOLDEN=1 go test ./...`. Review the
+diff before committing: a golden test updated without being read is a test that
+has stopped testing anything.
 
 ## Things that are settled — do not reopen without an ADR
 

@@ -1,0 +1,17 @@
+# Toolchain for Koffr, pinned so that a fresh clone runs the same checks as CI.
+#
+#   mise install     fetch everything below
+#   make hooks       install the git hooks
+#   make ci          run everything the GitHub workflow runs
+#
+# Versions are pinned rather than floating: a linter that changes rules on its
+# own turns an unrelated commit into a red build.
+[tools]
+go = "1.26.0"
+golangci-lint = "2.13.2"
+lefthook = "2.1.4"
+"go:golang.org/x/vuln/cmd/govulncheck" = "latest"
+
+[env]
+# ENF-030: the release artifact is a single statically linked binary.
+CGO_ENABLED = "0"

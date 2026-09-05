@@ -8,7 +8,24 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 export CGO_ENABLED := 0
 
-.PHONY: all build test cover lint vet vuln cross clean tidy
+# Tools live either on PATH or under mise (see mise.toml). Resolving both means
+# `make ci` behaves the same whether or not mise is activated in this shell.
+#
+# A missing tool is a hard failure, not a skip. A security check that reports
+# success because it did not run is the same failure mode as a backup that
+# reports success because it never started.
+define tool
+	@if command -v $(1) >/dev/null 2>&1; then \
+		$(1) $(2); \
+	elif command -v mise >/dev/null 2>&1 && mise which $(1) >/dev/null 2>&1; then \
+		mise exec -- $(1) $(2); \
+	else \
+		echo "$(1) is not installed. Run 'mise install' (see mise.toml)." >&2; \
+		exit 1; \
+	fi
+endef
+
+.PHONY: all build test cover lint vet vuln cross clean tidy hooks ci
 
 all: lint test build
 
@@ -18,23 +35,17 @@ build:
 test:
 	go test -race ./...
 
-# Coverage is scoped to internal/: the auto-downloaded Go toolchain module ships
-# without the covdata tool, which -cover needs for packages that have no tests.
 cover:
-	go test -race -cover ./internal/...
+	go test -race -cover ./...
 
 vet:
 	go vet ./...
 
 lint: vet
-	@command -v golangci-lint >/dev/null 2>&1 \
-		&& golangci-lint run \
-		|| echo "golangci-lint not installed, skipping (see .golangci.yml)"
+	$(call tool,golangci-lint,run)
 
 vuln:
-	@command -v govulncheck >/dev/null 2>&1 \
-		&& govulncheck ./... \
-		|| echo "govulncheck not installed, skipping"
+	$(call tool,govulncheck,./...)
 
 # Cross-compilation targets Koffr actually supports (ENF-030).
 cross:
@@ -43,6 +54,15 @@ cross:
 
 tidy:
 	go mod tidy
+
+# Everything the GitHub workflow runs, locally. Nothing in the pipeline needs
+# GitHub, so a red build should never be a surprise.
+ci: lint test cross vuln
+	@echo "all CI checks passed locally"
+
+# Install the git hooks (see lefthook.yml). Run once per clone.
+hooks:
+	$(call tool,lefthook,install)
 
 clean:
 	rm -rf bin
