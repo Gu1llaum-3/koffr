@@ -8,10 +8,28 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
-	"os"
 )
+
+// ExitError reports a process that ran and failed, as opposed to one that could
+// not be started or was killed.
+//
+// The distinction drives ENF-011: a non-zero exit is the source's own failure
+// and is retried with backoff, while a failure to start is a configuration
+// problem and is not retried at all.
+type ExitError struct {
+	Code int
+	// Path is the program that failed. Args are deliberately absent: an error
+	// message is exactly where a credential passed the wrong way becomes a leak
+	// in the logs (ENF-021).
+	Path string
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("%s exited with status %d", e.Path, e.Code)
+}
 
 // Executor reaches a target machine. Implementations: local, SSH, and later a
 // reverse-connected agent.
@@ -48,15 +66,29 @@ type Command struct {
 
 // Process is a running command on the target.
 type Process interface {
+	// Stdout carries the backup stream. Stderr carries diagnostics, and for
+	// pg_basebackup also the LSNs, so the two are never merged.
 	Stdout() io.Reader
 	Stderr() io.Reader
 
-	// Wait returns the process outcome. It must be safe to call after the
-	// caller has stopped reading Stdout, so teardown never deadlocks.
+	// Wait reports the outcome, returning an *ExitError for a process that ran
+	// and failed.
+	//
+	// It must return even when the caller has stopped reading Stdout. That is
+	// not a nicety: when the storage branch fails, the pipeline abandons stdout
+	// and tears down, and a Wait that blocked on an unread pipe would hang the
+	// job instead of reporting the storage failure. Calling it twice is
+	// allowed and reports the same outcome.
 	Wait() error
-
-	Signal(sig os.Signal) error
 }
+
+// Deliberately absent: a Signal method.
+//
+// Nothing needs one yet -- the pipeline stops a process by cancelling its
+// context. M2 will want a graceful stop for pg_receivewal, so that it finishes
+// the segment in flight rather than losing it, and it will arrive then with a
+// contract test of its own. An interface method no caller uses is a method no
+// implementation is held to.
 
 // Capabilities reports what an executor supports.
 type Capabilities struct {
@@ -76,6 +108,14 @@ type Capabilities struct {
 type Registry interface {
 	Get(ctx context.Context, targetID string) (Executor, error)
 
-	// Register is used by a listener accepting inbound agent connections.
+	// AddFactory says how to build an executor for a target, for the pull-mode
+	// transports: local and SSH.
+	AddFactory(targetID string, f Factory) error
+
+	// Register installs an already-connected executor, as a listener accepting
+	// inbound agent connections would.
 	Register(targetID string, ex Executor) error
+
+	// Close releases every executor handed out.
+	Close() error
 }
