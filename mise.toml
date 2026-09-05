@@ -7,7 +7,10 @@
 # Versions are pinned rather than floating: a linter that changes rules on its
 # own turns an unrelated commit into a red build.
 [tools]
-go = "1.26.0"
+# Patch releases matter: govulncheck flagged four standard-library issues in
+# 1.26.0, all fixed by 1.26.6 and later. Bumping this is the response to that check, so it
+# stays an explicit, reviewable commit rather than a silent float.
+go = "1.26.8"
 golangci-lint = "2.13.2"
 lefthook = "2.1.4"
 "go:golang.org/x/vuln/cmd/govulncheck" = "latest"

@@ -1,0 +1,75 @@
+package testutil
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// RequireDockerEnv is the variable CI sets so that a missing container runtime
+// fails the build instead of quietly skipping the integration tests.
+//
+// A skipped test reads as a pass in a summary. For the storage and source
+// backends, skipping everywhere would mean shipping a repository whose S3
+// support was never once exercised.
+const RequireDockerEnv = "KOFFR_REQUIRE_DOCKER"
+
+// EnsureDockerHost points testcontainers at whichever daemon the docker CLI is
+// already talking to.
+//
+// testcontainers looks for a socket at the conventional paths, which is wrong
+// under Colima, Rancher Desktop, Podman and any non-default Docker context. The
+// CLI already knows the answer, so asking it removes a whole class of "works on
+// my machine" and keeps the endpoint out of the repository, where it would be
+// one developer's home directory.
+//
+// It returns a reason to skip, or "" if a daemon was found.
+func EnsureDockerHost() string {
+	if os.Getenv("DOCKER_HOST") != "" {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "docker", "context", "inspect",
+		"--format", "{{.Endpoints.docker.Host}}").Output()
+	if err != nil {
+		return fmt.Sprintf("no docker context available: %v", err)
+	}
+	host := strings.TrimSpace(string(out))
+	if host == "" {
+		return "docker context reported no endpoint"
+	}
+
+	if err := os.Setenv("DOCKER_HOST", host); err != nil {
+		return fmt.Sprintf("set DOCKER_HOST: %v", err)
+	}
+	// Inside the VM the socket is at the conventional path whatever it is
+	// outside. Ryuk, the reaper testcontainers starts, mounts it from there.
+	if os.Getenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE") == "" {
+		if err := os.Setenv("TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE", "/var/run/docker.sock"); err != nil {
+			return fmt.Sprintf("set TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: %v", err)
+		}
+	}
+	return ""
+}
+
+// SkipOrFailWithoutDocker decides what a missing container runtime means.
+//
+// Locally it is a skip: not having Docker running is a normal state for a
+// laptop. Under CI, where RequireDockerEnv is set, it is a failure, because a
+// silently skipped integration suite is indistinguishable from a passing one.
+func SkipOrFailWithoutDocker(reason string) (skip bool, fatal string) {
+	if reason == "" {
+		return false, ""
+	}
+	if os.Getenv(RequireDockerEnv) != "" {
+		return false, fmt.Sprintf(
+			"%s is set, so a container runtime is required: %s", RequireDockerEnv, reason)
+	}
+	return true, ""
+}

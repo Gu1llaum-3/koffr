@@ -153,13 +153,26 @@ from mise, whichever has it. A missing tool is a hard failure rather than a
 skip: a security check that reports success because it never ran is the same
 failure mode as a backup that reports success because it never started.
 
-Without mise the Go toolchain is downloaded on demand, and that module ships
-without `covdata`, so `-cover` warns on packages that have no tests. Using the
-pinned toolchain avoids it.
+`go.mod` also carries a `toolchain` directive, so the pinned Go version applies
+even when mise is not activated. Bumping it is how we respond to a govulncheck
+finding: four standard-library issues were open in 1.26.0 and closed by 1.26.6,
+and the check is what surfaced them.
 
 Golden files are regenerated with `UPDATE_GOLDEN=1 go test ./...`. Review the
 diff before committing: a golden test updated without being read is a test that
 has stopped testing anything.
+
+### Integration tests and containers
+
+Tests that need a real PostgreSQL, MinIO or sshd use testcontainers.
+`testutil.EnsureDockerHost` asks the docker CLI which daemon it is talking to,
+so Colima, Rancher Desktop, Podman and any non-default context work without
+anyone exporting `DOCKER_HOST`.
+
+Locally, a missing daemon skips those tests. In CI, `KOFFR_REQUIRE_DOCKER=1`
+turns it into a failure: a silently skipped integration suite is
+indistinguishable from a passing one, and that is how a backend ships without
+ever having been exercised.
 
 ## Things that are settled — do not reopen without an ADR
 

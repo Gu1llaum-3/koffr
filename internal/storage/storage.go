@@ -6,12 +6,35 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"iter"
 	"time"
 )
 
+// ErrNotFound is returned when a key does not exist.
+//
+// It is a sentinel rather than a per-backend error because retention, catalog
+// rebuilding and restore all have to distinguish "absent" from "the destination
+// is broken", and getting that wrong in either direction is damaging: treating
+// a broken destination as absent deletes history, and treating an absent object
+// as broken stops a prune that should have run.
+var ErrNotFound = errors.New("storage: object not found")
+
 // Storage is an object store.
+//
+// The contract every implementation must satisfy is executable: see
+// storagetest.Suite. Three of its clauses are worth stating here because they
+// are what a backup depends on and what a naive implementation gets wrong.
+//
+//   - Put is atomic. An object becomes visible complete or not at all. A reader
+//     must never observe a half-written backup.
+//   - A failed Put leaves nothing behind, and leaves any previous object at
+//     that key untouched (ENF-010). P-007 found pg_basebackup creating its
+//     output file before failing its own preflight check; a backend that
+//     mirrored that would store an empty object and call it a backup.
+//   - Delete is idempotent, so a prune interrupted between removing an object
+//     and recording the removal can be retried.
 type Storage interface {
 	// Put streams r to key. It must not buffer the whole object: implementations
 	// use multipart upload with a bounded part size (ENF-001).
@@ -40,8 +63,11 @@ type PutOptions struct {
 	Immutable   bool
 	RetainUntil time.Time
 
-	// OnProgress receives the running byte count. It is called from the upload
-	// goroutine and must not block.
+	// OnProgress receives the running count of bytes read from the source, and
+	// is called at least once with the final total. It feeds the byte-stall
+	// watcher (EF-095), which is what turns a hung upload into a failed job
+	// rather than one that never ends. It is called from the upload goroutine
+	// and must not block.
 	OnProgress func(bytes int64)
 }
 
