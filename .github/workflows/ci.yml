@@ -65,6 +65,11 @@ jobs:
           go-version: '1.24'
           cache: false
       - name: govulncheck
+        env:
+          # setup-go v6 pins GOTOOLCHAIN=local, and govulncheck now requires a
+          # newer Go than the project targets. Let the tool install pull the
+          # toolchain it needs; Koffr itself still builds with go-version above.
+          GOTOOLCHAIN: auto
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
