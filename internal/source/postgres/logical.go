@@ -454,11 +454,15 @@ func (s *logicalStream) sidecars() (map[string][]byte, error) {
 	}()
 
 	globals, readErr := io.ReadAll(proc.Stdout())
-	waitErr := proc.Wait()
+
+	// Both streams are read to EOF before Wait, never alongside it: Wait may
+	// close the read ends, and the loser of that race is the stderr that is the
+	// only explanation of a failure an operator will get.
 	stderr := <-stderrCh
+	waitErr := proc.Wait()
 
 	if waitErr != nil {
-		return nil, fmt.Errorf("postgres: pg_dumpall: %w: %s", waitErr, lastLines(stderr, 3))
+		return nil, fmt.Errorf("postgres: pg_dumpall: %w: %s", waitErr, lastLines(stderr, 6))
 	}
 	if readErr != nil {
 		return nil, fmt.Errorf("postgres: read globals: %w", readErr)

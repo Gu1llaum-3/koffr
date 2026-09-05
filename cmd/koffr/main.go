@@ -1,24 +1,26 @@
 // Command koffr backs up PostgreSQL and MariaDB.
 //
-// Milestone M0 ships interfaces only: this entry point exists so the build and
-// the cross-compilation checks have something to produce. The CLI itself is
-// built in M1.
+// Everything lives in internal/cli. This file exists to own the two things a
+// process owns and a library must not: the streams, and the exit code.
 package main
 
 import (
-	"fmt"
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/Gu1llaum-3/koffr/internal/cli"
 )
 
-// version is set at build time via -ldflags.
-var version = "dev"
-
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
-		fmt.Println("koffr", version)
-		return
-	}
+	// A cancelled context is how a backup stops cleanly: it kills pg_dump,
+	// which releases whatever it was holding on the server. Leaving that to the
+	// default SIGINT handler would kill Koffr and leave the dump running.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	fmt.Fprintln(os.Stderr, "koffr", version, "- not implemented yet (milestone M0: interfaces only)")
-	os.Exit(2)
+	os.Exit(cli.Run(ctx, os.Args[1:], cli.Streams{
+		In: os.Stdin, Out: os.Stdout, Err: os.Stderr,
+	}))
 }

@@ -484,3 +484,61 @@ func keys(m map[string][]byte) []string {
 	}
 	return out
 }
+
+// The .pgpass database field is a wildcard, and a real server is the only thing
+// that can prove it has to be.
+//
+// libpq matches on host, port, database AND user, so a line naming one database
+// is a credential for exactly one connection. Two things Koffr genuinely does
+// need more than that: pg_dumpall reads the cluster through a maintenance
+// database, and a restore targets a database named at the command line, which
+// is never the one that was dumped. Both failed with "no password supplied"
+// before this, on a configuration that was otherwise correct.
+func TestCredentials_WorkForADatabaseOtherThanTheSource(t *testing.T) {
+	skipUnlessReady(t)
+
+	const other = "koffr_other_db"
+	admin(t, "DROP DATABASE IF EXISTS "+other, "CREATE DATABASE "+other)
+	t.Cleanup(func() {
+		// t.Context() is cancelled before cleanups run, so this uses its own.
+		conn, err := pgx.Connect(context.Background(), adminDSN())
+		if err == nil {
+			_, _ = conn.Exec(context.Background(), "DROP DATABASE IF EXISTS "+other)
+			_ = conn.Close(context.Background())
+		}
+	})
+
+	cfg := baseConfig()
+	cfg.ToolRunner = localExec(t)
+	session, err := cfg.Open(t.Context(), localExec(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	psql, err := cfg.ResolveBin("psql")
+	require.NoError(t, err)
+
+	// The session was opened for the source's own database; this connects to a
+	// different one with the same credentials file.
+	proc, err := cfg.ToolRunner.Start(t.Context(), executor.Command{
+		Path: psql,
+		Args: []string{
+			"--host=" + session.Host(),
+			"--port=" + strconv.Itoa(session.Port()),
+			"--username=" + cfg.User,
+			"--dbname=" + other,
+			"--no-password",
+			"--tuples-only",
+			"--command=SELECT current_database()",
+		},
+		Env: session.Env(psql),
+	})
+	require.NoError(t, err)
+
+	out, err := io.ReadAll(proc.Stdout())
+	require.NoError(t, err)
+	stderr, err := io.ReadAll(proc.Stderr())
+	require.NoError(t, err)
+	require.NoError(t, proc.Wait(), "psql said: %s", stderr)
+
+	assert.Equal(t, other, strings.TrimSpace(string(out)))
+}

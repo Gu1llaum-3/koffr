@@ -28,6 +28,11 @@ type Fetcher struct {
 	Opener  crypto.Opener
 }
 
+// ErrDigestMismatch means the stored bytes are not the ones that were backed
+// up. It is a distinct error because it is a distinct situation: the backup
+// exists, and it cannot be trusted, which is worse than it being missing.
+var ErrDigestMismatch = errors.New("digest mismatch")
+
 // FetchOptions tunes a single fetch.
 type FetchOptions struct {
 	// Raw stops after decryption, handing over the bytes `age -d` would
@@ -61,20 +66,47 @@ func (f Fetcher) Manifest(ctx context.Context, b storage.Backup) (manifest.Manif
 
 // Details reads the encrypted sidecar: database and relation names, which are
 // exactly the part a repository holder should not be able to read.
-func (f Fetcher) Details(ctx context.Context, b storage.Backup) (manifest.Details, error) {
+//
+// It takes the manifest rather than guessing, because the codec is recorded
+// there and assuming one is how a compressed sidecar comes back as bytes that
+// are not JSON.
+func (f Fetcher) Details(ctx context.Context, b storage.Backup, m manifest.Manifest) (manifest.Details, error) {
+	obj, ok := objectNamed(m, DetailsObject)
+	if !ok {
+		return manifest.Details{}, fmt.Errorf("restore: backup %s lists no %s", m.BackupID, DetailsObject)
+	}
 	var buf writeCounter
-	if _, err := f.Object(ctx, manifest.Object{Key: b.DetailsKey(), Codec: "none"}, &buf, FetchOptions{}); err != nil {
+	if _, err := f.Object(ctx, b.Prefix(), obj, &buf, FetchOptions{}); err != nil {
 		return manifest.Details{}, err
 	}
 	d, err := manifest.DecodeDetails(&buf)
 	if err != nil {
-		return manifest.Details{}, fmt.Errorf("restore: %s: %w", b.DetailsKey(), err)
+		return manifest.Details{}, fmt.Errorf("restore: %s%s: %w", b.Prefix(), obj.Key, err)
 	}
 	return d, nil
 }
 
+// DetailsObject is the sidecar's filename inside a backup.
+const DetailsObject = "details.json.age"
+
+// objectNamed finds an object by filename.
+func objectNamed(m manifest.Manifest, name string) (manifest.Object, bool) {
+	for _, o := range m.Objects {
+		if o.Key == name {
+			return o, true
+		}
+	}
+	return manifest.Object{}, false
+}
+
 // Object streams one object into w and returns the number of plaintext bytes
 // written.
+//
+// The prefix is separate from the object because manifest keys are filenames,
+// not repository keys: RESTORE.md tells a reader to download the objects and
+// then names them as local files, and a manifest that embedded the prefix would
+// make every command in that document wrong. The prefix comes from
+// storage.Backup.Prefix(), and passing it is not optional.
 //
 // The digest is verified as the object streams, which means a mismatch is
 // reported only once the last byte has been read -- by which time w has already
@@ -82,13 +114,16 @@ func (f Fetcher) Details(ctx context.Context, b storage.Backup) (manifest.Detail
 // buffering an 80 GiB dump is the thing this tool exists not to do. Callers
 // that cannot unwind (restoring straight into a live database) must treat the
 // error as "this restore is not trustworthy", not as a warning.
-func (f Fetcher) Object(ctx context.Context, o manifest.Object, w io.Writer, opt FetchOptions) (int64, error) {
+func (f Fetcher) Object(
+	ctx context.Context, prefix string, o manifest.Object, w io.Writer, opt FetchOptions,
+) (int64, error) {
 	if o.Key == "" {
 		return 0, errors.New("restore: fetch needs an object key")
 	}
-	rc, err := f.Storage.Get(ctx, o.Key)
+	key := prefix + o.Key
+	rc, err := f.Storage.Get(ctx, key)
 	if err != nil {
-		return 0, fmt.Errorf("restore: fetch %s: %w", o.Key, err)
+		return 0, fmt.Errorf("restore: fetch %s: %w", key, err)
 	}
 	defer func() { _ = rc.Close() }()
 
@@ -104,44 +139,54 @@ func (f Fetcher) Object(ctx context.Context, o manifest.Object, w io.Writer, opt
 		src = &progressReader{r: src, report: opt.OnProgress}
 	}
 
+	// Every failure below goes through checkDigest, and that is the point.
+	//
+	// age authenticates what it reads, so a damaged object usually fails there
+	// first: "corrupted or tampered with" at the header, or a failed chunk
+	// mid-stream. Those are two possibilities an operator cannot act on
+	// differently. Comparing the stored bytes against the manifest separates
+	// them -- if they do not match, the repository is damaged, and nobody needs
+	// to go looking for an attacker.
 	plain, err := f.Opener.Open(src)
 	if err != nil {
-		return 0, fmt.Errorf("restore: decrypt %s: %w", o.Key, err)
+		return 0, checkDigest(src, digest, key, o.SHA256,
+			fmt.Errorf("restore: decrypt %s: %w", key, err))
 	}
 	if !opt.Raw && o.Codec == "zstd" {
 		dec, err := zstd.NewReader(plain)
 		if err != nil {
-			return 0, fmt.Errorf("restore: decompress %s: %w", o.Key, err)
+			return 0, checkDigest(src, digest, key, o.SHA256,
+				fmt.Errorf("restore: decompress %s: %w", key, err))
 		}
 		defer dec.Close()
 		plain = dec
 	}
 
 	n, copyErr := io.Copy(w, plain)
-
-	// The digest covers every stored byte, so it can only be checked once the
-	// reader is exhausted. Decompression stops at the frame's end marker and
-	// may leave trailing bytes unread, so drain first: a digest computed over
-	// part of an object would pass on a truncated one.
-	//
-	// This runs even when the copy failed, and that ordering is the point. age
-	// authenticates every chunk, so a damaged object usually fails here first,
-	// with "corrupted or tampered with" -- two possibilities an operator cannot
-	// act on differently. The digest separates them: if the stored bytes do not
-	// match the manifest, the repository is damaged, and nobody needs to go
-	// looking for an attacker.
-	_, _ = io.Copy(io.Discard, src)
-	if digest != nil {
-		if got := hex.EncodeToString(digest.Sum(nil)); got != o.SHA256 {
-			return n, fmt.Errorf(
-				"restore: %s: digest mismatch, the object in the repository is not the one that was "+
-					"backed up (manifest %s, read %s)", o.Key, short(o.SHA256), short(got))
-		}
-	}
 	if copyErr != nil {
-		return n, fmt.Errorf("restore: fetch %s: %w", o.Key, copyErr)
+		copyErr = fmt.Errorf("restore: fetch %s: %w", key, copyErr)
 	}
-	return n, nil
+	return n, checkDigest(src, digest, key, o.SHA256, copyErr)
+}
+
+// checkDigest drains whatever is left of the stored stream, compares the digest,
+// and returns the mismatch if there is one or fallback otherwise.
+//
+// Draining first is not tidiness. The digest covers every stored byte, and
+// decompression stops at the frame's end marker, so a digest computed over the
+// part that happened to be read would pass on a truncated object -- which is
+// exactly the object it exists to catch.
+func checkDigest(src io.Reader, digest hash.Hash, key, want string, fallback error) error {
+	if digest == nil || want == "" {
+		return fallback
+	}
+	_, _ = io.Copy(io.Discard, src)
+	if got := hex.EncodeToString(digest.Sum(nil)); got != want {
+		return fmt.Errorf(
+			"restore: %s: %w, the object in the repository is not the one that was "+
+				"backed up (manifest %s, read %s)", key, ErrDigestMismatch, short(want), short(got))
+	}
+	return fallback
 }
 
 func short(sum string) string {

@@ -88,7 +88,7 @@ func TestFetch_RoundTrip(t *testing.T) {
 			f := restore.Fetcher{Storage: st, Opener: opener}
 
 			var got bytes.Buffer
-			n, err := f.Object(context.Background(), obj, &got, restore.FetchOptions{})
+			n, err := f.Object(context.Background(), "", obj, &got, restore.FetchOptions{})
 			require.NoError(t, err)
 			assert.Equal(t, plain, got.Bytes(), "what comes out is what pg_dump put in")
 			assert.Equal(t, int64(len(plain)), n)
@@ -109,7 +109,7 @@ func TestFetch_RawStopsAfterDecryption(t *testing.T) {
 
 	var raw bytes.Buffer
 	_, err = restore.Fetcher{Storage: st, Opener: opener}.
-		Object(context.Background(), obj, &raw, restore.FetchOptions{Raw: true})
+		Object(context.Background(), "", obj, &raw, restore.FetchOptions{Raw: true})
 	require.NoError(t, err)
 
 	dec, err := zstd.NewReader(bytes.NewReader(raw.Bytes()))
@@ -142,7 +142,7 @@ func TestFetch_DetectsACorruptedObject(t *testing.T) {
 	opener, err := crypto.NewOpener(identity)
 	require.NoError(t, err)
 	_, err = restore.Fetcher{Storage: st, Opener: opener}.
-		Object(context.Background(), obj, io.Discard, restore.FetchOptions{})
+		Object(context.Background(), "", obj, io.Discard, restore.FetchOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), obj.Key)
 	assert.Contains(t, strings.ToLower(err.Error()), "digest")
@@ -174,7 +174,7 @@ func TestFetch_DetectsATruncatedObject(t *testing.T) {
 	opener, err := crypto.NewOpener(identity)
 	require.NoError(t, err)
 	_, err = restore.Fetcher{Storage: st, Opener: opener}.
-		Object(context.Background(), obj, io.Discard, restore.FetchOptions{})
+		Object(context.Background(), "", obj, io.Discard, restore.FetchOptions{})
 	require.Error(t, err)
 }
 
@@ -188,7 +188,7 @@ func TestFetch_WrongIdentity(t *testing.T) {
 
 	var got bytes.Buffer
 	_, err = restore.Fetcher{Storage: st, Opener: opener}.
-		Object(context.Background(), obj, &got, restore.FetchOptions{})
+		Object(context.Background(), "", obj, &got, restore.FetchOptions{})
 	require.Error(t, err)
 	assert.Zero(t, got.Len(), "age fails on the header, so nothing should reach the writer")
 	testutil.AssertNoSecretLeak(t, err.Error())
@@ -198,7 +198,7 @@ func TestFetch_MissingObject(t *testing.T) {
 	opener, err := crypto.NewOpener(firstIdentity(t))
 	require.NoError(t, err)
 	_, err = restore.Fetcher{Storage: memory.New(), Opener: opener}.
-		Object(context.Background(), manifest.Object{Key: "logical/x/absent.age"}, io.Discard,
+		Object(context.Background(), "", manifest.Object{Key: "logical/x/absent.age"}, io.Discard,
 			restore.FetchOptions{})
 	require.ErrorIs(t, err, storage.ErrNotFound)
 }
@@ -213,7 +213,7 @@ func TestFetch_ReportsProgress(t *testing.T) {
 	var last int64
 	var calls int
 	_, err = restore.Fetcher{Storage: st, Opener: opener}.
-		Object(context.Background(), obj, io.Discard, restore.FetchOptions{
+		Object(context.Background(), "", obj, io.Discard, restore.FetchOptions{
 			OnProgress: func(n int64) {
 				assert.GreaterOrEqual(t, n, last, "progress only ever goes up")
 				last, calls = n, calls+1
@@ -228,4 +228,35 @@ func firstIdentity(t *testing.T) string {
 	t.Helper()
 	id, _ := testutil.AgeIdentity(t)
 	return id
+}
+
+// Manifest keys are filenames, not repository keys: RESTORE.md downloads the
+// objects and then names them as local files, so a manifest carrying the prefix
+// would make every command in that document wrong.
+//
+// The cost of that choice is that anything reading a backup must supply the
+// prefix, and forgetting it fails in the least helpful way available -- an
+// empty stream handed to pg_restore, which reports a truncated archive.
+func TestFetch_JoinsThePrefix(t *testing.T) {
+	st := memory.New()
+	const prefix = "sources/shop/logical/01ABC/"
+	plain := []byte("PGDMP")
+	obj, identity := stored(t, st, prefix+"dump.pgdump.age", plain, false)
+
+	// The manifest records the filename alone, as the backup runner writes it.
+	obj.Key = "dump.pgdump.age"
+
+	opener, err := crypto.NewOpener(identity)
+	require.NoError(t, err)
+	f := restore.Fetcher{Storage: st, Opener: opener}
+
+	var got bytes.Buffer
+	n, err := f.Object(context.Background(), prefix, obj, &got, restore.FetchOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, plain, got.Bytes())
+	assert.Equal(t, int64(len(plain)), n)
+
+	_, err = f.Object(context.Background(), "", obj, io.Discard, restore.FetchOptions{})
+	require.ErrorIs(t, err, storage.ErrNotFound,
+		"without the prefix there is nothing there, and it has to say so rather than stream nothing")
 }

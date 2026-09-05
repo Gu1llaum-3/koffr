@@ -197,15 +197,37 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	writeErr := <-writeDone
+
+	// Sidecars are collected while the source is still open, and that ordering
+	// is not cosmetic. pg_dumpall needs the tunnel and the credentials file the
+	// stream is holding, and Close is what tears both down -- so collecting
+	// after it produces a globals sidecar that cannot connect, on a backup that
+	// otherwise looks fine.
+	//
+	// The dump itself has finished by now: writeDone means the reader reached
+	// EOF. Only a healthy run is annotated; there is nothing to add to a dump
+	// that failed, and asking a dying source for more is how one failure
+	// becomes two confusing ones.
+	//
+	// The stall watcher stops first. It counts bytes reaching storage, and no
+	// byte is going to move while pg_dumpall runs.
+	stopWatcher()
+
+	var (
+		sidecars   map[string][]byte
+		sidecarErr error
+	)
+	if putErr == nil && writeErr == nil {
+		sidecars, sidecarErr = stream.Sidecars()
+	}
+
 	closer.close()
 
 	if err := req.attribute(runCtx, ctx, putErr, writeErr, closer.err()); err != nil {
 		return Result{}, err
 	}
-
-	sidecars, err := stream.Sidecars()
-	if err != nil {
-		return Result{}, classify(catalog.ErrClassSource, "collect sidecars", err)
+	if sidecarErr != nil {
+		return Result{}, classify(catalog.ErrClassSource, "collect sidecars", sidecarErr)
 	}
 
 	return Result{
@@ -523,10 +545,13 @@ func teardownOnCancel(ctx context.Context, closer *streamCloser, pr *io.PipeRead
 		case <-done:
 		}
 	}()
-	return func() {
+	// Idempotent, and deliberately so: this is both deferred and called
+	// explicitly once the work it guards is over. A stop that can only be
+	// called once is a trap the next reader falls into.
+	return sync.OnceFunc(func() {
 		close(done)
 		<-finished
-	}
+	})
 }
 
 // watchForStall implements EF-095.
@@ -593,10 +618,13 @@ func watchForStall(
 		}
 	}()
 
-	return func() {
+	// Idempotent, and deliberately so: this is both deferred and called
+	// explicitly once the work it guards is over. A stop that can only be
+	// called once is a trap the next reader falls into.
+	return sync.OnceFunc(func() {
 		close(done)
 		<-finished
-	}
+	})
 }
 
 // tickFor samples often enough to notice a stall promptly without spinning.

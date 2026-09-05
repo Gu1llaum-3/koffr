@@ -58,7 +58,7 @@ func newRig(t *testing.T) *rig {
 	opener, err := crypto.NewOpener(operational.String())
 	require.NoError(t, err)
 
-	cat, err := sqlite.Open(t.TempDir() + "/catalog.db")
+	cat, err := sqlite.Open(t.Context(), t.TempDir()+"/catalog.db")
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, cat.Close()) })
 

@@ -94,7 +94,11 @@ type Store struct {
 }
 
 // Open opens or creates a catalog and brings its schema up to date.
-func Open(path string) (*Store, error) {
+// The context covers the migration, which is the part that can wait: SQLite
+// serialises writers, so opening a catalog another Koffr is migrating blocks
+// until it finishes. A backup job that was cancelled should not still be
+// waiting on that.
+func Open(ctx context.Context, path string) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("catalog/sqlite: no path given")
 	}
@@ -118,7 +122,7 @@ func Open(path string) (*Store, error) {
 	// few thousand rows.
 	db.SetMaxOpenConns(1)
 
-	if err := migrate(db); err != nil {
+	if err := migrate(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -131,8 +135,7 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-func migrate(db *sql.DB) error {
-	ctx := context.Background()
+func migrate(ctx context.Context, db *sql.DB) error {
 
 	var version int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {

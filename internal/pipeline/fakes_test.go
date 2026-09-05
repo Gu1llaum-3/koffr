@@ -54,6 +54,13 @@ func (f *fakeSource) Open(context.Context, executor.Executor, source.Request) (*
 		Reader: f.reader,
 		Codec:  source.CodecNone,
 		Sidecars: func() (map[string][]byte, error) {
+			// A real source cannot do this once it is closed: pg_dumpall needs
+			// the tunnel and the credentials file the stream is holding, and
+			// Close is what removes both. A double that answered anyway let the
+			// pipeline collect sidecars after teardown and pass.
+			if f.closed.Load() {
+				return nil, errors.New("sidecars requested after the stream was closed")
+			}
 			return f.sidecars, nil
 		},
 		Result: func() source.Result { return source.Result{} },

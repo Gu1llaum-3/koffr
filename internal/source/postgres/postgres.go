@@ -276,10 +276,22 @@ func writeCredentials(cfg Config, ep endpoint) (*credentials, error) {
 		return nil, fmt.Errorf("postgres: create credentials directory: %w", err)
 	}
 
+	// The database field is a wildcard, and that is deliberate.
+	//
+	// libpq matches .pgpass on host, port, database AND user, so a line naming
+	// one database is a credential that works for exactly one connection. That
+	// breaks two things Koffr genuinely does: pg_dumpall reads the cluster
+	// through a maintenance database, and a restore targets a database chosen
+	// at the command line, which is never the one that was dumped. Both failed
+	// with "no password supplied" on configurations that were otherwise right.
+	//
+	// Narrowing it defends against nothing. The line grants the access the
+	// configured user already has, in a file that is 0600 inside a 0700
+	// directory and is removed when the job ends.
 	path := filepath.Join(dir, ".pgpass")
-	line := fmt.Sprintf("%s:%d:%s:%s:%s\n",
+	line := fmt.Sprintf("%s:%d:*:%s:%s\n",
 		escapePgpass(ep.host), ep.port,
-		escapePgpass(cfg.Database), escapePgpass(cfg.User), escapePgpass(cfg.Password))
+		escapePgpass(cfg.User), escapePgpass(cfg.Password))
 	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("postgres: write credentials file: %w", err)

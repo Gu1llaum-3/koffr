@@ -22,7 +22,7 @@ func TestContract(t *testing.T) {
 	catalogtest.Suite(t, catalogtest.Harness{
 		New: func(t *testing.T) catalog.MetadataStore {
 			path := filepath.Join(t.TempDir(), "catalog.db")
-			s, err := sqlite.Open(path)
+			s, err := sqlite.Open(t.Context(), path)
 			require.NoError(t, err)
 			paths[s] = path
 			t.Cleanup(func() { _ = s.Close() })
@@ -33,7 +33,7 @@ func TestContract(t *testing.T) {
 			require.NotEmpty(t, path)
 			require.NoError(t, store.Close())
 
-			s, err := sqlite.Open(path)
+			s, err := sqlite.Open(t.Context(), path)
 			require.NoError(t, err)
 			paths[s] = path
 			t.Cleanup(func() { _ = s.Close() })
@@ -45,7 +45,7 @@ func TestContract(t *testing.T) {
 func TestOpen_CreatesAndMigrates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalog.db")
 
-	s, err := sqlite.Open(path)
+	s, err := sqlite.Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
@@ -59,7 +59,7 @@ func TestOpen_IsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalog.db")
 
 	for range 3 {
-		s, err := sqlite.Open(path)
+		s, err := sqlite.Open(t.Context(), path)
 		require.NoError(t, err)
 		require.NoError(t, s.RecordBackup(t.Context(), catalog.Backup{
 			ID: "B1", SourceID: "prod", Kind: "logical", Status: catalog.StatusCompleted,
@@ -67,7 +67,7 @@ func TestOpen_IsIdempotent(t *testing.T) {
 		require.NoError(t, s.Close())
 	}
 
-	s, err := sqlite.Open(path)
+	s, err := sqlite.Open(t.Context(), path)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
@@ -85,13 +85,13 @@ func TestOpen_IsIdempotent(t *testing.T) {
 // costs time, and guessing costs data.
 func TestOpen_RefusesANewerSchema(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalog.db")
-	s, err := sqlite.Open(path)
+	s, err := sqlite.Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
 	setUserVersion(t, path, sqlite.SchemaVersion+1)
 
-	_, err = sqlite.Open(path)
+	_, err = sqlite.Open(t.Context(), path)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "newer")
 	assert.Contains(t, err.Error(), "catalog sync",
@@ -99,7 +99,7 @@ func TestOpen_RefusesANewerSchema(t *testing.T) {
 }
 
 func TestOpen_RejectsAnEmptyPath(t *testing.T) {
-	_, err := sqlite.Open("")
+	_, err := sqlite.Open(t.Context(), "")
 	require.Error(t, err)
 }
 
@@ -108,7 +108,7 @@ func TestOpen_RejectsAnEmptyPath(t *testing.T) {
 // ourselves.
 func TestOpen_FileIsPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalog.db")
-	s, err := sqlite.Open(path)
+	s, err := sqlite.Open(t.Context(), path)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
