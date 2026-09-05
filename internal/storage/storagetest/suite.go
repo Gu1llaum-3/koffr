@@ -19,6 +19,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,8 @@ func Suite(t *testing.T, newStorage Factory) {
 	t.Run("CapabilitiesAreHonest", func(t *testing.T) { testCapabilitiesAreHonest(t, newStorage) })
 	t.Run("LargeObjectAcrossParts", func(t *testing.T) { testLargeObject(t, newStorage) })
 	t.Run("NestedKeys", func(t *testing.T) { testNestedKeys(t, newStorage) })
+	t.Run("PutIfAbsent", func(t *testing.T) { testPutIfAbsent(t, newStorage) })
+	t.Run("PutIfAbsentIsAtomic", func(t *testing.T) { testPutIfAbsentIsAtomic(t, newStorage) })
 }
 
 // errReader fails after yielding a fixed number of bytes. It stands in for the
@@ -407,6 +410,59 @@ func testLargeObject(t *testing.T, newStorage Factory) {
 	got := read(t, s, "big")
 	require.Len(t, got, size)
 	assert.True(t, bytes.Equal(content, got), "content differs across the part boundary")
+}
+
+// PutIfAbsent is the repository lock (EF-045). It must report a taken key as
+// ErrAlreadyExists and nothing else, because the caller reads that as "another
+// Koffr is working on this source" and any other error as "the destination is
+// broken".
+func testPutIfAbsent(t *testing.T, newStorage Factory) {
+	s := newStorage(t)
+	const key = "locks/prod.lock"
+
+	require.NoError(t, s.PutIfAbsent(t.Context(), key, []byte("held by host-a")))
+	assert.Equal(t, []byte("held by host-a"), read(t, s, key))
+
+	err := s.PutIfAbsent(t.Context(), key, []byte("held by host-b"))
+	assert.ErrorIs(t, err, storage.ErrAlreadyExists)
+	assert.Equal(t, []byte("held by host-a"), read(t, s, key),
+		"a refused write must not have changed the holder")
+
+	// Releasing and taking it again is the normal cycle.
+	require.NoError(t, s.Delete(t.Context(), key))
+	assert.NoError(t, s.PutIfAbsent(t.Context(), key, []byte("held by host-b")))
+}
+
+// Exactly one winner. A Stat followed by a Put would let both instances through
+// the gap between them, which is the whole reason this is one operation.
+func testPutIfAbsentIsAtomic(t *testing.T, newStorage Factory) {
+	s := newStorage(t)
+	const key = "locks/contended.lock"
+	const racers = 8
+
+	var wg sync.WaitGroup
+	results := make([]error, racers)
+	start := make(chan struct{})
+	for i := range racers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results[i] = s.PutIfAbsent(t.Context(), key, fmt.Appendf(nil, "racer-%d", i))
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	winners := 0
+	for i, err := range results {
+		if err == nil {
+			winners++
+			continue
+		}
+		assert.ErrorIs(t, err, storage.ErrAlreadyExists, "racer %d", i)
+	}
+	assert.Equal(t, 1, winners, "a lock that lets several holders in is not a lock")
 }
 
 // Keys are paths with several segments (see layout.go). A backend that maps

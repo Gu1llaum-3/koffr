@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+// ErrAlreadyExists is returned by PutIfAbsent when the key is taken.
+//
+// It is how a repository lock is acquired (EF-045), so it must mean exactly
+// "someone else holds it" and never "the destination is unreachable": a caller
+// that confuses the two either runs a second backup against a source already
+// being backed up, or refuses to run at all.
+var ErrAlreadyExists = errors.New("storage: object already exists")
+
 // ErrNotFound is returned when a key does not exist.
 //
 // It is a sentinel rather than a per-backend error because retention, catalog
@@ -39,6 +47,12 @@ type Storage interface {
 	// Put streams r to key. It must not buffer the whole object: implementations
 	// use multipart upload with a bounded part size (ENF-001).
 	Put(ctx context.Context, key string, r io.Reader, opts PutOptions) (ObjectInfo, error)
+
+	// PutIfAbsent writes only if the key is free, and reports ErrAlreadyExists
+	// otherwise. The check and the write are one operation: two Koffr instances
+	// racing for the same lock must not both win, and a Stat followed by a Put
+	// would let them.
+	PutIfAbsent(ctx context.Context, key string, content []byte) error
 
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
 

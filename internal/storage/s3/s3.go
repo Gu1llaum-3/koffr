@@ -7,6 +7,7 @@
 package s3
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -163,6 +164,31 @@ func (s *Storage) Put(ctx context.Context, key string, r io.Reader, opts storage
 	// two agreeing is exactly what the manifest digest is there to prove.
 	info.Size = counted.total.Load()
 	return info, nil
+}
+
+// PutIfAbsent writes only if the key is free.
+//
+// If-None-Match: * makes the service perform the check, which is the only place
+// it can be atomic: two Koffr instances asking S3 whether a key exists and then
+// writing would both be told no.
+func (s *Storage) PutIfAbsent(ctx context.Context, key string, content []byte) error {
+	_, err := s.client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket:      aws.String(s.cfg.Bucket),
+		Key:         aws.String(s.key(key)),
+		Body:        bytes.NewReader(content),
+		IfNoneMatch: aws.String("*"),
+	})
+	if err != nil {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.ErrorCode() {
+			case "PreconditionFailed", "ConditionalRequestConflict", "412":
+				return fmt.Errorf("%q: %w", key, storage.ErrAlreadyExists)
+			}
+		}
+		return fmt.Errorf("create %q: %w", key, err)
+	}
+	return nil
 }
 
 // Get opens an object for reading.

@@ -208,6 +208,16 @@ func (s *fakeStorage) count() int {
 	return len(s.objects)
 }
 
+func (s *fakeStorage) PutIfAbsent(_ context.Context, key string, content []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, taken := s.objects[key]; taken {
+		return storage.ErrAlreadyExists
+	}
+	s.objects[key] = content
+	return nil
+}
+
 func (s *fakeStorage) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	b, ok := s.object(key)
 	if !ok {

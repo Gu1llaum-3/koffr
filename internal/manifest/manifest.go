@@ -46,10 +46,27 @@ type Manifest struct {
 	FinishedAt time.Time `json:"finished_at"`
 	Status     string    `json:"status"`
 
+	// PostgreSQL carries what only a physical backup needs: the WAL positions a
+	// restore replays between. Absent for every other kind, so the manifest of
+	// a logical backup does not claim a shape it has not got.
+	PostgreSQL *PostgreSQLDetails `json:"postgresql,omitempty"`
+
 	Objects []Object `json:"objects"`
 	Tool    Tool     `json:"tool"`
 
 	KoffrVersion string `json:"koffr_version"`
+}
+
+// PostgreSQLDetails records where a base backup starts and ends in the WAL.
+//
+// A restore replays from StartLSN, and PITR needs to know the backup is
+// consistent from EndLSN onwards. Timeline distinguishes histories after a
+// previous restore, and getting it wrong replays the wrong branch.
+type PostgreSQLDetails struct {
+	StartLSN  string `json:"start_lsn"`
+	EndLSN    string `json:"end_lsn"`
+	Timeline  int32  `json:"timeline"`
+	WALMethod string `json:"wal_method"`
 }
 
 // Object is one stored artifact.

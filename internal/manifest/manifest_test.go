@@ -178,6 +178,24 @@ func TestManifestJSON_TopLevelKeysAreDeliberate(t *testing.T) {
 		"kind", "parent_id", "started_at", "finished_at", "status",
 		"objects", "tool", "koffr_version",
 	}, got, "a new plaintext manifest field must be reviewed against EF-055")
+
+	// The physical shape is checked too, or a field added behind omitempty
+	// would slip past the guard entirely.
+	physical := fixture()
+	physical.Kind = "physical"
+	physical.PostgreSQL = &manifest.PostgreSQLDetails{
+		StartLSN: "0/3000060", EndLSN: "0/3000220", Timeline: 1, WALMethod: "fetch",
+	}
+	var pb strings.Builder
+	require.NoError(t, manifest.Encode(&pb, physical))
+	var praw map[string]any
+	require.NoError(t, json.Unmarshal([]byte(pb.String()), &praw))
+
+	pgot := make([]string, 0, len(praw))
+	for k := range praw {
+		pgot = append(pgot, k)
+	}
+	assert.ElementsMatch(t, append(got, "postgresql"), pgot)
 }
 
 func TestDetails_CarriesContentNames(t *testing.T) {

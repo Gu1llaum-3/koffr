@@ -135,6 +135,45 @@ func (s *Storage) Put(ctx context.Context, key string, r io.Reader, opts storage
 	}, nil
 }
 
+// PutIfAbsent creates an object only if the key is free.
+//
+// O_EXCL makes the check and the creation one syscall, which is what a lock
+// needs. A Stat followed by a Put would let two Koffr instances through the gap
+// between them, and both would then back up the same source at once.
+func (s *Storage) PutIfAbsent(ctx context.Context, key string, content []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	dest, err := s.path(key)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), dirPerm); err != nil {
+		return fmt.Errorf("create %q: %w", filepath.Dir(dest), err)
+	}
+
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, filePerm) //nolint:gosec // dest is confined to the repository by path
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("%q: %w", key, storage.ErrAlreadyExists)
+		}
+		return fmt.Errorf("create %q: %w", key, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.Write(content); err != nil {
+		// The holder is us, so removing it is right: a lock file nobody holds
+		// would block every later attempt.
+		_ = os.Remove(dest)
+		return fmt.Errorf("write %q: %w", key, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = os.Remove(dest)
+		return fmt.Errorf("sync %q: %w", key, err)
+	}
+	return nil
+}
+
 // Get opens an object for reading.
 func (s *Storage) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := ctx.Err(); err != nil {
