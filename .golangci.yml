@@ -4,21 +4,13 @@ version: "2"
 
 run:
   timeout: 5m
-  # Probe code from milestone M0 is throwaway and deliberately unpolished.
-  issues-exclusion-paths:
-    - spikes/
 
 linters:
   enable:
-    - errcheck        # an unchecked error here means a lost backup
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
     - bodyclose
     - contextcheck    # every long operation must honour cancellation
-    - errorlint       # error wrapping must survive errors.Is / errors.As
     - copyloopvar
+    - errorlint       # error wrapping must survive errors.Is / errors.As
     - gosec
     - misspell
     - nilerr
@@ -27,6 +19,11 @@ linters:
     - sqlclosecheck
     - unconvert
     - wastedassign
+  exclusions:
+    paths:
+      # Probe code from milestone M0 is throwaway and deliberately unpolished.
+      # No Go file lives there yet; the rule is in place for when one does.
+      - spikes/
 
 formatters:
   enable:
