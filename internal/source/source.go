@@ -62,6 +62,11 @@ type Info struct {
 	// Restrictions explains, in human-readable form, why a kind is missing.
 	// It is shown to the operator; it is never parsed.
 	Restrictions []string
+
+	// Databases names what a backup of this source covers. It describes the
+	// content, so it goes into the encrypted details rather than the plaintext
+	// manifest (EF-055).
+	Databases []string
 }
 
 // Request asks for one specific backup.

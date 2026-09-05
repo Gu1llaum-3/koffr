@@ -73,6 +73,7 @@ func (l *Logical) Probe(ctx context.Context, ex executor.Executor) (source.Info,
 		Engine:        source.EnginePostgreSQL,
 		ServerVersion: version,
 		Kinds:         []source.Kind{source.KindLogical},
+		Databases:     []string{l.cfg.Database},
 	}
 
 	// P-007: pg_basebackup refuses --pgdata=- on a cluster with more than one
