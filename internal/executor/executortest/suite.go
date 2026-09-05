@@ -52,6 +52,7 @@ func Suite(t *testing.T, h Harness) {
 	t.Run("Env", func(t *testing.T) { testEnv(t, h) })
 	t.Run("ArgumentsArriveIntact", func(t *testing.T) { testArgumentsArriveIntact(t, h) })
 	t.Run("LargeStdout", func(t *testing.T) { testLargeStdout(t, h) })
+	t.Run("StderrIsCompleteWhenDrainedBeforeWait", func(t *testing.T) { testStderrIsComplete(t, h) })
 	t.Run("WaitAfterAbandoningStdout", func(t *testing.T) { testWaitAfterAbandoningStdout(t, h) })
 	t.Run("CancellationKillsProcess", func(t *testing.T) { testCancellationKills(t, h) })
 	t.Run("WaitIsIdempotent", func(t *testing.T) { testWaitIsIdempotent(t, h) })
@@ -392,3 +393,34 @@ func Listener(t *testing.T, banner string) string {
 	}()
 	return ln.Addr().String()
 }
+
+// testStderrIsComplete is the other half of Wait's contract, and the half that
+// is easy to get wrong: a caller that drains to EOF first must get everything
+// the tool wrote. Draining alongside Wait races against it closing the pipes,
+// and the loser is the error message -- which for a restore is the difference
+// between "pg_restore exited with status 1" and knowing why.
+func testStderrIsComplete(t *testing.T, h Harness) {
+	ex := h.New(t)
+	const msg = "pg_restore: error: could not execute query: relation already exists"
+
+	proc, err := ex.Start(t.Context(), executor.Command{
+		Path: shell,
+		Args: []string{"-c", "printf '%s' " + shellQuote(msg) + " >&2; exit 3"},
+	})
+	require.NoError(t, err)
+
+	stderr, err := io.ReadAll(proc.Stderr())
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, proc.Stdout())
+
+	err = proc.Wait()
+	require.Error(t, err)
+	var exitErr *executor.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, 3, exitErr.Code)
+	assert.Equal(t, msg, string(stderr),
+		"stderr drained before Wait must arrive whole; this is what error messages are made of")
+}
+
+// shellQuote wraps a string for /bin/sh.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

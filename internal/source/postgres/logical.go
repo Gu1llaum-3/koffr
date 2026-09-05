@@ -43,7 +43,7 @@ func (l *Logical) Probe(ctx context.Context, ex executor.Executor) (source.Info,
 		return source.Info{}, err
 	}
 
-	conn, err := l.cfg.connect(ctx, ex)
+	conn, err := l.cfg.Connect(ctx, ex)
 	if err != nil {
 		return source.Info{}, err
 	}
@@ -188,7 +188,7 @@ func (l *Logical) Open(ctx context.Context, ex executor.Executor, req source.Req
 
 	// EF-019 again, not only at configuration time: privileges can be revoked
 	// between validation and the nightly run, and the cost is one query.
-	conn, err := l.cfg.connect(ctx, ex)
+	conn, err := l.cfg.Connect(ctx, ex)
 	if err != nil {
 		return nil, err
 	}
@@ -198,49 +198,37 @@ func (l *Logical) Open(ctx context.Context, ex executor.Executor, req source.Req
 		return nil, privErr
 	}
 
-	ep, err := l.endpoint(ctx, ex)
+	session, err := l.cfg.Open(ctx, ex)
 	if err != nil {
 		return nil, err
 	}
 
-	// Only now, with the port known (P-004).
-	cred, err := writeCredentials(l.cfg, ep)
+	args, err := l.dumpArgs(req, session.Port())
 	if err != nil {
-		_ = ep.release()
+		_ = session.Close()
 		return nil, err
 	}
-
-	args, err := l.dumpArgs(req, ep.port)
+	dumpPath, err := l.cfg.ResolveBin("pg_dump")
 	if err != nil {
-		cred.remove()
-		_ = ep.release()
-		return nil, err
-	}
-
-	dumpPath, err := l.cfg.resolveBin("pg_dump")
-	if err != nil {
-		cred.remove()
-		_ = ep.release()
+		_ = session.Close()
 		return nil, err
 	}
 	proc, err := l.cfg.ToolRunner.Start(ctx, executor.Command{
 		Path: dumpPath,
 		Args: args,
-		Env:  l.cfg.env(cred, ep, dumpPath),
+		Env:  session.Env(dumpPath),
 	})
 	if err != nil {
-		cred.remove()
-		_ = ep.release()
+		_ = session.Close()
 		return nil, fmt.Errorf("postgres: start pg_dump: %w", err)
 	}
 
 	s := &logicalStream{
-		cfg:  l.cfg,
-		proc: proc,
-		cred: cred,
-		ep:   ep,
-		ctx:  ctx,
-		tail: newTailBuffer(),
+		cfg:     l.cfg,
+		proc:    proc,
+		session: session,
+		ctx:     ctx,
+		tail:    newTailBuffer(),
 	}
 	// pg_dump's stderr is drained from the start, for two reasons. Leaving it
 	// unread would block the dump once the pipe filled, and when the dump fails
@@ -260,12 +248,12 @@ func (l *Logical) Open(ctx context.Context, ex executor.Executor, req source.Req
 	}, nil
 }
 
-// endpoint decides whether pg_dump needs a tunnel.
-func (l *Logical) endpoint(ctx context.Context, ex executor.Executor) (endpoint, error) {
-	target := net.JoinHostPort(l.cfg.Host, strconv.Itoa(l.cfg.Port))
+// endpoint decides whether a client binary needs a tunnel.
+func (c Config) endpoint(ctx context.Context, ex executor.Executor) (endpoint, error) {
+	target := net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 
 	if ex.Capabilities().Direct {
-		return endpoint{host: l.cfg.Host, port: l.cfg.Port}, nil
+		return endpoint{host: c.Host, port: c.Port}, nil
 	}
 
 	f, err := tunnel.Forward(ctx, ex, target)
@@ -282,7 +270,7 @@ func (l *Logical) endpoint(ctx context.Context, ex executor.Executor) (endpoint,
 		_ = f.Close()
 		return endpoint{}, fmt.Errorf("postgres: read tunnel port: %w", err)
 	}
-	return endpoint{host: l.cfg.Host, port: port, hostAddr: "127.0.0.1", close: f.Close}, nil
+	return endpoint{host: c.Host, port: port, hostAddr: "127.0.0.1", close: f.Close}, nil
 }
 
 // RenderCommand returns the exact argument list pg_dump would be given.
@@ -304,7 +292,7 @@ func (l *Logical) RenderCommand(req source.Request, port int) ([]string, error) 
 func (l *Logical) ToolPaths() (map[string]string, error) {
 	paths := make(map[string]string, 2)
 	for _, name := range []string{"pg_dump", "pg_dumpall"} {
-		path, err := l.cfg.resolveBin(name)
+		path, err := l.cfg.ResolveBin(name)
 		if err != nil {
 			return nil, err
 		}
@@ -388,11 +376,10 @@ func lastLines(b []byte, n int) string {
 
 // logicalStream owns everything one dump holds open.
 type logicalStream struct {
-	cfg  Config
-	proc executor.Process
-	cred *credentials
-	ep   endpoint
-	ctx  context.Context
+	cfg     Config
+	proc    executor.Process
+	session *Session
+	ctx     context.Context
 
 	tail       *tailBuffer
 	stderrDone chan struct{}
@@ -434,7 +421,7 @@ func (t *tailBuffer) String() string {
 // one database does not carry them. Restoring without them produces a database
 // whose owners and grants do not exist.
 func (s *logicalStream) sidecars() (map[string][]byte, error) {
-	dumpallPath, err := s.cfg.resolveBin("pg_dumpall")
+	dumpallPath, err := s.cfg.ResolveBin("pg_dumpall")
 	if err != nil {
 		return nil, err
 	}
@@ -443,15 +430,15 @@ func (s *logicalStream) sidecars() (map[string][]byte, error) {
 		Args: []string{
 			"--globals-only",
 			"--no-password",
-			"--host=" + s.cfg.Host,
-			"--port=" + strconv.Itoa(s.ep.port),
+			"--host=" + s.session.Host(),
+			"--port=" + strconv.Itoa(s.session.Port()),
 			"--username=" + s.cfg.User,
 			// Without this, pg_dumpall connects to a database called
 			// "postgres", which may not exist and is not the one the
 			// credentials file was written for.
 			"--database=" + s.cfg.Database,
 		},
-		Env: s.cfg.env(s.cred, s.ep, dumpallPath),
+		Env: s.session.Env(dumpallPath),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("postgres: start pg_dumpall: %w", err)
@@ -484,11 +471,9 @@ func (s *logicalStream) sidecars() (map[string][]byte, error) {
 // The credentials are removed whatever happens, including on a panic unwinding
 // through here, so a crashed job leaves no password on disk (ENF-022).
 func (s *logicalStream) Close() error {
-	defer s.cred.remove()
-
 	waitErr := s.proc.Wait()
 	<-s.stderrDone
-	releaseErr := s.ep.release()
+	releaseErr := s.session.Close()
 
 	// A dump killed by cancellation is the caller's own doing, not a failure to
 	// report on top of whatever made them cancel.

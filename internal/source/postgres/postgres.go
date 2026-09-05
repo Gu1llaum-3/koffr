@@ -110,7 +110,8 @@ func (c *Config) bin(name string) string {
 // so a bare name leaves pg_dumpall with nothing to resolve against. Resolving
 // here also removes the ambiguity CT-001 is about: with five client toolchains
 // installed, "pg_dump" says nothing about which one runs.
-func (c *Config) resolveBin(name string) (string, error) {
+// ResolveBin locates a client binary for this source's major version.
+func (c *Config) ResolveBin(name string) (string, error) {
 	if c.BinDir != "" {
 		path := filepath.Join(c.BinDir, name)
 		if _, err := os.Stat(path); err != nil {
@@ -148,7 +149,7 @@ func (c *Config) dsn() string {
 // No tunnel is involved: pgx takes a DialFunc, so the connection is opened by
 // the executor directly. Forwarding it through a local listener would add a
 // hop for nothing.
-func (c *Config) connect(ctx context.Context, ex executor.Executor) (*pgx.Conn, error) {
+func (c *Config) Connect(ctx context.Context, ex executor.Executor) (*pgx.Conn, error) {
 	cfg, err := pgx.ParseConfig(c.dsn())
 	if err != nil {
 		// The DSN carries the password, so it is never echoed.
@@ -180,6 +181,57 @@ func url(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// Session is a client binary's way in to a database: an address to aim at, a
+// credentials file, and an environment.
+//
+// Exported because restoring needs exactly what backing up needs. pg_restore
+// takes the same host, the same .pgpass and the same tunnel as pg_dump, and
+// duplicating that plumbing is how the two drift until one of them keeps
+// working through a tunnel and the other stops.
+type Session struct {
+	cfg  Config
+	ep   endpoint
+	cred *credentials
+}
+
+// Host is what goes in -h: always the real hostname, because libpq verifies the
+// certificate against it and matches .pgpass on it (P-004).
+func (s *Session) Host() string { return s.ep.host }
+
+// Port is the tunnel's port when tunnelled, the real one otherwise.
+func (s *Session) Port() int { return s.ep.port }
+
+// Env is the environment for a client binary, including the path of a
+// credentials file that exists only for the life of this session.
+func (s *Session) Env(binPath string) []string { return s.cfg.env(s.cred, s.ep, binPath) }
+
+// Close releases the tunnel and removes the credentials file. It runs from a
+// defer, including on a panic, so a crashed job leaves no password on disk
+// (ENF-022).
+func (s *Session) Close() error {
+	s.cred.remove()
+	return s.ep.release()
+}
+
+// Open builds a session: a tunnel when the executor is not direct, then the
+// credentials file, in that order.
+//
+// The order is the constraint P-004 established. libpq matches .pgpass on host
+// AND port, the tunnel's port is chosen by the kernel, so the file can only be
+// written once the listener is bound.
+func (c Config) Open(ctx context.Context, ex executor.Executor) (*Session, error) {
+	ep, err := c.endpoint(ctx, ex)
+	if err != nil {
+		return nil, err
+	}
+	cred, err := writeCredentials(c, ep)
+	if err != nil {
+		_ = ep.release()
+		return nil, err
+	}
+	return &Session{cfg: c, ep: ep, cred: cred}, nil
 }
 
 // endpoint is the address a client binary should be pointed at.
@@ -287,7 +339,7 @@ var versionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
 // missing or older one is a configuration problem worth reporting while the
 // configuration is being loaded.
 func toolVersion(ctx context.Context, cfg Config, name string) (major int, err error) {
-	path, err := cfg.resolveBin(name)
+	path, err := cfg.ResolveBin(name)
 	if err != nil {
 		return 0, err
 	}

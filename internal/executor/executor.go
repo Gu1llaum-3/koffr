@@ -74,6 +74,12 @@ type Process interface {
 	// Wait reports the outcome, returning an *ExitError for a process that ran
 	// and failed.
 	//
+	// Wait may close Stdout and Stderr, so a caller that wants their contents
+	// reads them to EOF *before* calling it, never concurrently with it. That
+	// is the price of the guarantee below, and getting it wrong costs the
+	// diagnostics: a tool's last words on stderr are the difference between
+	// "pg_restore exited with status 1" and knowing why.
+	//
 	// It must return even when the caller has stopped reading Stdout. That is
 	// not a nicety: when the storage branch fails, the pipeline abandons stdout
 	// and tears down, and a Wait that blocked on an unread pipe would hang the
