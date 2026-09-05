@@ -8,7 +8,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 export CGO_ENABLED := 0
 
-.PHONY: all build test lint vet vuln cross clean tidy
+.PHONY: all build test cover lint vet vuln cross clean tidy
 
 all: lint test build
 
@@ -16,7 +16,12 @@ build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/$(BINARY) ./cmd/koffr
 
 test:
-	go test ./...
+	go test -race ./...
+
+# Coverage is scoped to internal/: the auto-downloaded Go toolchain module ships
+# without the covdata tool, which -cover needs for packages that have no tests.
+cover:
+	go test -race -cover ./internal/...
 
 vet:
 	go vet ./...

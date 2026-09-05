@@ -1,0 +1,30 @@
+{
+  "format_version": 1,
+  "backup_id": "01JQ8Z3K5M7P9R2T4V6X8Y0A2B",
+  "source_id": "prod-pg-main",
+  "engine": "postgresql",
+  "server_version": "17.11",
+  "kind": "logical",
+  "parent_id": null,
+  "started_at": "2026-09-05T02:00:00Z",
+  "finished_at": "2026-09-05T02:14:37Z",
+  "status": "completed",
+  "objects": [
+    {
+      "key": "dump.pgdump.zst.age",
+      "size_bytes": 8123456789,
+      "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "codec": "zstd",
+      "encryption": "age",
+      "recipients": [
+        "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"
+      ]
+    }
+  ],
+  "tool": {
+    "name": "pg_dump",
+    "version": "17.11",
+    "args_digest": "sha256:3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b"
+  },
+  "koffr_version": "0.1.0"
+}
