@@ -330,6 +330,10 @@ func testCapabilities(t *testing.T, h Harness) {
 		_, err := ex.Dial(t.Context(), "tcp", "127.0.0.1:1")
 		assert.Error(t, err, "CanDial is false but Dial was accepted")
 	}
+	if caps.Direct {
+		assert.True(t, caps.CanDial,
+			"Direct means a local binary can use the same address, which presupposes dialling")
+	}
 }
 
 func testDial(t *testing.T, h Harness) {

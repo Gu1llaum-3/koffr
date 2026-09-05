@@ -18,3 +18,9 @@ lefthook = "2.1.4"
 [env]
 # ENF-030: the release artifact is a single statically linked binary.
 CGO_ENABLED = "0"
+
+# CT-001: Koffr shells out to PostgreSQL client binaries it cannot embed, and
+# the integration tests need them too. Homebrew keeps libpq off PATH on purpose;
+# on Linux the PGDG packages land on PATH already and this entry is simply
+# ignored.
+_.path = ["/opt/homebrew/opt/libpq/bin"]

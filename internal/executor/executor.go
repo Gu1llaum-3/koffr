@@ -95,6 +95,16 @@ type Capabilities struct {
 	CanDial bool
 	CanExec bool
 
+	// Direct says that a client binary running on the Koffr host can reach the
+	// same targets this executor dials, using the same address.
+	//
+	// It decides whether a tunnel is needed. PostgreSQL logical backups run
+	// pg_dump on the Koffr host and pull over the network, so a direct executor
+	// lets pg_dump use the real address, while an indirect one requires a
+	// loopback listener forwarding through it. Forwarding an 80 GiB dump
+	// through userspace when nothing is in the way would be pure waste.
+	Direct bool
+
 	// Target is human-readable and for diagnostics only. It must never be
 	// parsed, and must never contain a credential.
 	Target string

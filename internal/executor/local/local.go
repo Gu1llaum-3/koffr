@@ -27,7 +27,7 @@ func New() *Executor { return &Executor{} }
 // Capabilities: a local executor can do everything, because there is no
 // transport in the way.
 func (e *Executor) Capabilities() executor.Capabilities {
-	return executor.Capabilities{CanDial: true, CanExec: true, Target: "local"}
+	return executor.Capabilities{CanDial: true, CanExec: true, Direct: true, Target: "local"}
 }
 
 // Dial opens a connection from this machine.

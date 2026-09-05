@@ -170,6 +170,9 @@ func (e *Executor) Capabilities() executor.Capabilities {
 	return executor.Capabilities{
 		CanDial: true,
 		CanExec: e.cfg.AllowExec,
+		// A client binary on the Koffr host has no route to the far side of
+		// this connection, so anything it must reach needs a tunnel.
+		Direct: false,
 		// User and address only: a target string is written to logs and to the
 		// UI, and must never carry a credential.
 		Target: "ssh://" + e.cfg.User + "@" + e.cfg.Address,
