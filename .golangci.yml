@@ -1,0 +1,38 @@
+# Strict by design: a backup tool that silently ignores an error is worse than
+# one that refuses to start.
+version: "2"
+
+run:
+  timeout: 5m
+  # Probe code from milestone M0 is throwaway and deliberately unpolished.
+  issues-exclusion-paths:
+    - spikes/
+
+linters:
+  enable:
+    - errcheck        # an unchecked error here means a lost backup
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - contextcheck    # every long operation must honour cancellation
+    - errorlint       # error wrapping must survive errors.Is / errors.As
+    - copyloopvar
+    - gosec
+    - misspell
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - wastedassign
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,24 @@
+# Build output
+/bin/
+/dist/
+# Anchored: a bare 'koffr' would also exclude the cmd/koffr/ directory.
+/koffr
+*.test
+*.out
+
+# Throwaway M0 probe code (see spikes/README.md)
+/spikes/**/data/
+/spikes/**/*.tar
+/spikes/**/*.zst
+/spikes/**/*.age
+
+# Local working documents (French), deliberately kept out of the repository
+/cahier-des-charges.md
+/architecture.md
+/roadmap.md
+/plan.md
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

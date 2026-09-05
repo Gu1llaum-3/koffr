@@ -1,0 +1,22 @@
+Koffr
+Copyright 2026 The Koffr Authors
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full license text.
+
+--------------------------------------------------------------------------------
+Acknowledgements
+--------------------------------------------------------------------------------
+
+Koffr contains no third-party source code. The projects listed below were
+studied as prior art, and some of their architectural approaches informed the
+design of Koffr. Their behaviour and their published documentation were the
+reference; their source code was not copied.
+
+  - wal-g          https://github.com/wal-g/wal-g          (Apache-2.0)
+  - Databasus      https://github.com/databasus/databasus  (Apache-2.0)
+  - plakar         https://github.com/PlakarKorp/plakar    (ISC)
+
+Koffr orchestrates the native backup tools shipped with PostgreSQL and MariaDB
+(pg_basebackup, pg_receivewal, pg_dump, mariabackup, mariadb-dump,
+mariadb-binlog). It does not vendor, modify or redistribute them.
