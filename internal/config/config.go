@@ -1,0 +1,393 @@
+// Package config loads and validates Koffr's configuration.
+//
+// The file is the single source of truth (PD-005, DEC-005). That draws a line
+// the CLI has to respect: the file says what *exists* -- sources, destinations,
+// recipients -- and a command-line flag says what to *do* now and how to report
+// it. A flag never redefines a source, because a backup nothing in the
+// configuration describes is a backup the UI cannot show and the next run will
+// not repeat.
+//
+// Validation is total and reports every problem at once. Correcting a
+// configuration one message at a time is the difference between a tool people
+// keep and one they fight, and the problems are structured rather than
+// formatted so that the CLI can render them and `--output json` can emit them.
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Version is the configuration layout this build understands.
+const Version = 1
+
+// Config is a whole configuration, after validation.
+type Config struct {
+	Version      int                    `yaml:"version"`
+	Crypto       Crypto                 `yaml:"crypto"`
+	Catalog      Catalog                `yaml:"catalog"`
+	Destinations map[string]Destination `yaml:"destinations"`
+	Sources      map[string]Source      `yaml:"sources"`
+
+	// path is the file this came from, for error messages. An operator editing
+	// the wrong file is a long afternoon.
+	path string
+}
+
+// Crypto holds the encryption settings (EF-050, EF-051).
+type Crypto struct {
+	Recipients []string `yaml:"recipients"`
+	Identity   Secret   `yaml:"identity"`
+}
+
+// Catalog is the local cache of the repository (DEC-004).
+type Catalog struct {
+	Path string `yaml:"path"`
+}
+
+// Destination is one place backups are written.
+type Destination struct {
+	Type string `yaml:"type"`
+
+	// fs
+	Path string `yaml:"path,omitempty"`
+
+	// s3
+	Bucket          string `yaml:"bucket,omitempty"`
+	Prefix          string `yaml:"prefix,omitempty"`
+	Region          string `yaml:"region,omitempty"`
+	Endpoint        string `yaml:"endpoint,omitempty"`
+	AccessKeyID     Secret `yaml:"access_key_id,omitempty"`
+	SecretAccessKey Secret `yaml:"secret_access_key,omitempty"`
+}
+
+// Source is one database to back up.
+type Source struct {
+	Engine   string `yaml:"engine"`
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port,omitempty"`
+	User     string `yaml:"user"`
+	Password Secret `yaml:"password"`
+	Database string `yaml:"database"`
+
+	SSLMode     string `yaml:"sslmode,omitempty"`
+	SSLRootCert string `yaml:"sslrootcert,omitempty"`
+	BinDir      string `yaml:"bin_dir,omitempty"`
+
+	Destinations []string `yaml:"destinations"`
+	SSH          *SSH     `yaml:"ssh,omitempty"`
+}
+
+// SSH reaches a database that publishes no port (EF-002).
+type SSH struct {
+	Address            string `yaml:"address"`
+	User               string `yaml:"user"`
+	Password           Secret `yaml:"password,omitempty"`
+	PrivateKey         Secret `yaml:"private_key,omitempty"`
+	PrivateKeyPassword Secret `yaml:"private_key_password,omitempty"`
+	KnownHostsFile     string `yaml:"known_hosts_file,omitempty"`
+
+	// AllowExec opts into running commands on the host, which only MariaDB
+	// physical backup needs (CT-002).
+	AllowExec bool `yaml:"allow_exec,omitempty"`
+
+	InsecureIgnoreHostKey bool `yaml:"insecure_ignore_host_key,omitempty"`
+}
+
+// Path is the file this configuration came from.
+func (c Config) Path() string { return c.path }
+
+// Source looks a source up by id, which is what every command does first.
+func (c Config) Source(id string) (Source, bool) {
+	s, ok := c.Sources[id]
+	return s, ok
+}
+
+// SourceIDs are sorted, so listings and errors are stable.
+func (c Config) SourceIDs() []string {
+	return slices.Sorted(keys(c.Sources))
+}
+
+// Problem is one thing wrong with a configuration.
+//
+// Structured rather than formatted: the CLI renders it, `--output json` emits
+// it, and neither has to parse a sentence.
+type Problem struct {
+	// Path locates the setting, in the shape a reader can find in the file:
+	// "sources.prod-pg-main.host".
+	Path    string `json:"path"`
+	Message string `json:"message"`
+	// Hint says what to write instead. A problem without one leaves the
+	// operator to guess, which for a security setting is where bad defaults
+	// come from.
+	Hint string `json:"hint,omitempty"`
+}
+
+// ValidationError carries every problem found, not the first.
+type ValidationError struct {
+	File     string    `json:"file"`
+	Problems []Problem `json:"problems"`
+}
+
+func (e *ValidationError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s has %d problem(s):", e.File, len(e.Problems))
+	for _, p := range e.Problems {
+		fmt.Fprintf(&b, "\n  %s: %s", p.Path, p.Message)
+		if p.Hint != "" {
+			fmt.Fprintf(&b, "\n    %s", p.Hint)
+		}
+	}
+	return b.String()
+}
+
+// Load reads, resolves and validates a configuration.
+func Load(path string) (Config, error) {
+	raw, err := os.ReadFile(path) //nolint:gosec // the path is the operator's own
+	if err != nil {
+		return Config{}, fmt.Errorf("config: read %s: %w", path, err)
+	}
+
+	var cfg Config
+	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+	// A typo in a key is a setting that silently does not apply, which for a
+	// backup tool means a retention policy nobody is enforcing.
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
+		return Config{}, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	cfg.path = path
+
+	if cfg.Version != Version {
+		return Config{}, fmt.Errorf(
+			"config: %s declares version %d; this build understands version %d",
+			path, cfg.Version, Version)
+	}
+
+	cfg.applyDefaults()
+
+	v := &validator{file: path}
+	cfg.validate(v)
+	if len(v.problems) > 0 {
+		return Config{}, &ValidationError{File: path, Problems: v.problems}
+	}
+	return cfg, nil
+}
+
+func (c *Config) applyDefaults() {
+	for id, s := range c.Sources {
+		if s.Port == 0 {
+			s.Port = defaultPort(s.Engine)
+		}
+		if s.SSLMode == "" {
+			// libpq's own default is "prefer", which silently accepts
+			// plaintext. PD-004: a weaker setting is asked for, not inherited.
+			s.SSLMode = "verify-full"
+		}
+		c.Sources[id] = s
+	}
+}
+
+func defaultPort(engine string) int {
+	if engine == "mariadb" {
+		return 3306
+	}
+	return 5432
+}
+
+// validator collects problems instead of returning at the first one.
+type validator struct {
+	file     string
+	problems []Problem
+}
+
+func (v *validator) add(path, message, hint string) {
+	v.problems = append(v.problems, Problem{Path: path, Message: message, Hint: hint})
+}
+
+func (c *Config) validate(v *validator) {
+	c.Crypto.validate(v)
+
+	if c.Catalog.Path == "" {
+		v.add("catalog.path", "no catalog path",
+			"point it at a file on local or block storage, never on NFS: "+
+				"SQLite's locking is unreliable there and the catalog will be corrupted")
+	} else {
+		checkCatalogFilesystem(v, c.Catalog.Path)
+	}
+
+	if len(c.Destinations) == 0 {
+		v.add("destinations", "no destinations", "a backup needs somewhere to go")
+	}
+	for _, id := range slices.Sorted(keys(c.Destinations)) {
+		d := c.Destinations[id]
+		d.validate(v, "destinations."+id)
+		c.Destinations[id] = d
+	}
+
+	if len(c.Sources) == 0 {
+		v.add("sources", "no sources", "a backup needs a database to read")
+	}
+	for _, id := range c.SourceIDs() {
+		s := c.Sources[id]
+		s.validate(v, "sources."+id, c.Destinations)
+		c.Sources[id] = s
+	}
+}
+
+func (c *Crypto) validate(v *validator) {
+	// EF-051, at the last moment an operator can still fix it.
+	if len(c.Recipients) < 2 {
+		v.add("crypto.recipients",
+			fmt.Sprintf("%d recipient(s); backups need at least 2", len(c.Recipients)),
+			"add an offline recovery recipient alongside the operational key, "+
+				"or losing the Koffr host means losing every backup")
+	}
+	for i, r := range c.Recipients {
+		if !strings.HasPrefix(r, "age1") {
+			v.add(fmt.Sprintf("crypto.recipients[%d]", i),
+				fmt.Sprintf("%q is not an age recipient", r),
+				"recipients are public keys and start with age1")
+		}
+	}
+	c.Identity.validate(v, "crypto.identity", true)
+}
+
+func (d *Destination) validate(v *validator, path string) {
+	switch d.Type {
+	case "fs":
+		if d.Path == "" {
+			v.add(path+".path", "no path", "a filesystem destination needs a directory")
+		}
+	case "s3":
+		if d.Bucket == "" {
+			v.add(path+".bucket", "no bucket", "name the bucket backups go to")
+		}
+	case "":
+		v.add(path+".type", "no type", `one of "fs" or "s3"`)
+	default:
+		v.add(path+".type", fmt.Sprintf("%q is not a destination type", d.Type),
+			`one of "fs" or "s3"`)
+	}
+}
+
+// engines are what M1 supports. MariaDB arrives in M3; naming it here would
+// accept a configuration that cannot run.
+var engines = []string{"postgresql"}
+
+func (s *Source) validate(v *validator, path string, destinations map[string]Destination) {
+	if !slices.Contains(engines, s.Engine) {
+		v.add(path+".engine", fmt.Sprintf("%q is not a supported engine", s.Engine),
+			"supported: "+strings.Join(engines, ", "))
+	}
+	if s.Host == "" {
+		v.add(path+".host", "no host", "the address the database answers on")
+	}
+	if s.User == "" {
+		v.add(path+".user", "no user", "a read-only role is enough for a logical backup")
+	}
+	if s.Database == "" {
+		v.add(path+".database", "no database", "the database to back up")
+	}
+	s.Password.validate(v, path+".password", true)
+
+	if len(s.Destinations) == 0 {
+		v.add(path+".destinations", "no destination", "name one from the destinations block")
+	}
+	for _, d := range s.Destinations {
+		if _, ok := destinations[d]; !ok {
+			v.add(path+".destinations",
+				fmt.Sprintf("%q is not a destination", d),
+				"defined destinations: "+strings.Join(slices.Sorted(keys(destinations)), ", "))
+		}
+	}
+
+	if s.SSH != nil {
+		s.SSH.validate(v, path+".ssh")
+	}
+}
+
+func (s *SSH) validate(v *validator, path string) {
+	if s.Address == "" {
+		v.add(path+".address", "no address", "host:port of the SSH server")
+	}
+	if s.User == "" {
+		v.add(path+".user", "no user", "the account to connect as")
+	}
+	if s.PrivateKey.raw == "" && s.Password.raw == "" {
+		v.add(path, "no private key and no password", "set private_key or password")
+	}
+	s.PrivateKey.validate(v, path+".private_key", false)
+	s.Password.validate(v, path+".password", false)
+
+	// EF-004: verification is on unless it is turned off explicitly, and doing
+	// so is a decision, not a fallback.
+	if s.InsecureIgnoreHostKey && s.KnownHostsFile != "" {
+		v.add(path+".insecure_ignore_host_key",
+			"host key verification is disabled while a known_hosts file is configured",
+			"remove one: the file is ignored while this is set")
+	}
+}
+
+// Redacted renders the configuration with secrets left as the references they
+// are written as, so the output is safe to paste into a ticket.
+func (c Config) Redacted() (string, error) {
+	out, err := yaml.Marshal(c)
+	if err != nil {
+		return "", fmt.Errorf("config: render: %w", err)
+	}
+	return string(out), nil
+}
+
+// ResolvePath finds the configuration file, in a fixed order.
+//
+// Explicit beats environment beats working directory beats the system-wide
+// file. The order matters less than it being the same every time and the
+// result being reported: an operator editing a file the tool never reads is a
+// long afternoon.
+func ResolvePath(flag, workdir string) (string, error) {
+	candidates := []string{}
+	if flag != "" {
+		// An explicit path that does not exist is an error, not a reason to
+		// fall through to something else and back up the wrong thing.
+		if _, err := os.Stat(flag); err != nil {
+			return "", fmt.Errorf("config: %s: %w", flag, err)
+		}
+		return flag, nil
+	}
+	if fromEnv := os.Getenv("KOFFR_CONFIG"); fromEnv != "" {
+		candidates = append(candidates, fromEnv)
+	}
+	candidates = append(candidates, filepath.Join(workdir, "koffr.yml"))
+	if home, err := os.UserConfigDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "koffr", "koffr.yml"))
+	}
+	candidates = append(candidates, "/etc/koffr/koffr.yml")
+
+	for _, c := range candidates {
+		// gosec sees a path derived from the environment. That is what this
+		// function is for: choosing which configuration file to read is the
+		// operator's decision, and anyone able to set KOFFR_CONFIG could pass
+		// --config instead, or has the process already.
+		if _, err := os.Stat(c); err == nil { //nolint:gosec // the operator chooses their own configuration path
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("config: no configuration found; looked in %s",
+		strings.Join(candidates, ", "))
+}
+
+func keys[V any](m map[string]V) func(func(string) bool) {
+	return func(yield func(string) bool) {
+		for k := range m {
+			if !yield(k) {
+				return
+			}
+		}
+	}
+}
