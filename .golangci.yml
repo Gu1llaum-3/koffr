@@ -20,6 +20,12 @@ linters:
     - unconvert
     - wastedassign
   exclusions:
+    rules:
+      # gosec reasons about production code paths. A test reading its own
+      # testdata is not a file inclusion vulnerability, and the noise would
+      # push us to silence the linter where it actually matters.
+      - path: _test\.go
+        linters: [gosec]
     paths:
       # Probe code from milestone M0 is throwaway and deliberately unpolished.
       # No Go file lives there yet; the rule is in place for when one does.

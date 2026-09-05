@@ -22,7 +22,7 @@ import (
 // The shape is deliberate: long enough that no real log line produces it by
 // accident, and containing a '/' so that the URL-encoded form is genuinely
 // different from the plain one.
-const SecretSentinel = "koffr-D0-N0T-L0G-thisvalue/9c1f"
+const SecretSentinel = "koffr-D0-N0T-L0G-thisvalue/9c1f" //nolint:gosec // a deliberately fake secret; see above
 
 // Encoded forms of the sentinel.
 //

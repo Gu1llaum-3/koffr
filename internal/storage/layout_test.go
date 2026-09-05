@@ -38,7 +38,7 @@ func TestCatalogSnapshotKey_SortsChronologically(t *testing.T) {
 	early := storage.CatalogSnapshotKey(time.Date(2026, 9, 5, 2, 0, 0, 0, time.UTC))
 	late := storage.CatalogSnapshotKey(time.Date(2026, 9, 5, 14, 0, 0, 0, time.UTC))
 	nextYear := storage.CatalogSnapshotKey(time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC))
-	if !(early < late && late < nextYear) {
+	if early >= late || late >= nextYear {
 		t.Errorf("keys do not sort chronologically: %q %q %q", early, late, nextYear)
 	}
 }

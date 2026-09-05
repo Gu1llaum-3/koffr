@@ -326,8 +326,9 @@ func validSegment(s, what string) error {
 
 func isHexUpper(s string) bool {
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if !(c >= '0' && c <= '9' || c >= 'A' && c <= 'F') {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9', c >= 'A' && c <= 'F':
+		default:
 			return false
 		}
 	}

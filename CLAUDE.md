@@ -115,11 +115,25 @@ Never build a key by hand elsewhere.
 
 ```sh
 make build     # bin/koffr
-make test      # go test ./...
+make test      # go test -race ./...
+make cover     # coverage, scoped to internal/
 make lint      # go vet + golangci-lint
 make cross     # linux/amd64 and linux/arm64, CGO disabled
 make vuln      # govulncheck
 ```
+
+Run `make lint` before pushing. golangci-lint v2 is installed locally, and CI
+runs the same configuration, so a lint failure discovered in CI is a wasted
+round trip.
+
+Two local quirks worth knowing:
+
+- The auto-downloaded Go toolchain module has no `covdata`, so `-cover` warns on
+  packages that have no tests. That is why `make cover` is scoped to
+  `internal/`. CI installs a full toolchain and is unaffected.
+- Golden files are regenerated with `UPDATE_GOLDEN=1 go test ./...`. Review the
+  diff before committing: a golden test that is updated without being read is a
+  test that has stopped testing anything.
 
 ## Things that are settled — do not reopen without an ADR
 

@@ -53,7 +53,7 @@ func TestEncode_Golden(t *testing.T) {
 	golden := filepath.Join("testdata", "manifest.golden.json")
 	if os.Getenv("UPDATE_GOLDEN") != "" {
 		require.NoError(t, os.MkdirAll("testdata", 0o755))
-		require.NoError(t, os.WriteFile(golden, []byte(b.String()), 0o644))
+		require.NoError(t, os.WriteFile(golden, []byte(b.String()), 0o600))
 	}
 	want, err := os.ReadFile(golden)
 	require.NoError(t, err, "run with UPDATE_GOLDEN=1 to create it")
