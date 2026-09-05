@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	gopath "path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -111,6 +112,20 @@ func waitReady(ctx context.Context) error {
 func adminDSN() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
 		adminUser, adminPass, shared.host, shared.port, database)
+}
+
+// pgRestore resolves pg_restore beside the pg_dump that produced the archive.
+//
+// A bare "pg_restore" is not good enough, and CI proved it: with several client
+// toolchains installed, PATH resolved pg_dump to 17 and pg_restore to 16, and
+// the older one cannot read the newer archive format. That is the same mixed
+// toolchain problem CT-001 is about, appearing in the harness rather than the
+// code.
+func pgRestore(t *testing.T) string {
+	t.Helper()
+	dump, err := exec.LookPath("pg_dump")
+	require.NoError(t, err)
+	return gopath.Join(gopath.Dir(dump), "pg_restore")
 }
 
 func skipUnlessReady(t *testing.T) {
@@ -287,7 +302,7 @@ func TestOpen_ProducesARestorableDump(t *testing.T) {
 
 	// pg_restore reading it is the only proof that matters; a non-empty stream
 	// proves nothing about the archive being well formed.
-	out, err := exec.CommandContext(t.Context(), "pg_restore", "--list", dump).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), pgRestore(t), "--list", dump).CombinedOutput()
 	require.NoError(t, err, "pg_restore rejected the archive: %s", out)
 	assert.Contains(t, string(out), "widgets")
 }
@@ -320,7 +335,7 @@ func TestOpen_HonoursFilters(t *testing.T) {
 	require.NoError(t, f.Close())
 	require.NoError(t, stream.Close())
 
-	out, err := exec.CommandContext(t.Context(), "pg_restore", "--list", dump).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), pgRestore(t), "--list", dump).CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	assert.Contains(t, string(out), "wanted")
 	assert.NotContains(t, string(out), "unwanted")
@@ -430,7 +445,7 @@ func TestOpen_ThroughATunnel(t *testing.T) {
 	require.NoError(t, f.Close())
 	require.NoError(t, stream.Close())
 
-	out, err := exec.CommandContext(t.Context(), "pg_restore", "--list", dump).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), pgRestore(t), "--list", dump).CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	assert.Contains(t, string(out), "tunnelled")
 }

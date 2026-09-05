@@ -43,7 +43,16 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq
           sudo apt-get install -y -qq postgresql-client-17
+          # The runner ships an older client. Put 17 first so that pg_dump and
+          # pg_restore come from the same toolchain: an older pg_restore cannot
+          # read a newer archive format.
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+
+      - name: Confirm the client toolchain
+        run: |
           pg_dump --version
+          pg_restore --version
+          pg_dumpall --version
 
       - name: Test
         env:
