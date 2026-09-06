@@ -34,6 +34,7 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/restore"
 	"github.com/Gu1llaum-3/koffr/internal/scheduler"
 	"github.com/Gu1llaum-3/koffr/internal/source"
+	"github.com/Gu1llaum-3/koffr/internal/source/mariadb"
 	"github.com/Gu1llaum-3/koffr/internal/source/postgres"
 	"github.com/Gu1llaum-3/koffr/internal/storage"
 	"github.com/Gu1llaum-3/koffr/internal/version"
@@ -316,6 +317,8 @@ func sourceFor(src config.Source, ex executor.Executor) (source.Source, error) {
 	switch src.Engine {
 	case "postgresql":
 		return postgres.NewLogical(postgresConfig(src, localToolRunner()))
+	case "mariadb":
+		return mariadb.NewLogical(mariadbConfig(src, localToolRunner()))
 	default:
 		return nil, fmt.Errorf("engine %q is not supported yet", src.Engine)
 	}
@@ -687,6 +690,15 @@ func (a *app) runShow(ctx context.Context, backupID, sourceID, from string) erro
 			m.StartedAt.UTC().Format(time.RFC3339), m.FinishedAt.UTC().Format(time.RFC3339))
 		p.printf("prefix  %s\n", found.backup.Prefix())
 		p.printf("tool    %s %s\n", m.Tool.Name, m.Tool.Version)
+		// Said here rather than left in the manifest, because the manifest is
+		// not what anyone reads before a restore. A backup that is not a
+		// snapshot looks exactly like one that is, right up until the data
+		// comes back inconsistent.
+		if m.SnapshotConsistent != nil && !*m.SnapshotConsistent {
+			p.printf("\nWARNING: this backup is not a consistent snapshot. Parts of it were\n" +
+				"read at different moments, so it can hold a state the database never had.\n" +
+				"See the restrictions in its encrypted details for which tables caused it.\n")
+		}
 		p.printf("objects\n")
 		p.table(func(p *printer) {
 			for _, o := range m.Objects {
@@ -871,7 +883,9 @@ func (a *app) restoreCmd() *cobra.Command {
 	c.Flags().StringVar(&into, "into", "", "database to restore into (required)")
 	c.Flags().BoolVar(&create, "create", false, "create the target database first; fails if it exists")
 	c.Flags().BoolVar(&noOwner, "no-owner", false, "restore without reassigning ownership")
-	c.Flags().BoolVar(&globals, "with-globals", false, "replay roles and tablespaces before the dump")
+	c.Flags().BoolVar(&globals, "with-globals", false,
+		"also replay the accounts and privileges that go with the data\n"+
+			"(PostgreSQL roles and tablespaces, MariaDB users and grants)")
 	c.Flags().IntVar(&jobs, "jobs", 0, "parallel restore workers; needs an archive on disk, see `koffr fetch`")
 	c.Flags().StringVar(&target, "target", "",
 		"restore into this configured source's server instead of the backup's own (EF-080)")
@@ -928,8 +942,14 @@ func (a *app) runRestore(ctx context.Context, backupID string, opt restoreOption
 	return nil
 }
 
-func (a *app) doRestore(ctx context.Context, found *located, opt restoreOptions) (restore.PostgresResult, error) {
-	var zero restore.PostgresResult
+// restoreOutcome is what every engine's driver has in common: a restore either
+// worked or did not, and may have warnings worth printing.
+type restoreOutcome struct {
+	Warnings []string
+}
+
+func (a *app) doRestore(ctx context.Context, found *located, opt restoreOptions) (restoreOutcome, error) {
+	var zero restoreOutcome
 
 	targetID := found.sourceID
 	if opt.target != "" {
@@ -939,8 +959,13 @@ func (a *app) doRestore(ctx context.Context, found *located, opt restoreOptions)
 	if err != nil {
 		return zero, err
 	}
-	if src.Engine != "postgresql" {
-		return zero, fmt.Errorf("restoring a %s backup is not supported yet", src.Engine)
+	if src.Engine != found.manifest.Engine {
+		// Restoring a PostgreSQL dump into MariaDB is not a thing that half
+		// works; it is a thing that produces a mess and reports success on the
+		// statements it happened to understand.
+		return zero, fmt.Errorf(
+			"backup %s came from %s and source %q is %s: name a target of the same engine",
+			found.manifest.BackupID, found.manifest.Engine, targetID, src.Engine)
 	}
 	opener, err := openerFor(found.cfg)
 	if err != nil {
@@ -960,6 +985,10 @@ func (a *app) doRestore(ctx context.Context, found *located, opt restoreOptions)
 	}
 
 	fetcher := restore.Fetcher{Storage: found.storage, Opener: opener}
+	if src.Engine == "mariadb" {
+		return a.restoreMariaDB(ctx, found, opt, src, ex, fetcher)
+	}
+
 	dump, ok := objectNamed(found.manifest, ".pgdump")
 	if !ok {
 		return zero, fmt.Errorf("backup %s holds no pg_dump archive", found.manifest.BackupID)
@@ -999,9 +1028,52 @@ func (a *app) doRestore(ctx context.Context, found *located, opt restoreOptions)
 	// complaining about a short archive is a symptom, and the missing or
 	// damaged object is the cause.
 	if fetchErr := fetchFailed(); fetchErr != nil {
-		return res, classifyRepository(fetchErr)
+		return restoreOutcome{Warnings: res.Warnings}, classifyRepository(fetchErr)
 	}
-	return res, err
+	return restoreOutcome{Warnings: res.Warnings}, err
+}
+
+// restoreMariaDB is the MariaDB half of doRestore, split out because the two
+// engines share the fetching and share nothing else.
+func (a *app) restoreMariaDB(
+	ctx context.Context, found *located, opt restoreOptions,
+	src config.Source, ex executor.Executor, fetcher restore.Fetcher,
+) (restoreOutcome, error) {
+	var zero restoreOutcome
+
+	dump, ok := objectNamed(found.manifest, ".sql")
+	if !ok {
+		return zero, fmt.Errorf("backup %s holds no SQL dump", found.manifest.BackupID)
+	}
+
+	// Both streams are pipes, so nothing is written to disk: the bytes go
+	// storage -> age -> zstd -> mariadb and nowhere else (ENF-001).
+	prefix := found.backup.Prefix()
+	dumpR, dumpResult := a.pipeObject(ctx, fetcher, prefix, dump)
+	fetchFailed := dumpResult
+
+	req := restore.MariaDBRequest{Database: opt.into, Dump: dumpR}
+	if opt.globals {
+		if g, ok := objectNamed(found.manifest, "grants.sql"); ok {
+			grantsR, grantsResult := a.pipeObject(ctx, fetcher, prefix, g)
+			req.Grants = grantsR
+			fetchFailed = func() error {
+				if err := grantsResult(); err != nil {
+					return err
+				}
+				return dumpResult()
+			}
+		}
+	}
+
+	a.printf("restoring %s into %s...", found.manifest.BackupID, opt.into)
+	driver := restore.MariaDB{Config: mariadbConfig(src, localToolRunner())}
+	res, err := driver.Restore(ctx, ex, req)
+
+	if fetchErr := fetchFailed(); fetchErr != nil {
+		return restoreOutcome{Warnings: res.Warnings}, classifyRepository(fetchErr)
+	}
+	return restoreOutcome{Warnings: res.Warnings}, err
 }
 
 // pipeObject streams one object into a pipe the caller reads, and returns a

@@ -356,6 +356,17 @@ type Source struct {
 	SSLRootCert string `yaml:"sslrootcert,omitempty"`
 	BinDir      string `yaml:"bin_dir,omitempty"`
 
+	// AllowInconsistentSnapshot lets a MariaDB source with non-transactional
+	// tables be backed up anyway.
+	//
+	// It exists because an all-MyISAM database is real and an imperfect dump
+	// beats none. It is off by default and never inferred: --single-transaction
+	// only covers transactional engines, so one MyISAM table is enough for a
+	// dump to hold a state the database never had, and nothing in the output
+	// says so. Every backup taken this way is marked inconsistent in its
+	// manifest.
+	AllowInconsistentSnapshot bool `yaml:"allow_inconsistent_snapshot,omitempty"`
+
 	// Retention is what may be deleted. Absent means nothing is: a source with
 	// no policy keeps every backup for ever, which is the only safe default
 	// for a setting whose mistakes are unrecoverable (EF-105).
@@ -648,9 +659,9 @@ func (d *Destination) validateTransfer(v *validator, path string) {
 	}
 }
 
-// engines are what M1 supports. MariaDB arrives in M3; naming it here would
-// accept a configuration that cannot run.
-var engines = []string{"postgresql"}
+// engines are what is actually implemented. Naming one that is not would
+// accept a configuration that cannot run (PD-006).
+var engines = []string{"postgresql", "mariadb"}
 
 func (s *Source) validate(v *validator, path string, destinations map[string]Destination) {
 	if !slices.Contains(engines, s.Engine) {

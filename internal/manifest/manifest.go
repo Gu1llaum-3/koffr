@@ -51,6 +51,20 @@ type Manifest struct {
 	// a logical backup does not claim a shape it has not got.
 	PostgreSQL *PostgreSQLDetails `json:"postgresql,omitempty"`
 
+	// SnapshotConsistent says whether this backup represents one moment in the
+	// database's life.
+	//
+	// A pointer, and absent from most manifests, because "not recorded" and
+	// "recorded as false" are different claims and a bare false would make
+	// every backup taken before this field existed look untrustworthy.
+	//
+	// It lives in the plaintext manifest rather than the encrypted details on
+	// purpose: whether a snapshot can be trusted is the first thing anyone
+	// asks when restoring, and they should not need a key to find out. What
+	// *made* it inconsistent names tables, so that stays in the details
+	// (EF-055).
+	SnapshotConsistent *bool `json:"snapshot_consistent,omitempty"`
+
 	Objects []Object `json:"objects"`
 	Tool    Tool     `json:"tool"`
 
@@ -108,6 +122,11 @@ func ToolFrom(name, version string, args []string) Tool {
 type Details struct {
 	Databases []string   `json:"databases,omitempty"`
 	Relations []Relation `json:"relations,omitempty"`
+
+	// Restrictions are what the source could not do, in the words Probe used.
+	// They name tables and privileges, which is content rather than metadata,
+	// so they belong on this side of the encryption (EF-055).
+	Restrictions []string `json:"restrictions,omitempty"`
 }
 
 // Relation is one table or index in the backup.

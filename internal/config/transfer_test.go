@@ -179,3 +179,38 @@ func TestTransfer_MaxPartsDefaultsToWhatTheProviderLikelyAllows(t *testing.T) {
 		assert.Contains(t, err.Error(), "max_parts")
 	})
 }
+
+// A second engine is only supported once a configuration naming it loads and a
+// path from cmd/koffr reaches it. This is the first half.
+func TestSource_MariaDBIsAccepted(t *testing.T) {
+	setIdentity(t)
+	t.Setenv("PGPASSWORD", testutil.SecretSentinel)
+
+	body := strings.Replace(valid, "engine: postgresql", "engine: mariadb", 1)
+	cfg, err := config.Load(write(t, body))
+	require.NoError(t, err)
+	assert.Equal(t, "mariadb", cfg.Sources["prod-pg-main"].Engine)
+	assert.False(t, cfg.Sources["prod-pg-main"].AllowInconsistentSnapshot,
+		"a dump that is not a snapshot is never the default")
+}
+
+func TestSource_AllowInconsistentSnapshotIsExplicit(t *testing.T) {
+	setIdentity(t)
+	t.Setenv("PGPASSWORD", testutil.SecretSentinel)
+
+	body := strings.Replace(valid, "engine: postgresql",
+		"engine: mariadb\n    allow_inconsistent_snapshot: true", 1)
+	cfg, err := config.Load(write(t, body))
+	require.NoError(t, err)
+	assert.True(t, cfg.Sources["prod-pg-main"].AllowInconsistentSnapshot)
+}
+
+func TestSource_AnUnknownEngineIsStillRefused(t *testing.T) {
+	setIdentity(t)
+	t.Setenv("PGPASSWORD", testutil.SecretSentinel)
+
+	body := strings.Replace(valid, "engine: postgresql", "engine: mysql", 1)
+	_, err := config.Load(write(t, body))
+	require.Error(t, err, "naming an engine that is not implemented accepts a job that cannot run")
+	assert.Contains(t, err.Error(), "mysql")
+}

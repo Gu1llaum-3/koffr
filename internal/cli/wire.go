@@ -18,6 +18,7 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/executor"
 	"github.com/Gu1llaum-3/koffr/internal/executor/local"
 	"github.com/Gu1llaum-3/koffr/internal/executor/ssh"
+	"github.com/Gu1llaum-3/koffr/internal/source/mariadb"
 	"github.com/Gu1llaum-3/koffr/internal/source/postgres"
 	"github.com/Gu1llaum-3/koffr/internal/storage"
 	"github.com/Gu1llaum-3/koffr/internal/storage/fs"
@@ -143,6 +144,34 @@ func retryerFor(dest config.Destination) aws.Retryer {
 		o.Backoff = retry.BackoffDelayerFunc(
 			func(int, error) (time.Duration, error) { return interval, nil })
 	})
+}
+
+// mariadbConfig maps a configured source onto the MariaDB driver.
+//
+// sslmode is reused rather than a second knob being added: an operator should
+// not have to learn two spellings of the same idea because the engines do. The
+// PostgreSQL vocabulary is the one the file already speaks, so it is translated
+// here rather than duplicated there.
+func mariadbConfig(src config.Source, toolRunner executor.Executor) mariadb.Config {
+	tls := "disable"
+	switch src.SSLMode {
+	case "require", "prefer":
+		tls = "require"
+	case "verify-ca", "verify-full":
+		tls = "verify"
+	}
+	return mariadb.Config{
+		Host:                      src.Host,
+		Port:                      src.Port,
+		User:                      src.User,
+		Password:                  src.Password.Value(),
+		Database:                  src.Database,
+		TLS:                       tls,
+		BinDir:                    src.BinDir,
+		AllowInconsistentSnapshot: src.AllowInconsistentSnapshot,
+		ToolRunner:                toolRunner,
+		ConnectTimeout:            15 * time.Second,
+	}
 }
 
 func openCatalog(ctx context.Context, cfg config.Config) (catalog.MetadataStore, error) {

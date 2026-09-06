@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -338,6 +339,23 @@ func (r *Runner) describeHolder(ctx context.Context, src storage.Source) string 
 	return string(bytes.TrimSpace(bytes.ReplaceAll(content, []byte("\n"), []byte(" since "))))
 }
 
+// snapshotConsistent reads the source's restrictions for the one that says this
+// backup is not a point in time.
+//
+// A string match, because the alternative is a second channel from every source
+// carrying a flag that only one engine sets. The restriction text is written
+// once, next to the check that produces it, and is the same string the operator
+// is shown.
+func snapshotConsistent(info source.Info) *bool {
+	for _, r := range info.Restrictions {
+		if strings.Contains(r, source.NotASnapshot) {
+			no := false
+			return &no
+		}
+	}
+	return nil
+}
+
 // store writes every artifact and finishes with the manifest.
 func (r *Runner) store(
 	ctx context.Context, req Request, info source.Info, b storage.Backup, backupID catalog.ID,
@@ -378,7 +396,10 @@ func (r *Runner) store(
 
 	// The details describe the content, so they are sealed (EF-055).
 	var detailsBuf bytes.Buffer
-	if err := manifest.EncodeDetails(&detailsBuf, manifest.Details{Databases: info.Databases}); err != nil {
+	if err := manifest.EncodeDetails(&detailsBuf, manifest.Details{
+		Databases:    info.Databases,
+		Restrictions: info.Restrictions,
+	}); err != nil {
 		return manifest.Manifest{}, fmt.Errorf("backup: %w", err)
 	}
 	detailsObj, err := r.putSealed(ctx, b.DetailsKey(), detailsBuf.Bytes())
@@ -401,6 +422,12 @@ func (r *Runner) store(
 		Objects:       objects,
 		Tool:          manifest.ToolFrom(string(info.Engine), info.ServerVersion, nil),
 		KoffrVersion:  r.KoffrVersion,
+		// Recorded whenever the source said anything about consistency, and
+		// left absent otherwise. A backup that cannot be trusted as a snapshot
+		// has to say so here: the operator restoring it a year from now will
+		// not have the configuration that allowed it, nor the conversation
+		// where someone decided the risk was acceptable.
+		SnapshotConsistent: snapshotConsistent(info),
 	}
 	if err := m.Validate(); err != nil {
 		return manifest.Manifest{}, fmt.Errorf("backup: %w", err)

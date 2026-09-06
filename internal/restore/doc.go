@@ -230,16 +230,51 @@ func postgresPhysical(objects []objectView) procedure {
 }
 
 func mariadbLogical(objects []objectView) procedure {
-	return procedure{
-		Title: "Restore a MariaDB logical backup",
-		Steps: []step{
-			{
-				Title:   "Load the dump",
-				Body:    "The dump is plain SQL and is replayed by the client.",
-				Command: pipeThrough(primary(objects), "mariadb --user=USER --password --database=DBNAME"),
-			},
-		},
+	dump, ok := find(objects, ".sql")
+	if !ok {
+		dump = primary(objects)
 	}
+	// The dump was taken with --databases, so it carries its own CREATE
+	// DATABASE and USE. That is what makes this one command rather than three,
+	// and it is why no --database flag is given: passing one would silently
+	// override where the contents land.
+	steps := []step{{
+		Title: "Put the credentials in a file",
+		Body: "Not on the command line, where `ps` shows them to every user on the machine, " +
+			"and not with a bare --password either: that makes the client ask for the " +
+			"password on the terminal, and the terminal is busy carrying the dump.\n\n" +
+			"Replace USER and PASSWORD, and delete the file when you are done.",
+		Command: "install -m 600 /dev/null restore.cnf && " +
+			"printf '[client]\\nuser=USER\\npassword=PASSWORD\\n' > restore.cnf",
+	}, {
+		Title: "Load the dump",
+		Body: "The dump is plain SQL. It was taken with --databases, so it creates the " +
+			"database it came from and selects it: no --database flag is needed, and " +
+			"giving one would send the contents somewhere other than where they belong.\n\n" +
+			"To restore under a different name, edit the CREATE DATABASE and USE lines at " +
+			"the top of the decompressed file first.",
+		Command: pipeThrough(dump, "mariadb --defaults-file=restore.cnf --protocol=TCP"),
+	}}
+
+	if grants, ok := find(objects, "grants.sql"); ok {
+		steps = append(steps, step{
+			Title: "Recreate the accounts and their privileges",
+			Body: "Accounts live in the server, not in a database, so a dump of one database " +
+				"does not carry them. Restoring without this step leaves tables whose owners " +
+				"and grantees do not exist.\n\n" +
+				"The accounts come back **without their passwords**. Koffr does not put a " +
+				"password hash in a backup repository: it is a liability nobody asked for. " +
+				"Set them again with SET PASSWORD after restoring.\n\n" +
+				"Only privileges scoped to this database are listed. An account that reached " +
+				"it through a server-wide grant is not reproduced, because replaying such a " +
+				"grant would change the security of this server.\n\n" +
+				"The client will report an error for every account the server already has and " +
+				"exit non-zero because of it. That is expected: read the errors rather than " +
+				"trusting the exit status here.",
+			Command: pipeThrough(grants, "mariadb --defaults-file=restore.cnf --protocol=TCP --force"),
+		})
+	}
+	return procedure{Title: "Restore a MariaDB logical backup", Steps: steps}
 }
 
 func mariadbPhysical(objects []objectView) procedure {

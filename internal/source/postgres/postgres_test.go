@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	gopath "path/filepath"
@@ -25,12 +26,17 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/executor/local"
 	"github.com/Gu1llaum-3/koffr/internal/source"
 	"github.com/Gu1llaum-3/koffr/internal/source/postgres"
+	"github.com/Gu1llaum-3/koffr/internal/source/sourcetest"
 	"github.com/Gu1llaum-3/koffr/internal/testutil"
 )
 
 const (
 	adminUser = "postgres"
-	adminPass = "probe-admin"
+	// The container's own password is the sentinel, so every test in this
+	// package -- not only the one that looks for it -- proves ENF-021 by
+	// construction. A separate literal would let a leak hide behind a password
+	// nothing searches for.
+	adminPass = testutil.SecretSentinel
 	database  = "probe"
 )
 
@@ -120,9 +126,17 @@ func waitReady(ctx context.Context) error {
 	return lastErr
 }
 
+// adminDSN escapes what it interpolates.
+//
+// It did not, until the container's password became the sentinel and the "/" in
+// it turned the DSN into a URL with a port named "koffr-D0-N0T-L0G-thisvalue".
+// The production dsn() has always percent-escaped; the harness had simply never
+// been given a password with a character worth escaping, which is exactly the
+// blind spot a deliberately awkward sentinel exists to find.
 func adminDSN() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable",
-		adminUser, adminPass, shared.host, shared.port, database)
+		neturl.QueryEscape(adminUser), neturl.QueryEscape(adminPass),
+		shared.host, shared.port, neturl.QueryEscape(database))
 }
 
 // pgRestore resolves pg_restore beside the pg_dump that produced the archive.
@@ -648,4 +662,30 @@ func TestOpen_GlobalsWorkWithAReadOnlyRole(t *testing.T) {
 	assert.Contains(t, globals, "CREATE ROLE", "the roles themselves still have to be there")
 	assert.NotContains(t, globals, "PASSWORD",
 		"a password hash in a backup is a liability nobody asked for")
+}
+
+// The contract every source.Source implementation must satisfy.
+//
+// Run against PostgreSQL first, deliberately: it is the implementation the
+// interface was shaped around, so a failure here is a failure of the contract
+// rather than of a new engine. Whatever it finds, MariaDB would have been
+// blamed for.
+func TestContract(t *testing.T) {
+	skipUnlessReady(t)
+
+	sourcetest.Suite(t, sourcetest.Target{
+		Engine: source.EnginePostgreSQL,
+		Kind:   source.KindLogical,
+		New: func(t *testing.T, tools executor.Executor) source.Source {
+			cfg := baseConfig()
+			cfg.ToolRunner = tools
+			return newSource(t, cfg)
+		},
+		Reach: func(t *testing.T) executor.Executor { return localExec(t) },
+		WithoutClientBinary: func(t *testing.T) source.Source {
+			cfg := baseConfig()
+			cfg.BinDir = t.TempDir() // empty: pg_dump is not in it
+			return newSource(t, cfg)
+		},
+	})
 }

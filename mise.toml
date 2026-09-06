@@ -23,4 +23,7 @@ CGO_ENABLED = "0"
 # the integration tests need them too. Homebrew keeps libpq off PATH on purpose;
 # on Linux the PGDG packages land on PATH already and this entry is simply
 # ignored.
-_.path = ["/opt/homebrew/opt/libpq/bin"]
+# The MariaDB client is the same story: Homebrew installs mariadb-dump and
+# mariadb under the formula's own prefix rather than on PATH. On Linux the
+# distribution packages land on PATH already and this entry is simply ignored.
+_.path = ["/opt/homebrew/opt/libpq/bin", "/opt/homebrew/opt/mariadb/bin"]

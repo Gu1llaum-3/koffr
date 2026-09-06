@@ -87,7 +87,7 @@ clean:
 # backend types, the memory ceiling at that size, the absence of any temporary
 # file, and the PostgreSQL 14 to 18 matrix. KOFFR_REQUIRE_DOCKER is set so a
 # missing runtime fails rather than reporting a pass nobody ran.
-verify-milestone: verify-pg-matrix
+verify-milestone: verify-pg-matrix verify-mariadb-matrix
 	@echo "This moves tens of gigabytes and takes tens of minutes."
 	KOFFR_MILESTONE=1 KOFFR_REQUIRE_DOCKER=1 \
 		go test -tags milestone -timeout 120m -v ./test/milestone/...
@@ -101,4 +101,15 @@ verify-pg-matrix:
 		echo "== PostgreSQL $$v =="; \
 		KOFFR_REQUIRE_DOCKER=1 KOFFR_PG_IMAGE=postgres:$$v \
 			go test -count=1 ./internal/source/postgres/... || exit 1; \
+	done
+
+# The same gate for MariaDB. ENF-041 fixes the range at 10.6 to 12, and the
+# three named here are the ends and the middle of it: a client that talks to
+# 10.6 and to 12 is the claim, and a claim needs a run behind it.
+.PHONY: verify-mariadb-matrix
+verify-mariadb-matrix:
+	@for v in 10.6 11.4 12.0; do \
+		echo "== MariaDB $$v =="; \
+		KOFFR_REQUIRE_DOCKER=1 KOFFR_MARIADB_IMAGE=mariadb:$$v \
+			go test -count=1 ./internal/source/mariadb/... || exit 1; \
 	done

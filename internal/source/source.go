@@ -69,6 +69,15 @@ type Info struct {
 	Databases []string
 }
 
+// NotASnapshot is the phrase a source uses, in Info.Restrictions, to say that
+// its dump spans more than one moment in the database's life.
+//
+// A shared constant rather than a second channel carrying a flag only one
+// engine ever sets. It is written once, next to the check that produces it, it
+// is the same sentence the operator is shown, and the manifest reads it back
+// here so producer and reader cannot drift apart.
+const NotASnapshot = "snapshot is not consistent"
+
 // Request asks for one specific backup.
 type Request struct {
 	Kind Kind

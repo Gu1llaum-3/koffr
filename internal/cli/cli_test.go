@@ -1478,3 +1478,32 @@ func TestConfigValidate_SaysTheSizeCeilingOfEachObjectStore(t *testing.T) {
 	assert.Contains(t, out, "15.6 GiB", "16 MiB parts, a thousand of them")
 	assert.Contains(t, out, "max_parts")
 }
+
+// A backup that is not a snapshot looks exactly like one that is, right up
+// until the data comes back inconsistent. The manifest records it; this is the
+// command that shows it to somebody.
+func TestShow_WarnsWhenTheSnapshotIsNotConsistent(t *testing.T) {
+	cfgPath := configFile(t)
+	const id = "01INCONSISTENT0000000000AA"
+	putBackup(t, cfgPath, id)
+
+	// Mark it the way a MariaDB source with a MyISAM table would have.
+	path := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main",
+		"logical", id, "manifest.json")
+	body, err := os.ReadFile(path) //nolint:gosec // a path this test just created
+	require.NoError(t, err)
+	marked := strings.Replace(string(body), `"status":"completed"`,
+		`"status":"completed","snapshot_consistent":false`, 1)
+	require.NoError(t, os.WriteFile(path, []byte(marked), 0o600))
+
+	code, out, errOut := run(t, "--config", cfgPath, "show", id)
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, "not a consistent snapshot")
+
+	// And a backup that says nothing about it is not accused of anything.
+	const clean = "01CONSISTENT000000000000BB"
+	putBackup(t, cfgPath, clean)
+	code, out, _ = run(t, "--config", cfgPath, "show", clean)
+	require.Equal(t, cli.ExitOK, code)
+	assert.NotContains(t, out, "not a consistent snapshot")
+}

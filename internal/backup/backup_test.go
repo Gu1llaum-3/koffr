@@ -593,3 +593,26 @@ func readAll(t *testing.T, st *memory.Storage, key string) []byte {
 	require.NoError(t, err)
 	return body
 }
+
+// A backup whose source said it is not a snapshot must carry that in its
+// manifest, in the clear: whether a snapshot can be trusted is the first thing
+// anyone asks when restoring, and they should not need a key to find out.
+func TestStore_RecordsWhenTheSnapshotIsNotConsistent(t *testing.T) {
+	t.Run("said, and recorded", func(t *testing.T) {
+		got := backup.SnapshotConsistentFor(source.Info{Restrictions: []string{
+			source.NotASnapshot + ": 1 non-transactional table(s) (legacy (MyISAM))",
+		}})
+		require.NotNil(t, got, "a backup that is not a snapshot must say so")
+		assert.False(t, *got)
+	})
+
+	t.Run("nothing said, nothing claimed", func(t *testing.T) {
+		// Absent rather than true: "not recorded" and "recorded as consistent"
+		// are different claims, and every backup taken before this field
+		// existed is in the first category.
+		assert.Nil(t, backup.SnapshotConsistentFor(source.Info{}))
+		assert.Nil(t, backup.SnapshotConsistentFor(source.Info{
+			Restrictions: []string{"triggers are not included: the user lacks the TRIGGER privilege"},
+		}))
+	})
+}
