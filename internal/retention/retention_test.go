@@ -219,3 +219,48 @@ func TestPolicy_Validate(t *testing.T) {
 	assert.Error(t, retention.Policy{Daily: -1}.Validate())
 	assert.Error(t, retention.Policy{KeepWithin: -time.Hour}.Validate())
 }
+
+// EF-065 says the last *restorable* backup, and Plan was reading it as the last
+// recorded one. A catalog row is not a backup: if the newest backup's objects
+// were lost -- bit rot, a bucket lifecycle rule, someone tidying up -- the
+// policy would delete the older good ones and leave the source with nothing
+// that can be restored.
+func TestPlan_TheFloorSkipsABackupThatIsNotThere(t *testing.T) {
+	backups := []catalog.Backup{
+		at("gone", 400*24*time.Hour),
+		at("present", 500*24*time.Hour),
+	}
+
+	// Everything is expired, so only the floor can save anything.
+	plan, err := retention.Plan(backups, retention.Policy{KeepWithin: time.Minute}, now,
+		retention.WithRestorable(func(b catalog.Backup) bool { return b.ID != "gone" }))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"present"}, kept(t, plan),
+		"the floor has to fall through to a backup that actually exists")
+	assert.Equal(t, []string{"gone"}, deleted(t, plan))
+}
+
+// And if none of them is restorable, nothing is deleted. Deleting the litter
+// would be defensible; doing it as a side effect of a retention policy, in the
+// one situation where an operator has already lost their backups, is not.
+func TestPlan_NothingRestorableDeletesNothing(t *testing.T) {
+	backups := []catalog.Backup{at("a", 400*24*time.Hour), at("b", 500*24*time.Hour)}
+
+	plan, err := retention.Plan(backups, retention.Policy{KeepWithin: time.Minute}, now,
+		retention.WithRestorable(func(catalog.Backup) bool { return false }))
+	require.NoError(t, err)
+	assert.Empty(t, deleted(t, plan))
+	for _, d := range plan {
+		assert.Contains(t, d.Reason, "cannot confirm")
+	}
+}
+
+// Without the option, Plan behaves as before: the newest recorded backup is the
+// floor. Callers that cannot check are not forced to pretend they can.
+func TestPlan_WithoutTheCheckTheNewestRecordedIsTheFloor(t *testing.T) {
+	plan, err := retention.Plan([]catalog.Backup{at("only", 400*24*time.Hour)},
+		retention.Policy{KeepWithin: time.Minute}, now)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"only"}, kept(t, plan))
+}

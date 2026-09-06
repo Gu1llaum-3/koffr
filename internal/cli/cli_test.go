@@ -1083,3 +1083,31 @@ func TestPrune_RefreshesTheCatalogCopyInTheRepository(t *testing.T) {
 		"a rebuild must not resurrect a backup the purge deleted; "+
 			"the row would advertise something nothing can restore")
 }
+
+// EF-065 through the whole command: if the newest backup's objects are gone,
+// the purge must not spend the floor on it and delete the older good ones.
+// A catalog row is not a backup.
+func TestPrune_KeepsSomethingThatIsActuallyThere(t *testing.T) {
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_within: 1m")
+
+	newest, older := "01NEWEST00000000000000000A", "01OLDER000000000000000000B"
+
+	// The newest exists only in the catalog: its objects were lost.
+	recordBackup(t, cfgPath, newest, time.Now().Add(-48*time.Hour))
+	putBackup(t, cfgPath, older)
+	recordBackup(t, cfgPath, older, time.Now().Add(-72*time.Hour))
+
+	code, out, errOut := run(t, "--config", cfgPath, "prune", "--confirm")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, "only restorable backup")
+
+	// The one with objects survives; the row with none goes.
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
+	entries, err := os.ReadDir(prefix)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, older, entries[0].Name(),
+		"deleting the only backup that still exists, to keep a row that restores nothing, "+
+			"is the one mistake this rule exists to prevent")
+}

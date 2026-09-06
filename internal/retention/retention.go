@@ -87,8 +87,32 @@ type Decision struct {
 	Reason string
 }
 
+// Option tunes a plan.
+type Option func(*options)
+
+type options struct {
+	restorable func(catalog.Backup) bool
+}
+
+// WithRestorable tells Plan how to check a backup is actually there.
+//
+// EF-065 says the last *restorable* backup, and a catalog row is not a backup.
+// If the newest one's objects were lost -- bit rot, a bucket lifecycle rule,
+// someone tidying up -- the floor would spend itself on a row that restores
+// nothing while the policy deleted the older good ones.
+//
+// Optional because not every caller can afford the round trips, and a caller
+// that cannot check should not be made to pretend it did.
+func WithRestorable(check func(catalog.Backup) bool) Option {
+	return func(o *options) { o.restorable = check }
+}
+
 // Plan decides what to delete, and never touches anything.
-func Plan(backups []catalog.Backup, p Policy, now time.Time) ([]Decision, error) {
+func Plan(backups []catalog.Backup, p Policy, now time.Time, opts ...Option) ([]Decision, error) {
+	var cfg options
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
@@ -183,15 +207,12 @@ func Plan(backups []catalog.Backup, p Policy, now time.Time) ([]Decision, error)
 		}
 	}
 
-	// EF-065, applied last and only if nothing else spared the newest.
+	// EF-065, applied last and only if nothing else spared anything restorable.
 	//
-	// A floor rather than a rule: when a policy already keeps it, the policy's
-	// reason is the one an operator needs to read. This one appears exactly
-	// when it did something -- when the configuration, followed literally,
-	// would have left the source with no backup at all.
-	if _, spared := reasons[candidates[0].ID]; !spared {
-		keep(candidates[0], "the only backup that would be left; no policy may delete the last one")
-	}
+	// A floor rather than a rule: when a policy already keeps a backup that is
+	// really there, the policy's reason is the one an operator needs to read.
+	// This one appears exactly when it did something.
+	applyFloor(candidates, reasons, cfg, keep)
 
 	out := make([]Decision, 0, len(candidates))
 	for _, b := range candidates {
@@ -304,4 +325,42 @@ func deletePrefix(ctx context.Context, st storage.Storage, prefix string) (int64
 		}
 	}
 	return freed, nil
+}
+
+// applyFloor makes sure something restorable survives.
+//
+// It walks newest-first to the first backup that is actually there, rather than
+// stopping at the newest row. A row whose objects are gone is not a backup, and
+// spending the floor on one would leave the source with nothing while the
+// policy deleted the older good ones.
+//
+// If nothing is restorable, nothing is deleted. Removing the litter would be
+// defensible on its own; doing it as a side effect of a retention policy, in
+// the one situation where an operator has already lost their backups, is not.
+func applyFloor(
+	candidates []catalog.Backup,
+	reasons map[catalog.ID]string,
+	cfg options,
+	keep func(catalog.Backup, string),
+) {
+	if cfg.restorable == nil {
+		if _, spared := reasons[candidates[0].ID]; !spared {
+			keep(candidates[0], "the only backup that would be left; no policy may delete the last one")
+		}
+		return
+	}
+
+	for _, b := range candidates {
+		if !cfg.restorable(b) {
+			continue
+		}
+		if _, spared := reasons[b.ID]; !spared {
+			keep(b, "the only restorable backup that would be left; no policy may delete the last one")
+		}
+		return
+	}
+
+	for _, b := range candidates {
+		keep(b, "nothing was deleted: Koffr cannot confirm any of these backups is still in the repository")
+	}
 }

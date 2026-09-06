@@ -11,6 +11,7 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/catalog/replica"
 	"github.com/Gu1llaum-3/koffr/internal/config"
 	"github.com/Gu1llaum-3/koffr/internal/retention"
+	"github.com/Gu1llaum-3/koffr/internal/storage"
 )
 
 func (a *app) pruneCmd() *cobra.Command {
@@ -166,7 +167,17 @@ func (a *app) planFor(
 	if err != nil {
 		return nil, err
 	}
-	plan, err := retention.Plan(backups, src.Retention.Policy(), time.Now().In(cfg.Scheduler.Location()))
+
+	// EF-065 wants the last *restorable* backup, and a catalog row is not one.
+	// Checking costs a Stat per backup and only until the first that is there,
+	// which is a price worth paying before deleting anything.
+	restorable, err := a.restorableCheck(ctx, cfg, src)
+	if err != nil {
+		return nil, err
+	}
+
+	plan, err := retention.Plan(backups, src.Retention.Policy(),
+		time.Now().In(cfg.Scheduler.Location()), retention.WithRestorable(restorable))
 	if err != nil {
 		// A kind this version cannot reason about. Refused for the whole pass,
 		// not skipped: a partial purge is worse than none, because it looks
@@ -222,4 +233,40 @@ func (a *app) refreshReplica(ctx context.Context, cfg config.Config, cat catalog
 		}
 	}
 	return ""
+}
+
+// restorableCheck asks the repository whether a backup's manifest is still
+// there.
+//
+// The manifest is the right thing to look for: its presence is what makes a set
+// of objects a backup (ENF-010), so a prefix without one is litter whatever
+// else it holds.
+func (a *app) restorableCheck(
+	ctx context.Context, cfg config.Config, src config.Source,
+) (func(catalog.Backup) bool, error) {
+	_, dest, err := a.destinationFor(cfg, src, "")
+	if err != nil {
+		return nil, err
+	}
+	st, err := openStorage(ctx, dest)
+	if err != nil {
+		return nil, err
+	}
+
+	return func(b catalog.Backup) bool {
+		layoutSource, err := storage.ForSource(b.SourceID)
+		if err != nil {
+			return false
+		}
+		backup, err := layoutSource.Backup(storage.DirLogical, string(b.ID))
+		if err != nil {
+			return false
+		}
+		// An error that is not "absent" -- a network blip, a permission
+		// problem -- reads as not restorable, which makes the floor keep more
+		// rather than less. Being wrong in that direction costs disk; being
+		// wrong the other way costs the backup.
+		_, err = st.Stat(ctx, backup.ManifestKey())
+		return err == nil
+	}, nil
 }
