@@ -121,6 +121,13 @@ func (r *Runner) Run(ctx context.Context, req Request) (res Result, err error) {
 		return Result{}, fmt.Errorf("backup: %w", err)
 	}
 
+	// The repository stamps its format on first use and refuses one written by
+	// a newer Koffr (EF-043). Doing it here rather than at the first Put means
+	// a version mismatch is found before a lock is taken (PD-006).
+	if _, err := storage.OpenRepository(ctx, r.Storage, req.Destination, r.KoffrVersion, r.Now()); err != nil {
+		return Result{}, fmt.Errorf("backup: %w", err)
+	}
+
 	// Probe before locking. A source that cannot produce what was asked for is
 	// refused without touching the repository, so a misconfiguration does not
 	// leave a lock behind for someone to clear (PD-006).

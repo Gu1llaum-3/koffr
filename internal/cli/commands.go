@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/Gu1llaum-3/koffr/internal/backup"
 	"github.com/Gu1llaum-3/koffr/internal/catalog"
@@ -623,7 +625,7 @@ func (a *app) fetchCmd() *cobra.Command {
 	}
 	c.Flags().StringVar(&sourceID, "source", "", "source the backup belongs to")
 	c.Flags().StringVar(&object, "object", "", "fetch only this object (default: all of them)")
-	c.Flags().StringVar(&outDir, "into", ".", "directory to write into")
+	c.Flags().StringVar(&outDir, "into", ".", "directory to write into, or - for stdout")
 	c.Flags().BoolVar(&raw, "raw", false,
 		"stop after decryption, leaving compression in place, as `age -d` would")
 	return c
@@ -645,11 +647,22 @@ func (a *app) runFetch(ctx context.Context, backupID, sourceID, only, outDir str
 	if err != nil {
 		return err
 	}
+	fetcher := restore.Fetcher{Storage: found.storage, Opener: opener}
+
+	// EF-083: `--into -` sends the artifact to stdout, so it can be piped
+	// straight into pg_restore without ever landing on a disk. Exactly one
+	// object then, because a pipe has no filenames to separate them by.
+	if outDir == "-" {
+		if a.format == formatJSON {
+			return fault(ExitUsage,
+				"--into - puts the artifact on stdout, so there is no room for --output json there")
+		}
+		return a.fetchToStdout(ctx, fetcher, found, only, raw)
+	}
+
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-
-	fetcher := restore.Fetcher{Storage: found.storage, Opener: opener}
 	var written []fetchedFile
 	for _, o := range found.manifest.Objects {
 		name := baseName(o.Key)
@@ -719,9 +732,12 @@ func (a *app) restoreCmd() *cobra.Command {
 	var (
 		sourceID string
 		into     string
+		target   string
 		create   bool
 		noOwner  bool
 		globals  bool
+		force    bool
+		yes      bool
 		jobs     int
 	)
 	c := &cobra.Command{
@@ -741,8 +757,9 @@ func (a *app) restoreCmd() *cobra.Command {
 				return fault(ExitUsage, "--into is required: name the database to restore into")
 			}
 			return a.runRestore(cmd.Context(), args[0], restoreOptions{
-				sourceID: sourceID, into: into, create: create,
+				sourceID: sourceID, into: into, target: target, create: create,
 				noOwner: noOwner, globals: globals, jobs: jobs,
+				force: force, yes: yes,
 			})
 		},
 	}
@@ -752,16 +769,28 @@ func (a *app) restoreCmd() *cobra.Command {
 	c.Flags().BoolVar(&noOwner, "no-owner", false, "restore without reassigning ownership")
 	c.Flags().BoolVar(&globals, "with-globals", false, "replay roles and tablespaces before the dump")
 	c.Flags().IntVar(&jobs, "jobs", 0, "parallel restore workers; needs an archive on disk, see `koffr fetch`")
+	c.Flags().StringVar(&target, "target", "",
+		"restore into this configured source's server instead of the backup's own (EF-080)")
+	c.Flags().BoolVar(&force, "force", false,
+		"restore into a database that already holds tables, merging the two")
+	c.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt, for scripts and schedules")
 	return c
 }
 
 type restoreOptions struct {
 	sourceID string
 	into     string
-	create   bool
-	noOwner  bool
-	globals  bool
-	jobs     int
+	// target names another configured source whose server receives the
+	// restore. It is a source id rather than a host and a password because a
+	// credential on a command line is visible in ps (ENF-021), and because the
+	// configuration stays the thing that says what exists (PD-005).
+	target  string
+	create  bool
+	noOwner bool
+	globals bool
+	force   bool
+	yes     bool
+	jobs    int
 }
 
 func (a *app) runRestore(ctx context.Context, backupID string, opt restoreOptions) error {
@@ -796,7 +825,11 @@ func (a *app) runRestore(ctx context.Context, backupID string, opt restoreOption
 func (a *app) doRestore(ctx context.Context, found *located, opt restoreOptions) (restore.PostgresResult, error) {
 	var zero restore.PostgresResult
 
-	src, err := a.source(found.cfg, found.sourceID)
+	targetID := found.sourceID
+	if opt.target != "" {
+		targetID = opt.target
+	}
+	src, err := a.source(found.cfg, targetID)
 	if err != nil {
 		return zero, err
 	}
@@ -812,6 +845,13 @@ func (a *app) doRestore(ctx context.Context, found *located, opt restoreOptions)
 		return zero, err
 	}
 	defer func() { _ = ex.Close() }()
+
+	// EF-085. A restore is the one command that destroys data, and the
+	// destination is a flag away from being the wrong one. Both guards are
+	// checked before a single byte moves.
+	if err := a.confirmRestore(ctx, src, targetID, found.manifest.BackupID, opt, ex); err != nil {
+		return zero, err
+	}
 
 	fetcher := restore.Fetcher{Storage: found.storage, Opener: opener}
 	dump, ok := objectNamed(found.manifest, ".pgdump")
@@ -1228,4 +1268,162 @@ func (a *app) anyDestination(cfg config.Config, want string) (string, config.Des
 			cfg.Path(), len(names), strings.Join(names, ", "))
 	}
 	return names[0], cfg.Destinations[names[0]], nil
+}
+
+// confirmRestore is EF-085: nothing is overwritten without being asked, and
+// nothing is merged into a populated database by accident.
+//
+// Two separate guards, because they catch different mistakes. The populated
+// check catches restoring into the wrong database; the confirmation catches
+// restoring the wrong backup, or onto the wrong server, which no amount of
+// inspection can detect for the operator.
+func (a *app) confirmRestore(
+	ctx context.Context, src config.Source, targetID, backupID string,
+	opt restoreOptions, ex executor.Executor,
+) error {
+	if !opt.force {
+		populated, err := targetHoldsData(ctx, src, opt.into, ex)
+		if err != nil {
+			return err
+		}
+		if populated {
+			return fault(ExitUsage,
+				"database %q on %s already holds tables; restoring into it merges two datasets. "+
+					"Restore into an empty database, or pass --force if merging is what you meant",
+				opt.into, targetID)
+		}
+	}
+	if opt.yes {
+		return nil
+	}
+
+	where := fmt.Sprintf("%s on %s (%s)", opt.into, targetID, src.Host)
+	prompt := fmt.Sprintf("Restore backup %s into %s? [y/N] ", backupID, where)
+
+	answer, ok := a.ask(prompt)
+	if !ok {
+		// No terminal and no --yes. Refusing is the only safe reading: a
+		// scheduled job that meant to restore says so with a flag, and one that
+		// did not should not have a prompt answered for it by an empty pipe.
+		return fault(ExitUsage,
+			"a restore needs confirmation and there is no terminal to ask on; pass --yes to proceed")
+	}
+	if answer != "y" && answer != "yes" {
+		return fault(ExitUsage, "restore into %s cancelled", where)
+	}
+	return nil
+}
+
+// ask puts a question on stderr and reads the answer. It reports false when
+// there is nobody to ask, which is not the same as an answer of "no": the
+// caller decides what silence means.
+//
+// Whether anyone is there is settled before the question is printed. Asking
+// into a closed pipe and then refusing would put a question in the log that
+// nothing could ever have answered.
+func (a *app) ask(prompt string) (string, bool) {
+	if !a.interactive() {
+		return "", false
+	}
+	// The prompt goes to stderr so stdout stays the answer. Its write error is
+	// discarded: if stderr is gone there is nowhere to report that.
+	_, _ = fmt.Fprint(a.streams.err(), prompt)
+
+	reader := bufio.NewReader(a.streams.In)
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(line)), true
+}
+
+// interactive reports whether there is a person at the other end.
+//
+// A file or a pipe on stdin is a script, whatever it contains. Tests inject a
+// plain reader, which is treated as interactive on purpose: a test that had to
+// allocate a pty to check a prompt would not be written.
+func (a *app) interactive() bool {
+	if a.streams.In == nil || a.format == formatJSON {
+		return false
+	}
+	f, isFile := a.streams.In.(*os.File)
+	if !isFile {
+		return true
+	}
+	// term.IsTerminal rather than inspecting the file mode: /dev/null is a
+	// character device too, so a mode check calls `koffr restore < /dev/null`
+	// interactive and prints a question nothing can answer.
+	return term.IsTerminal(int(f.Fd()))
+}
+
+// targetHoldsData reports whether the database already has user tables.
+//
+// A database that does not exist holds nothing, and --create is how it comes
+// into being: failing here would refuse the ordinary case.
+func targetHoldsData(ctx context.Context, src config.Source, database string, ex executor.Executor) (bool, error) {
+	probe := postgresConfig(src, localToolRunner())
+	probe.Database = database
+
+	conn, err := probe.Connect(ctx, ex)
+	if err != nil {
+		// Cannot connect, so there is nothing to overwrite yet. The restore
+		// itself will report the real problem in a moment, with better words.
+		return false, nil //nolint:nilerr // an unreachable database holds no data to lose
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	var n int
+	const q = `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+	           WHERE c.relkind IN ('r','p','m') AND n.nspname NOT IN ('pg_catalog','information_schema')`
+	if err := conn.QueryRow(ctx, q).Scan(&n); err != nil {
+		return false, fmt.Errorf("restore: check whether %s is empty: %w", database, err)
+	}
+	return n > 0, nil
+}
+
+// fetchToStdout streams one object out, for piping.
+//
+// Nothing else may reach stdout on this path, so progress and the summary go to
+// stderr: `koffr fetch ... --into - | pg_restore` puts the artifact in the pipe
+// and a stray line of prose would corrupt it.
+func (a *app) fetchToStdout(
+	ctx context.Context, f restore.Fetcher, found *located, only string, raw bool,
+) error {
+	obj, err := soleObject(found.manifest, only)
+	if err != nil {
+		return err
+	}
+	a.printf("streaming %s to stdout...", baseName(obj.Key))
+
+	n, err := f.Object(ctx, found.backup.Prefix(), obj, a.streams.out(), restore.FetchOptions{Raw: raw})
+	if err != nil {
+		return classifyRepository(err)
+	}
+	// No emit: the answer is the bytes. A JSON envelope here would be mixed
+	// into the artifact, so --output json is refused rather than obeyed.
+	a.printf("%s bytes", humanBytes(n))
+	return nil
+}
+
+// soleObject picks the one object a pipe can carry.
+func soleObject(m manifest.Manifest, only string) (manifest.Object, error) {
+	if only != "" {
+		for _, o := range m.Objects {
+			name := baseName(o.Key)
+			if name == only || strings.TrimSuffix(strings.TrimSuffix(name, ".age"), ".zst") == only {
+				return o, nil
+			}
+		}
+		return manifest.Object{}, fault(ExitUsage, "backup %s has no object named %q", m.BackupID, only)
+	}
+
+	// The main artifact by default: it is what anyone piping a fetch wants, and
+	// guessing between a dump and a sidecar would be worse than asking.
+	for _, suffix := range []string{".pgdump", ".tar", ".xbstream"} {
+		if o, ok := objectNamed(m, suffix); ok {
+			return o, nil
+		}
+	}
+	return manifest.Object{}, fault(ExitUsage,
+		"backup %s has no single main artifact; name one with --object", m.BackupID)
 }

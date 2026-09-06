@@ -226,7 +226,7 @@ func TestNoSecretInAnyCommandOutput(t *testing.T) {
 		"koffr show":            {"01JQ0000000000000000000000"},
 		"koffr backup":          {"prod-pg-main"},
 		"koffr fetch":           {"01JQ0000000000000000000000"},
-		"koffr restore":         {"01JQ0000000000000000000000", "--into", "shop_restored"},
+		"koffr restore":         {"01JQ0000000000000000000000", "--into", "shop_restored", "--yes"},
 	}
 
 	leaves := leafCommands(cli.New(cli.Streams{}))
@@ -444,4 +444,81 @@ func TestCatalogSync_RebuildsFromManifestsWithoutAKey(t *testing.T) {
 	require.Equal(t, cli.ExitOK, code)
 	assert.Contains(t, out, "01BACKUP0000000000000000BB")
 	assert.Contains(t, out, "main", "the destination name comes from the file, not the repository")
+}
+
+// EF-085. A restore is the one command that destroys data, and a scheduled job
+// has no terminal to be asked on. Refusing is the only safe reading of silence:
+// a job that meant to restore says so with a flag, and one that did not must
+// not have a prompt answered for it by an empty pipe.
+func TestRestore_WithoutATerminalAndWithoutYesIsRefused(t *testing.T) {
+	cfgPath := configFile(t)
+	putBackup(t, cfgPath, "01JQ0000000000000000000000")
+
+	var out, errBuf strings.Builder
+	code := cli.Run(t.Context(),
+		[]string{"--config", cfgPath, "restore", "01JQ0000000000000000000000", "--into", "shop_x"},
+		cli.Streams{Out: &out, Err: &errBuf})
+
+	assert.Equal(t, cli.ExitUsage, code)
+	assert.Contains(t, errBuf.String(), "--yes")
+}
+
+// An answer that is not yes is a no, and a no leaves the database alone.
+func TestRestore_AnsweringNoCancels(t *testing.T) {
+	cfgPath := configFile(t)
+	putBackup(t, cfgPath, "01JQ0000000000000000000000")
+
+	var out, errBuf strings.Builder
+	code := cli.Run(t.Context(),
+		[]string{"--config", cfgPath, "restore", "01JQ0000000000000000000000", "--into", "shop_x"},
+		cli.Streams{In: strings.NewReader("n\n"), Out: &out, Err: &errBuf})
+
+	assert.Equal(t, cli.ExitUsage, code)
+	assert.Contains(t, errBuf.String(), "cancelled")
+	assert.Contains(t, errBuf.String(), "Restore backup 01JQ0000000000000000000000",
+		"the prompt has to name what it is about to do, or confirming it means nothing")
+}
+
+// EF-080: the server to restore into is named by a configured source, not by
+// connection flags. A password on a command line is visible in ps (ENF-021),
+// and the configuration stays the thing that says what exists (PD-005).
+func TestRestore_UnknownTargetListsWhatExists(t *testing.T) {
+	cfgPath := configFile(t)
+	putBackup(t, cfgPath, "01JQ0000000000000000000000")
+
+	code, _, errOut := run(t, "--config", cfgPath, "restore", "01JQ0000000000000000000000",
+		"--into", "shop_x", "--target", "nowhere", "--yes")
+	assert.Equal(t, cli.ExitUsage, code)
+	assert.Contains(t, errOut, "prod-pg-main")
+}
+
+// EF-083: --into - puts the artifact in a pipe, so nothing else may share it.
+func TestFetch_ToStdoutRefusesJSON(t *testing.T) {
+	cfgPath := configFile(t)
+	putBackup(t, cfgPath, "01JQ0000000000000000000000")
+
+	code, out, _ := run(t, "--config", cfgPath, "--output", "json",
+		"fetch", "01JQ0000000000000000000000", "--into", "-")
+	assert.Equal(t, cli.ExitUsage, code)
+	// In JSON mode the refusal is itself the JSON document, on stdout.
+	assert.Contains(t, out, "--output json")
+	assert.Contains(t, out, `"code": "usage"`)
+}
+
+// putBackup writes a manifest and one object, enough for a command to find a
+// backup and get as far as the guard being tested.
+func putBackup(t *testing.T, cfgPath, backupID string) {
+	t.Helper()
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo",
+		"sources", "prod-pg-main", "logical", backupID)
+	require.NoError(t, os.MkdirAll(prefix, 0o700))
+
+	m := `{"format_version":1,"backup_id":"` + backupID + `","source_id":"prod-pg-main",` +
+		`"engine":"postgresql","server_version":"17.0","kind":"logical","parent_id":null,` +
+		`"started_at":"2026-01-01T00:00:00Z","finished_at":"2026-01-01T00:00:01Z","status":"completed",` +
+		`"objects":[{"key":"dump.pgdump.zst.age","size_bytes":9,"sha256":"` + strings.Repeat("0", 64) +
+		`","codec":"zstd","encryption":"age","recipients":["age1x"]}],` +
+		`"tool":{"name":"postgresql","version":"17.0","args_digest":""},"koffr_version":"test"}`
+	require.NoError(t, os.WriteFile(filepath.Join(prefix, "manifest.json"), []byte(m), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(prefix, "dump.pgdump.zst.age"), []byte("not a dump"), 0o600))
 }
