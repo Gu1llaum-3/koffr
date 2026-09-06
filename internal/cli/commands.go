@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1596,6 +1597,18 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	// progress that no process was doing. Reconciling on start is the only
 	// moment the truth is knowable.
 	a.reconcileInterruptedJobs(ctx, cfg, hub)
+
+	// The flag the readiness endpoint reads. Set before the loop starts and
+	// cleared when it ends, so /readyz is honest during shutdown as well.
+	var schedulerRunning atomic.Bool
+	schedulerRunning.Store(true)
+	defer schedulerRunning.Store(false)
+
+	stopHealth, err := a.serveHealth(ctx, cfg, jobs, &schedulerRunning)
+	if err != nil {
+		return err
+	}
+	defer stopHealth()
 
 	a.printf("scheduling %d source(s) in %s, window %s; SIGHUP rereads %s",
 		len(jobs), cfg.Scheduler.Location(), cfg.Scheduler.ExecutionWindow(), cfg.Path())

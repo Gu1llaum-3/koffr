@@ -451,6 +451,27 @@ func (s *Scheduler) missedAWindow(sourceID string, schedule cron.Schedule, now t
 		return false
 	}
 	last, ever := s.LastSuccess(sourceID)
+	return missed(schedule, last, ever, now)
+}
+
+// MissedWindow reports whether a scheduled run went by without a successful
+// backup.
+//
+// Exported because the status endpoint reports the same fact under the name
+// "stale", and two implementations of one rule would eventually disagree --
+// leaving a supervisor alarming about a source Koffr considers fine, or the
+// reverse.
+func MissedWindow(spec string, lastSuccess time.Time, ever bool, now time.Time) (bool, error) {
+	schedule, err := parser.Parse(spec)
+	if err != nil {
+		return false, fmt.Errorf("scheduler: %q is not a schedule: %w", spec, err)
+	}
+	return missed(schedule, lastSuccess, ever, now), nil
+}
+
+func missed(schedule cron.Schedule, last time.Time, ever bool, now time.Time) bool {
+	// Never backed up has missed every window there has been, which is the
+	// strongest case rather than an edge one.
 	if !ever {
 		return true
 	}

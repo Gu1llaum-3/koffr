@@ -15,6 +15,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,6 +38,7 @@ type Config struct {
 	Catalog      Catalog                `yaml:"catalog"`
 	Scheduler    Scheduler              `yaml:"scheduler,omitempty"`
 	Notify       Notify                 `yaml:"notify,omitempty"`
+	HTTP         HTTP                   `yaml:"http,omitempty"`
 	Destinations map[string]Destination `yaml:"destinations"`
 	Sources      map[string]Source      `yaml:"sources"`
 
@@ -106,6 +108,23 @@ func (s Scheduler) ExecutionWindow() scheduler.Window { return s.window }
 
 // CatchUpEnabled reports whether a missed window should be picked up.
 func (s Scheduler) CatchUpEnabled() bool { return s.CatchUp == nil || *s.CatchUp }
+
+// HTTP is the health and status listener (EF-132 to EF-135).
+//
+// Off unless a listen address is given. It is unauthenticated by design, so the
+// default when someone does turn it on is loopback: reaching it from elsewhere
+// should be a decision, made once, by someone who has read EF-135.
+type HTTP struct {
+	// Listen is host:port, or empty for off. A bare ":9633" listens on every
+	// interface, which is refused unless allow_public says otherwise.
+	Listen string `yaml:"listen,omitempty"`
+
+	// AllowPublic opts into listening beyond loopback. The endpoints expose no
+	// secret, but they do say which sources exist and when each was last backed
+	// up -- which is a map of what is worth attacking and when nobody is
+	// looking.
+	AllowPublic bool `yaml:"allow_public,omitempty"`
+}
 
 // Notify is EF-130 and EF-131.
 //
@@ -344,6 +363,7 @@ func (c *Config) validate(v *validator) {
 
 	c.Scheduler.validate(v)
 	c.Notify.validate(v, c)
+	c.HTTP.validate(v)
 
 	if len(c.Destinations) == 0 {
 		v.add("destinations", "no destinations", "a backup needs somewhere to go")
@@ -688,5 +708,41 @@ func validSeverity(v *validator, path, given string) string {
 	default:
 		v.add(path, fmt.Sprintf("%q is not a severity", given), `one of "info", "warning" or "error"`)
 		return "warning"
+	}
+}
+
+// validate refuses a listener that would be reachable from outside without
+// someone having said so.
+func (h *HTTP) validate(v *validator) {
+	if h.Listen == "" {
+		return
+	}
+	host, port, err := net.SplitHostPort(h.Listen)
+	if err != nil {
+		v.add("http.listen", fmt.Sprintf("%q is not host:port: %v", h.Listen, err),
+			`write it as "127.0.0.1:9633"`)
+		return
+	}
+	if port == "" {
+		v.add("http.listen", "no port", `write it as "127.0.0.1:9633"`)
+		return
+	}
+	if h.AllowPublic {
+		return
+	}
+
+	// Empty host means every interface, and so does 0.0.0.0. Both are the shape
+	// of someone copying an example rather than deciding.
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		v.add("http.listen",
+			fmt.Sprintf("%q listens on every interface and the endpoints have no authentication", h.Listen),
+			`use "127.0.0.1:`+port+`" and reach it through an SSH tunnel, or set http.allow_public `+
+				`if a reverse proxy is doing the authenticating`)
+		return
+	}
+	if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
+		v.add("http.listen",
+			fmt.Sprintf("%s is reachable from outside this machine and the endpoints have no authentication", host),
+			"set http.allow_public if that is deliberate")
 	}
 }
