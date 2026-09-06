@@ -8,7 +8,9 @@
 package catalogtest
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +52,11 @@ func Suite(t *testing.T, h Harness) {
 	t.Run("CloseIsIdempotent", func(t *testing.T) { testCloseIdempotent(t, h) })
 	t.Run("Persistence", func(t *testing.T) { testPersistence(t, h) })
 	t.Run("TimestampsSurviveARoundTrip", func(t *testing.T) { testTimestamps(t, h) })
+	t.Run("ExportImportRoundTrip", func(t *testing.T) { testExportImport(t, h) })
+	t.Run("ImportIsIdempotent", func(t *testing.T) { testImportIdempotent(t, h) })
+	t.Run("ImportIsAdditive", func(t *testing.T) { testImportAdditive(t, h) })
+	t.Run("ExportOfAnEmptyStore", func(t *testing.T) { testExportEmpty(t, h) })
+	t.Run("ImportRefusesANewerFormat", func(t *testing.T) { testImportNewerFormat(t, h) })
 }
 
 // at is a fixed instant so ordering assertions do not depend on the clock.
@@ -383,4 +390,208 @@ func testTimestamps(t *testing.T, h Harness) {
 	assert.True(t, b.StartedAt.Equal(got[0].StartedAt),
 		"want %s, got %s", b.StartedAt, got[0].StartedAt)
 	assert.True(t, b.FinishedAt.Equal(got[0].FinishedAt))
+}
+
+// The catalog is a cache, and Export is what makes that true rather than
+// merely stated. Everything it holds has to survive a round trip through a
+// snapshot, or "rebuild from the repository" quietly means "rebuild most of it".
+func testExportImport(t *testing.T, h Harness) {
+	src := h.New(t)
+	base := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+
+	backups := []catalog.Backup{
+		{
+			ID: "01BACKUPPARENT000000000000", SourceID: "prod", Kind: "logical",
+			Destination: "main", Status: catalog.StatusCompleted,
+			StartedAt: base, FinishedAt: base.Add(time.Minute),
+			SizeBytes: 1024, ManifestKey: "sources/prod/logical/01BACKUPPARENT000000000000/manifest.json",
+			StartLSN: "0/1000000", EndLSN: "0/2000000",
+		},
+		{
+			ID: "01BACKUPCHILD0000000000000", SourceID: "prod", Kind: "logical",
+			ParentID:    "01BACKUPPARENT000000000000",
+			Destination: "main", Status: catalog.StatusCompleted,
+			StartedAt: base.Add(time.Hour), FinishedAt: base.Add(time.Hour + time.Minute),
+			SizeBytes: 512, ManifestKey: "sources/prod/logical/01BACKUPCHILD0000000000000/manifest.json",
+		},
+	}
+	for _, b := range backups {
+		require.NoError(t, src.RecordBackup(t.Context(), b))
+	}
+
+	// A failed job is the reason this matters most: it produces no manifest, so
+	// it exists in the catalog and nowhere else. Losing it loses the only
+	// record that a backup was attempted and did not happen.
+	jobs := []catalog.Job{
+		{
+			ID: "01JOBOK0000000000000000000", SourceID: "prod", Kind: "logical",
+			Trigger: catalog.TriggerSchedule, Status: catalog.StatusCompleted,
+			StartedAt: base, FinishedAt: base.Add(time.Minute),
+		},
+		{
+			ID: "01JOBFAILED000000000000000", SourceID: "prod", Kind: "logical",
+			Trigger: catalog.TriggerSchedule, Status: catalog.StatusFailed,
+			ErrorClass: catalog.ErrClassSource, ErrorDetail: "pg_dump exited with status 1",
+			StartedAt: base.Add(2 * time.Hour), FinishedAt: base.Add(2*time.Hour + time.Second),
+		},
+	}
+	for _, j := range jobs {
+		require.NoError(t, src.RecordJob(t.Context(), j))
+	}
+
+	verification := catalog.Verification{
+		ID: "01VERIFY000000000000000000", BackupID: "01BACKUPPARENT000000000000",
+		Tier: 2, Status: catalog.StatusCompleted, Report: []byte(`{"objects":3}`),
+		StartedAt: base.Add(3 * time.Hour), FinishedAt: base.Add(3*time.Hour + time.Minute),
+	}
+	require.NoError(t, src.RecordVerification(t.Context(), verification))
+
+	snap, err := src.Export(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, catalog.SnapshotFormatVersion, snap.FormatVersion)
+	assert.False(t, snap.ExportedAt.IsZero(), "a snapshot with no date cannot be compared to another")
+
+	// A snapshot that cannot travel as JSON cannot live in the repository.
+	encoded, err := json.Marshal(snap)
+	require.NoError(t, err)
+	var travelled catalog.Snapshot
+	require.NoError(t, json.Unmarshal(encoded, &travelled))
+
+	dst := h.New(t)
+	require.NoError(t, dst.Import(t.Context(), travelled))
+
+	gotBackups, err := dst.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	require.Len(t, gotBackups, len(backups))
+
+	byID := map[catalog.ID]catalog.Backup{}
+	for _, b := range gotBackups {
+		byID[b.ID] = b
+	}
+	for _, want := range backups {
+		got, ok := byID[want.ID]
+		require.True(t, ok, "backup %s did not survive the round trip", want.ID)
+		assert.Equal(t, want.SourceID, got.SourceID)
+		assert.Equal(t, want.ParentID, got.ParentID, "a lost parent breaks retention's chain walk")
+		assert.Equal(t, want.SizeBytes, got.SizeBytes)
+		assert.Equal(t, want.ManifestKey, got.ManifestKey)
+		assert.Equal(t, want.StartLSN, got.StartLSN)
+		assert.True(t, want.StartedAt.Equal(got.StartedAt), "want %s got %s", want.StartedAt, got.StartedAt)
+	}
+
+	// The chain has to hold on the far side, or an incremental restored from a
+	// rebuilt catalog has no ancestors.
+	chain, err := dst.Chain(t.Context(), "01BACKUPCHILD0000000000000")
+	require.NoError(t, err)
+	assert.Len(t, chain, 2)
+
+	after, err := dst.Export(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, after.Jobs, len(jobs), "the job history is the part that exists nowhere else")
+	assert.Len(t, after.Verifications, 1)
+
+	var failed catalog.Job
+	for _, j := range after.Jobs {
+		if j.Status == catalog.StatusFailed {
+			failed = j
+		}
+	}
+	assert.Equal(t, catalog.ErrClassSource, failed.ErrorClass)
+	assert.Equal(t, "pg_dump exited with status 1", failed.ErrorDetail,
+		"why a job failed is the whole value of keeping it")
+
+	for _, v := range after.Verifications {
+		assert.JSONEq(t, string(verification.Report), string(v.Report))
+	}
+}
+
+// Rebuilding twice must not double anything. A sync is something an operator
+// runs when unsure, which means running it again when still unsure.
+func testImportIdempotent(t *testing.T, h Harness) {
+	src := h.New(t)
+	require.NoError(t, src.RecordBackup(t.Context(), sampleBackup()))
+	require.NoError(t, src.RecordJob(t.Context(), sampleJob()))
+
+	snap, err := src.Export(t.Context())
+	require.NoError(t, err)
+
+	dst := h.New(t)
+	require.NoError(t, dst.Import(t.Context(), snap))
+	require.NoError(t, dst.Import(t.Context(), snap))
+
+	after, err := dst.Export(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, after.Backups, 1)
+	assert.Len(t, after.Jobs, 1)
+}
+
+// Import merges, it does not replace. A rebuild often runs on a catalog that is
+// behind rather than empty, and dropping the jobs recorded since the last
+// replication would be a repair that loses data.
+func testImportAdditive(t *testing.T, h Harness) {
+	store := h.New(t)
+
+	local := sampleBackup()
+	local.ID = "01LOCALONLY0000000000000000"
+	require.NoError(t, store.RecordBackup(t.Context(), local))
+
+	other := h.New(t)
+	require.NoError(t, other.RecordBackup(t.Context(), sampleBackup()))
+	snap, err := other.Export(t.Context())
+	require.NoError(t, err)
+
+	require.NoError(t, store.Import(t.Context(), snap))
+
+	got, err := store.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	assert.Len(t, got, 2, "the row that was only here must survive being told about the other one")
+}
+
+func testExportEmpty(t *testing.T, h Harness) {
+	snap, err := h.New(t).Export(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, snap.Backups)
+	assert.Empty(t, snap.Jobs)
+	assert.Empty(t, snap.Verifications)
+
+	// Empty, not nil: this gets marshalled into the repository, and `[]` reads
+	// as "nothing here" where `null` reads as "something went wrong".
+	encoded, err := json.Marshal(snap)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"backups":[]`)
+}
+
+// A snapshot from a future Koffr is refused rather than half-understood. Silent
+// partial imports are how a catalog ends up wrong in a way nobody notices.
+func testImportNewerFormat(t *testing.T, h Harness) {
+	store := h.New(t)
+	err := store.Import(t.Context(), catalog.Snapshot{
+		FormatVersion: catalog.SnapshotFormatVersion + 1,
+		Backups:       []catalog.Backup{sampleBackup()},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), strconv.Itoa(catalog.SnapshotFormatVersion))
+
+	got, err := store.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	assert.Empty(t, got, "a refused import must not have applied half of itself")
+}
+
+func sampleBackup() catalog.Backup {
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	return catalog.Backup{
+		ID: "01SAMPLE00000000000000000A", SourceID: "prod", Kind: "logical",
+		Destination: "main", Status: catalog.StatusCompleted,
+		StartedAt: at, FinishedAt: at.Add(time.Minute), SizeBytes: 42,
+		ManifestKey: "sources/prod/logical/01SAMPLE00000000000000000A/manifest.json",
+	}
+}
+
+func sampleJob() catalog.Job {
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	return catalog.Job{
+		ID: "01SAMPLEJOB0000000000000AA", SourceID: "prod", Kind: "logical",
+		Trigger: catalog.TriggerManual, Status: catalog.StatusCompleted,
+		StartedAt: at, FinishedAt: at.Add(time.Minute),
+	}
 }

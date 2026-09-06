@@ -66,41 +66,57 @@ type MetadataStore interface {
 	// status endpoint (EF-134).
 	Overview(ctx context.Context) (Overview, error)
 
+	// Export returns everything the catalog holds, in a form that can be
+	// written to the repository and read back by a different Koffr.
+	//
+	// This is what makes "the catalog is a cache" true rather than merely
+	// stated (EF-141). Without it, losing the machine loses the job history --
+	// including the failures, which leave no manifest behind and exist nowhere
+	// else.
+	Export(ctx context.Context) (Snapshot, error)
+
+	// Import merges a snapshot in. It is idempotent and additive: rows already
+	// present are updated, rows absent from the snapshot are left alone.
+	//
+	// Additive, not replacing, because a rebuild can run on a catalog that is
+	// merely behind rather than empty -- and a sync that deleted the jobs
+	// recorded since the last replication would be a repair that loses data.
+	Import(ctx context.Context, s Snapshot) error
+
 	io.Closer
 }
 
 // Backup is one stored backup.
 type Backup struct {
-	ID          ID
-	SourceID    string
-	Kind        string
-	ParentID    ID
-	Destination string
-	Status      Status
-	StartedAt   time.Time
-	FinishedAt  time.Time
-	SizeBytes   int64
-	ManifestKey string
-
+	ID          ID        `json:"backup_id"`
+	SourceID    string    `json:"source_id"`
+	Kind        string    `json:"kind"`
+	ParentID    ID        `json:"parent_id,omitempty"`
+	Destination string    `json:"destination"`
+	Status      Status    `json:"status"`
+	StartedAt   time.Time `json:"started_at"`
+	FinishedAt  time.Time `json:"finished_at"`
+	SizeBytes   int64     `json:"size_bytes"`
+	ManifestKey string    `json:"manifest_key"`
 	// Positions are denormalised from the manifest so retention can walk
 	// chains and enforce the WAL guard without fetching manifests (EF-063).
-	StartLSN   string
-	EndLSN     string
-	BinlogFile string
-	BinlogPos  uint64
+	StartLSN   string `json:"start_lsn,omitempty"`
+	EndLSN     string `json:"end_lsn,omitempty"`
+	BinlogFile string `json:"binlog_file,omitempty"`
+	BinlogPos  uint64 `json:"binlog_pos"`
 }
 
 // Job is one execution attempt, successful or not.
 type Job struct {
-	ID          string
-	SourceID    string
-	Kind        string
-	Trigger     Trigger
-	Status      Status
-	ErrorClass  ErrorClass
-	ErrorDetail string
-	StartedAt   time.Time
-	FinishedAt  time.Time
+	ID          string     `json:"job_id"`
+	SourceID    string     `json:"source_id"`
+	Kind        string     `json:"kind"`
+	Trigger     Trigger    `json:"trigger"`
+	Status      Status     `json:"status"`
+	ErrorClass  ErrorClass `json:"error_class,omitempty"`
+	ErrorDetail string     `json:"error_detail,omitempty"`
+	StartedAt   time.Time  `json:"started_at"`
+	FinishedAt  time.Time  `json:"finished_at"`
 }
 
 // Trigger says what started a job.
@@ -114,16 +130,40 @@ const (
 
 // Verification is one verification run against one backup.
 type Verification struct {
-	ID         string
-	BackupID   ID
-	Tier       int
-	Status     Status
-	Report     []byte // JSON
-	StartedAt  time.Time
-	FinishedAt time.Time
+	ID         string    `json:"verification_id"`
+	BackupID   ID        `json:"backup_id"`
+	Tier       int       `json:"tier"`
+	Status     Status    `json:"status"`
+	Report     []byte    `json:"report"` // JSON
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
 }
 
 // BackupFilter selects backups to list.
+// Snapshot is the whole catalog in a portable form.
+//
+// JSON rather than a copy of the database file, deliberately: the replica in
+// the repository has to be readable by a Koffr that is not this one, and
+// ideally by a person with jq (PD-001). It also keeps the door open to a
+// different metadata engine -- an operator choosing PostgreSQL at install time
+// should be able to import a snapshot written by SQLite.
+type Snapshot struct {
+	// FormatVersion is the snapshot's own version, not the catalog schema's.
+	// A Koffr reading a newer one must refuse rather than guess.
+	FormatVersion int `json:"format_version"`
+
+	ExportedAt time.Time `json:"exported_at"`
+	// KoffrVersion says what wrote it, for the same reason a manifest does.
+	KoffrVersion string `json:"koffr_version"`
+
+	Backups       []Backup       `json:"backups"`
+	Jobs          []Job          `json:"jobs"`
+	Verifications []Verification `json:"verifications"`
+}
+
+// SnapshotFormatVersion is the current snapshot format.
+const SnapshotFormatVersion = 1
+
 type BackupFilter struct {
 	SourceID    string
 	Kind        string

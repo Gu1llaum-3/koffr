@@ -1,17 +1,26 @@
 package cli_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Gu1llaum-3/koffr/internal/catalog"
+	"github.com/Gu1llaum-3/koffr/internal/catalog/replica"
 	"github.com/Gu1llaum-3/koffr/internal/cli"
+	"github.com/Gu1llaum-3/koffr/internal/config"
+	"github.com/Gu1llaum-3/koffr/internal/crypto"
+	"github.com/Gu1llaum-3/koffr/internal/manifest"
+	"github.com/Gu1llaum-3/koffr/internal/storage"
+	"github.com/Gu1llaum-3/koffr/internal/storage/fs"
 	"github.com/Gu1llaum-3/koffr/internal/testutil"
 )
 
@@ -211,6 +220,7 @@ func TestNoSecretInAnyCommandOutput(t *testing.T) {
 		"koffr version":         {},
 		"koffr config validate": {},
 		"koffr config show":     {},
+		"koffr catalog sync":    {},
 		"koffr check":           {},
 		"koffr ls":              {},
 		"koffr show":            {"01JQ0000000000000000000000"},
@@ -314,4 +324,124 @@ func TestFetch_CorruptedObjectExitsVerify(t *testing.T) {
 		"--into", filepath.Join(dir, "out"))
 	assert.Equal(t, cli.ExitVerify, code, "stderr: %s", errOut)
 	assert.Contains(t, errOut, "digest")
+}
+
+// The whole point of EF-141 and EF-142, exercised end to end through the CLI:
+// a catalog that has been lost comes back from the repository, including the
+// record of jobs that failed -- which produce no manifest and exist nowhere
+// else.
+func TestCatalogSync_RebuildsFromTheReplica(t *testing.T) {
+	cfgPath := configFile(t)
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+
+	repo := filepath.Join(filepath.Dir(cfgPath), "repo")
+	st, err := fs.New(repo)
+	require.NoError(t, err)
+	sealer, err := crypto.NewSealer(cfg.Crypto.Recipients)
+	require.NoError(t, err)
+
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	require.NoError(t, replica.Write(t.Context(), st, sealer, catalog.Snapshot{
+		FormatVersion: catalog.SnapshotFormatVersion,
+		ExportedAt:    at,
+		Backups: []catalog.Backup{{
+			ID: "01BACKUP0000000000000000AA", SourceID: "prod-pg-main", Kind: "logical",
+			Destination: "main", Status: catalog.StatusCompleted,
+			StartedAt: at, FinishedAt: at.Add(time.Minute), SizeBytes: 4096,
+		}},
+		Jobs: []catalog.Job{{
+			ID: "01JOBFAILED000000000000000", SourceID: "prod-pg-main", Kind: "logical",
+			Trigger: catalog.TriggerSchedule, Status: catalog.StatusFailed,
+			ErrorClass: catalog.ErrClassSource, ErrorDetail: "pg_dump exited with status 1",
+			StartedAt: at, FinishedAt: at.Add(time.Second),
+		}},
+	}))
+
+	// The catalog file has never existed on this machine, which is what a new
+	// pod on a new node looks like.
+	code, out, errOut := run(t, "--config", cfgPath, "catalog", "sync")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, "replicated catalog")
+
+	code, out, _ = run(t, "--config", cfgPath, "ls")
+	require.Equal(t, cli.ExitOK, code)
+	assert.Contains(t, out, "01BACKUP0000000000000000AA")
+
+	// Twice changes nothing: a sync is what an operator runs when unsure, which
+	// means running it again when still unsure.
+	code, _, _ = run(t, "--config", cfgPath, "catalog", "sync")
+	require.Equal(t, cli.ExitOK, code)
+
+	code, out, _ = run(t, "--config", cfgPath, "--output", "json", "catalog", "sync")
+	require.Equal(t, cli.ExitOK, code)
+	var got struct {
+		Result struct {
+			Backups int `json:"backups"`
+			Jobs    int `json:"jobs"`
+			Added   int `json:"added"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, 1, got.Result.Backups)
+	assert.Equal(t, 1, got.Result.Jobs, "the failed job is the part that exists nowhere else")
+	assert.Equal(t, 0, got.Result.Added)
+
+	// --from-manifests is not the same as "the replica happened to be
+	// unreadable". With a good replica and a working identity right there, the
+	// flag must still take the other road, or an operator who suspects the
+	// replica is wrong has no way to bypass it.
+	code, out, _ = run(t, "--config", cfgPath, "--output", "json", "catalog", "sync", "--from-manifests")
+	require.Equal(t, cli.ExitOK, code)
+	var forced struct {
+		Result struct {
+			Source string `json:"source"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &forced))
+	assert.Equal(t, "manifests", forced.Result.Source)
+}
+
+// The level that has to work when everything is gone: no replica, no key, just
+// the plaintext manifests. This is why manifests are not encrypted (ADR-0004).
+func TestCatalogSync_RebuildsFromManifestsWithoutAKey(t *testing.T) {
+	cfgPath := configFile(t)
+	repo := filepath.Join(filepath.Dir(cfgPath), "repo")
+	st, err := fs.New(repo)
+	require.NoError(t, err)
+
+	src, err := storage.ForSource("prod-pg-main")
+	require.NoError(t, err)
+	b, err := src.Backup(storage.DirLogical, "01BACKUP0000000000000000BB")
+	require.NoError(t, err)
+
+	at := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	var buf bytes.Buffer
+	require.NoError(t, manifest.Encode(&buf, manifest.Manifest{
+		FormatVersion: manifest.FormatVersion,
+		BackupID:      "01BACKUP0000000000000000BB",
+		SourceID:      "prod-pg-main", Engine: "postgresql", ServerVersion: "17.0",
+		Kind: "logical", StartedAt: at, FinishedAt: at.Add(time.Minute),
+		Status: string(catalog.StatusCompleted),
+		Objects: []manifest.Object{{
+			Key: "dump.pgdump.zst.age", SizeBytes: 8192,
+			SHA256: strings.Repeat("0", 64), Codec: "zstd",
+			Encryption: "age", Recipients: []string{"age1x"},
+		}},
+		Tool: manifest.Tool{Name: "postgresql", Version: "17.0"}, KoffrVersion: "test",
+	}))
+	_, err = st.Put(t.Context(), b.ManifestKey(), bytes.NewReader(buf.Bytes()), storage.PutOptions{})
+	require.NoError(t, err)
+
+	// No identity at all: the fallback must not need one.
+	t.Setenv("KOFFR_IDENTITY", "")
+
+	code, out, errOut := run(t, "--config", cfgPath, "catalog", "sync", "--from-manifests")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, "manifests")
+
+	code, out, _ = run(t, "--config", cfgPath, "ls")
+	require.Equal(t, cli.ExitOK, code)
+	assert.Contains(t, out, "01BACKUP0000000000000000BB")
+	assert.Contains(t, out, "main", "the destination name comes from the file, not the repository")
 }

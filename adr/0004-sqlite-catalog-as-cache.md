@@ -52,3 +52,55 @@ every job, and `koffr catalog sync` rebuilds it from scratch.
   for listing and for retention over thousands of objects.
 - **Catalog only in the repository** — every CLI command would need network
   access to the destination.
+
+## Amendment, 2026-09-06 — replication implemented, and the door to PostgreSQL
+
+The "Consequences" above claimed that losing the Koffr node loses nothing. That
+was a design, not code: `CatalogLatestKey` existed in `layout.go` and nothing
+ever called it, so until now losing the machine lost the job history for good --
+including the failures, which produce no manifest and exist nowhere else.
+
+Two things close that gap:
+
+- `catalog.MetadataStore` gained `Export`/`Import` over a portable
+  `catalog.Snapshot`. JSON rather than a copy of the database file, because the
+  replica has to be readable by a Koffr that is not this one, and ideally by a
+  person with `jq` (PD-001).
+- `internal/catalog/replica` writes that snapshot to the repository after every
+  job, and rebuilds from it. Replication cannot fail a job: the manifest is
+  already written, so the backup exists, and reporting failure would send an
+  operator to rerun work that is done.
+
+`koffr catalog sync` rebuilds at two levels: the replicated snapshot (complete,
+needs the identity), then the plaintext manifests (backups only, needs no key
+and no prior state). The second level is why manifests are not encrypted.
+
+### What this changes about storage
+
+Where the SQLite file sits is now a matter of convenience rather than
+durability. The Kubernetes answer stays a `StatefulSet` with a **ReadWriteOnce
+block** volume -- EBS, GCE PD, Ceph RBD, Longhorn -- which the CSI driver
+detaches and reattaches when the pod moves, so SQLite never sees a network
+filesystem. A cluster that offers only RWX/NFS storage classes can use ephemeral
+local storage and sync on start.
+
+The NFS refusal stays, and stays a refusal rather than a warning. It names
+SQLite explicitly, because "do not put it on NFS" without the reason is advice
+someone will override.
+
+### PostgreSQL, later
+
+The decision above stands: PostgreSQL as the *primary* catalog reintroduces a
+circular dependency, and an outage of that database at restore time is the worst
+possible moment for it.
+
+But offering it as a **choice made at installation** is a different proposition,
+and the interface now supports it honestly: `Export`/`Import` are part of the
+contract, the contract suite covers them, and a snapshot written by SQLite must
+import into any other backend. An operator who already runs a well-managed
+PostgreSQL, separate from the databases being backed up, is not the operator
+this ADR was protecting.
+
+That remains out of scope for now, and would need its own ADR covering how the
+circular dependency is prevented -- at minimum, that a restore must not require
+the catalog at all, which the two rebuild levels already guarantee.

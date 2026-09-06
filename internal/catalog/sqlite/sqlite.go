@@ -188,13 +188,12 @@ func (s *Store) RecordBackup(ctx context.Context, b catalog.Backup) error {
 	// signed. Real positions are bounded by max_binlog_size and never come
 	// close, so this cannot happen -- but a truncated position restores to the
 	// wrong point in time, which is not a failure to discover during a restore.
-	if b.BinlogPos > math.MaxInt64 {
-		return fmt.Errorf("catalog/sqlite: backup %s has binlog position %d, which does not fit",
-			b.ID, b.BinlogPos)
+	binlogPos, err := binlogPosOf(b)
+	if err != nil {
+		return err
 	}
-	binlogPos := int64(b.BinlogPos)
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO backups (id, source_id, kind, parent_id, destination, status,
 		                     started_at, finished_at, size_bytes, manifest_key,
 		                     start_lsn, end_lsn, binlog_file, binlog_pos)
@@ -480,3 +479,17 @@ func fromUnix(n int64) time.Time {
 }
 
 var _ catalog.MetadataStore = (*Store)(nil)
+
+// binlogPosOf narrows a binlog position to what SQLite can hold.
+//
+// MariaDB reports it unsigned; SQLite integers are signed. Real positions are
+// bounded by max_binlog_size and never come close -- but a truncated position
+// restores to the wrong point in time, and that is not a thing to discover
+// during a restore.
+func binlogPosOf(b catalog.Backup) (int64, error) {
+	if b.BinlogPos > math.MaxInt64 {
+		return 0, fmt.Errorf("catalog/sqlite: backup %s has binlog position %d, which does not fit",
+			b.ID, b.BinlogPos)
+	}
+	return int64(b.BinlogPos), nil
+}

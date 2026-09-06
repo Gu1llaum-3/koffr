@@ -185,7 +185,10 @@ ever having been exercised.
 - age for encryption, always at least two recipients, one of them offline
   (ADR-0002).
 - Read-only ephemeral web UI, no user accounts (ADR-0003).
-- SQLite catalog, treated as a cache of the repository (ADR-0004).
+- SQLite catalog, treated as a cache of the repository (ADR-0004). It is
+  replicated into the repository after every job, and `koffr catalog sync`
+  rebuilds it — from the replica, or from the plaintext manifests when there
+  is no key at all. Never on NFS: SQLite's locking is unreliable there.
 - The configuration file is the single source of truth (ADR-0005).
 - Built-in scheduler, every job also runnable one-shot (ADR-0006).
 

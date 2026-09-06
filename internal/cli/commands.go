@@ -17,6 +17,7 @@ import (
 
 	"github.com/Gu1llaum-3/koffr/internal/backup"
 	"github.com/Gu1llaum-3/koffr/internal/catalog"
+	"github.com/Gu1llaum-3/koffr/internal/catalog/replica"
 	"github.com/Gu1llaum-3/koffr/internal/config"
 	"github.com/Gu1llaum-3/koffr/internal/executor"
 	"github.com/Gu1llaum-3/koffr/internal/executor/local"
@@ -1059,4 +1060,172 @@ func classifyRepository(err error) error {
 		return &Fault{Code: ExitVerify, Err: err}
 	}
 	return err
+}
+
+// ---------------------------------------------------------------- catalog
+
+func (a *app) catalogCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "catalog",
+		Short: "Inspect and repair the catalog",
+		Long: "The catalog is a cache. The repository is the truth.\n\n" +
+			"Everything under this command exists so that losing the machine Koffr runs\n" +
+			"on loses nothing that matters.",
+	}
+	c.AddCommand(a.catalogSyncCmd())
+	return c
+}
+
+func (a *app) catalogSyncCmd() *cobra.Command {
+	var (
+		destination   string
+		fromManifests bool
+	)
+	c := &cobra.Command{
+		Use:   "sync",
+		Short: "Rebuild the catalog from the repository",
+		Long: "Rebuild the catalog from what the repository holds (EF-142).\n\n" +
+			"Two levels, tried in that order:\n\n" +
+			"  1. The replicated catalog. Complete, including the record of jobs that\n" +
+			"     failed -- which produce no manifest and exist nowhere else. Needs the\n" +
+			"     configured identity.\n" +
+			"  2. The plaintext manifests. Backups only, no job history, but needs no key\n" +
+			"     and no prior state at all. This is the level that works when everything\n" +
+			"     else is gone, and it is why manifests are not encrypted.\n\n" +
+			"The rebuild merges: rows already here are refreshed, rows recorded since the\n" +
+			"last replication are kept. Running it twice changes nothing.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := a.begin(cmd); err != nil {
+				return err
+			}
+			return a.runCatalogSync(cmd.Context(), destination, fromManifests)
+		},
+	}
+	c.Flags().StringVar(&destination, "destination", "", "repository to rebuild from")
+	c.Flags().BoolVar(&fromManifests, "from-manifests", false,
+		"skip the replicated catalog and walk the manifests, which needs no key")
+	return c
+}
+
+func (a *app) runCatalogSync(ctx context.Context, destination string, fromManifests bool) error {
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return err
+	}
+	name, dest, err := a.anyDestination(cfg, destination)
+	if err != nil {
+		return err
+	}
+	st, err := openStorage(ctx, dest)
+	if err != nil {
+		return err
+	}
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cat.Close() }()
+
+	before, err := cat.Export(ctx)
+	if err != nil {
+		return err
+	}
+
+	snap, source, skipped, err := a.recover(ctx, cfg, st, name, fromManifests)
+	if err != nil {
+		return err
+	}
+	if err := cat.Import(ctx, snap); err != nil {
+		return err
+	}
+	after, err := cat.Export(ctx)
+	if err != nil {
+		return err
+	}
+
+	out := struct {
+		Destination string   `json:"destination"`
+		Source      string   `json:"source"`
+		Backups     int      `json:"backups"`
+		Jobs        int      `json:"jobs"`
+		Added       int      `json:"added"`
+		Skipped     []string `json:"skipped,omitempty"`
+	}{
+		Destination: name, Source: source,
+		Backups: len(after.Backups), Jobs: len(after.Jobs),
+		Added:   len(after.Backups) - len(before.Backups),
+		Skipped: skipped,
+	}
+	a.emit(out, func(p *printer) {
+		p.printf("rebuilt from %s (%s): %d backups, %d jobs, %d new\n",
+			out.Destination, out.Source, out.Backups, out.Jobs, out.Added)
+		for _, s := range out.Skipped {
+			p.printf("skipped: %s\n", s)
+		}
+	})
+	return nil
+}
+
+// recover picks a rebuild level and says which one it used.
+//
+// The replicated catalog first, because it is the only one carrying the job
+// history. Falling back is announced rather than silent: "rebuilt from
+// manifests" and "rebuilt from the replica" leave the operator with different
+// catalogs, and they need to know which one they have.
+func (a *app) recover(
+	ctx context.Context, cfg config.Config, st storage.Storage, destName string, fromManifests bool,
+) (catalog.Snapshot, string, []string, error) {
+	if !fromManifests {
+		opener, err := openerFor(cfg)
+		if err == nil {
+			snap, readErr := replica.Read(ctx, st, opener)
+			switch {
+			case readErr == nil:
+				return snap, "replicated catalog", nil, nil
+			case errors.Is(readErr, storage.ErrNotFound):
+				a.printf("no replicated catalog in %s; rebuilding from the manifests", destName)
+			default:
+				// Not fatal. The manifests are still there, and a partial
+				// rebuild beats refusing to rebuild at all.
+				a.printf("the replicated catalog in %s could not be read (%v); "+
+					"rebuilding from the manifests", destName, readErr)
+			}
+		} else {
+			a.printf("no identity configured; rebuilding from the plaintext manifests")
+		}
+	}
+
+	rebuilt, err := replica.RebuildFromManifests(ctx, st)
+	if err != nil {
+		return catalog.Snapshot{}, "", nil, err
+	}
+
+	// The destination name lives in the configuration, not in the repository:
+	// the same bucket is "main" in one file and "offsite" in another. It is
+	// filled in here, where a name exists, rather than invented by the rebuild.
+	for i := range rebuilt.Backups {
+		rebuilt.Backups[i].Destination = destName
+	}
+	return rebuilt.Snapshot, "manifests", rebuilt.Skipped, nil
+}
+
+// anyDestination resolves a destination without needing a source, because a
+// rebuild is exactly the situation where the catalog cannot say which source
+// wrote what.
+func (a *app) anyDestination(cfg config.Config, want string) (string, config.Destination, error) {
+	if want != "" {
+		dest, ok := cfg.Destinations[want]
+		if !ok {
+			return "", config.Destination{}, fault(ExitUsage, "no destination %q in %s", want, cfg.Path())
+		}
+		return want, dest, nil
+	}
+	names := sortedKeys(cfg.Destinations)
+	if len(names) != 1 {
+		return "", config.Destination{}, fault(ExitUsage,
+			"%s defines %d destinations (%s); name one with --destination",
+			cfg.Path(), len(names), strings.Join(names, ", "))
+	}
+	return names[0], cfg.Destinations[names[0]], nil
 }

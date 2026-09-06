@@ -65,7 +65,9 @@ func checkCatalogFilesystem(v *validator, path string) {
 		v.add("catalog.path",
 			"the catalog would sit on a "+name+" filesystem, where SQLite's locking is "+
 				"unreliable and the database will eventually be corrupted",
-			"put it on local or block storage; it is only a cache, and "+
-				"`koffr catalog sync` rebuilds it from the repository")
+			"put it on local or block storage -- in Kubernetes a ReadWriteOnce block "+
+				"volume, which follows the pod across nodes. The catalog is only a "+
+				"cache: `koffr catalog sync` rebuilds it from the repository, so this "+
+				"costs nothing but a restart")
 	}
 }

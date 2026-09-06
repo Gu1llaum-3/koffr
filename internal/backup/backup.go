@@ -26,6 +26,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/Gu1llaum-3/koffr/internal/catalog"
+	"github.com/Gu1llaum-3/koffr/internal/catalog/replica"
 	"github.com/Gu1llaum-3/koffr/internal/crypto"
 	"github.com/Gu1llaum-3/koffr/internal/executor"
 	"github.com/Gu1llaum-3/koffr/internal/manifest"
@@ -63,7 +64,11 @@ type Runner struct {
 
 // Request is one backup to take.
 type Request struct {
-	SourceID    string
+	SourceID string
+	// Trigger says what asked for this backup. Empty means a person did, which
+	// is the only thing that can reach the Runner today; the scheduler will set
+	// it explicitly (EF-090).
+	Trigger     catalog.Trigger
 	Source      source.Source
 	Executor    executor.Executor
 	Backup      source.Request
@@ -75,13 +80,41 @@ type Result struct {
 	BackupID catalog.ID
 	Prefix   string
 	Manifest manifest.Manifest
+
+	// Warnings are things that went wrong after the point of no return, which
+	// by definition cannot fail the job: the backup is already written and
+	// restorable.
+	Warnings []string
 }
 
 // Run takes one backup.
-func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
+func (r *Runner) Run(ctx context.Context, req Request) (res Result, err error) {
 	if err := r.validate(req); err != nil {
 		return Result{}, err
 	}
+
+	// The job is opened before anything is attempted and closed on every exit
+	// path, including the ones that never touch the repository.
+	//
+	// This is PD-007 where it is hardest: a backup that failed leaves no
+	// manifest and no objects, so without this record the question "did last
+	// night's backup run?" has no answer for the only case where it matters.
+	// The record is also what a crashed process leaves behind -- a job stuck in
+	// "running" says the machine died, which is worth knowing.
+	job := catalog.Job{
+		ID:        string(r.NewID()),
+		SourceID:  req.SourceID,
+		Kind:      string(req.Backup.Kind),
+		Trigger:   req.trigger(),
+		Status:    catalog.StatusRunning,
+		StartedAt: r.Now().UTC(),
+	}
+	r.openJob(ctx, &res, job)
+
+	// Registered before the lock and the cleanup, so it runs after both: the
+	// replica should describe the repository as it was left, not as it was
+	// halfway through being tidied.
+	defer func() { r.closeJob(ctx, &res, job, err) }()
 
 	src, err := storage.ForSource(req.SourceID)
 	if err != nil {
@@ -138,6 +171,77 @@ func (r *Runner) Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	return Result{BackupID: backupID, Prefix: b.Prefix(), Manifest: result}, nil
+}
+
+// openJob records the attempt as it starts.
+func (r *Runner) openJob(ctx context.Context, res *Result, job catalog.Job) {
+	if r.Catalog == nil {
+		return
+	}
+	if err := r.Catalog.RecordJob(ctx, job); err != nil {
+		res.Warnings = append(res.Warnings, "the job was not recorded in the catalog: "+err.Error())
+	}
+}
+
+// closeJob writes the attempt's outcome and replicates the catalog.
+//
+// Neither can fail the job, and the signature says so. On the success path the
+// manifest is already written, so the backup exists and is restorable, and
+// reporting failure here would send an operator to rerun work that is done. On
+// the failure path there is already an error worth more than these.
+func (r *Runner) closeJob(ctx context.Context, res *Result, job catalog.Job, runErr error) {
+	if r.Catalog == nil {
+		return
+	}
+
+	job.FinishedAt = r.Now().UTC()
+	if runErr != nil {
+		job.Status = catalog.StatusFailed
+		// The class decides whether a scheduler retries; the message is for a
+		// person (ENF-011). Both are kept, and neither is derived from the
+		// other.
+		job.ErrorClass = pipeline.ClassOf(runErr)
+		// Errors never carry a credential (ENF-021), which matters more here
+		// than anywhere: the catalog is where a message lives for months.
+		job.ErrorDetail = runErr.Error()
+	} else {
+		job.Status = catalog.StatusCompleted
+	}
+
+	if err := r.Catalog.RecordJob(ctx, job); err != nil {
+		res.Warnings = append(res.Warnings, "the job outcome was not recorded: "+err.Error())
+		return
+	}
+
+	// Replication comes after the job is closed out, so the copy in the
+	// repository describes a finished attempt rather than a running one. A
+	// failed job is replicated too: it is the only record that it happened.
+	if warn := r.replicate(ctx); warn != "" {
+		res.Warnings = append(res.Warnings, warn)
+	}
+}
+
+// replicate copies the catalog into the repository (EF-141).
+//
+// This is what makes the catalog a cache rather than a second source of truth.
+// Losing the machine Koffr runs on then loses nothing that matters.
+func (r *Runner) replicate(ctx context.Context) string {
+	snap, err := r.Catalog.Export(ctx)
+	if err != nil {
+		return "the catalog was not replicated to the repository: " + err.Error()
+	}
+	if err := replica.Write(ctx, r.Storage, r.Sealer, snap); err != nil {
+		return "the catalog was not replicated to the repository: " + err.Error()
+	}
+	return ""
+}
+
+// trigger defaults to manual: today the only caller is a person at a terminal.
+func (req Request) trigger() catalog.Trigger {
+	if req.Trigger == "" {
+		return catalog.TriggerManual
+	}
+	return req.Trigger
 }
 
 func (r *Runner) validate(req Request) error {
