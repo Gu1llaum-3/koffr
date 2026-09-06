@@ -394,15 +394,14 @@ func (a *app) emitError(code int, err error) {
 			a.warnf("koffr: writing output: %v", renderErr)
 		}
 	}
+	// Once. ValidationError.Error already formats every problem with its hint,
+	// and printing the list again produced "1 problem(s)" followed by that one
+	// problem twice, at two indentations -- which makes a reader doubt the
+	// count before they doubt the code.
+	//
+	// The JSON envelope carries Problems separately, where a script wants them
+	// as data rather than as a paragraph.
 	a.warnf("koffr: %s", err.Error())
-	if f != nil {
-		for _, p := range f.Problems {
-			a.warnf("  %s: %s", p.Path, p.Message)
-			if p.Hint != "" {
-				a.warnf("      %s", p.Hint)
-			}
-		}
-	}
 }
 
 func (a *app) writeJSON(r response) {

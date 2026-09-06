@@ -523,13 +523,20 @@ func (a *app) lsCmd() *cobra.Command {
 }
 
 type backupLine struct {
-	ID          string `json:"backup_id"`
-	Source      string `json:"source"`
-	Kind        string `json:"kind"`
-	Status      string `json:"status"`
-	Destination string `json:"destination"`
-	StartedAt   string `json:"started_at"`
-	Bytes       int64  `json:"bytes"`
+	ID     string `json:"backup_id"`
+	Source string `json:"source"`
+	Kind   string `json:"kind"`
+	Status string `json:"status"`
+
+	// Destinations, plural: one backup written to two places is one backup.
+	// The catalog holds a row per copy, because retention differs per
+	// destination -- but that is a fact about retention, not about how many
+	// backups there are, and a listing that showed the same id twice with no
+	// column explaining it made an operator doubt their catalog.
+	Destinations []string `json:"destinations"`
+
+	StartedAt string `json:"started_at"`
+	Bytes     int64  `json:"bytes"`
 }
 
 func (a *app) runLs(ctx context.Context, sourceID string, limit int) error {
@@ -553,12 +560,39 @@ func (a *app) runLs(ctx context.Context, sourceID string, limit int) error {
 		return err
 	}
 
+	// Collapsed by backup id, keeping the catalog's order (newest first).
 	lines := make([]backupLine, 0, len(backups))
+	at := map[string]int{}
 	for _, b := range backups {
-		lines = append(lines, backupLine{
-			ID: string(b.ID), Source: b.SourceID, Kind: b.Kind,
-			Status: string(b.Status), Destination: b.Destination,
-			StartedAt: b.StartedAt.UTC().Format(time.RFC3339), Bytes: b.SizeBytes,
+		i, seen := at[string(b.ID)]
+		if !seen {
+			at[string(b.ID)] = len(lines)
+			lines = append(lines, backupLine{
+				ID: string(b.ID), Source: b.SourceID, Kind: b.Kind,
+				Status: string(b.Status), Destinations: []string{b.Destination},
+				StartedAt: b.StartedAt.UTC().Format(time.RFC3339), Bytes: b.SizeBytes,
+			})
+			continue
+		}
+		if !slices.Contains(lines[i].Destinations, b.Destination) {
+			lines[i].Destinations = append(lines[i].Destinations, b.Destination)
+		}
+	}
+
+	// Ordered as the configuration writes them, not as the catalog returns
+	// them. The first destination is the one streamed to and the rest are
+	// copies of it, so that order carries meaning an alphabetical one would
+	// throw away -- and a listing whose columns reshuffle between runs is one
+	// nobody can diff.
+	for i := range lines {
+		src, known := cfg.Source(lines[i].Source)
+		if !known {
+			sort.Strings(lines[i].Destinations)
+			continue
+		}
+		sort.SliceStable(lines[i].Destinations, func(x, y int) bool {
+			return slices.Index(src.Destinations, lines[i].Destinations[x]) <
+				slices.Index(src.Destinations, lines[i].Destinations[y])
 		})
 	}
 	a.emit(struct {
@@ -569,10 +603,11 @@ func (a *app) runLs(ctx context.Context, sourceID string, limit int) error {
 			return
 		}
 		p.table(func(p *printer) {
-			p.printf("BACKUP ID\tSOURCE\tKIND\tSTATUS\tSTARTED\tSIZE\n")
+			p.printf("BACKUP ID\tSOURCE\tKIND\tSTATUS\tSTARTED\tSIZE\tWHERE\n")
 			for _, l := range lines {
-				p.printf("%s\t%s\t%s\t%s\t%s\t%s\n",
-					l.ID, l.Source, l.Kind, l.Status, l.StartedAt, humanBytes(l.Bytes))
+				p.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					l.ID, l.Source, l.Kind, l.Status, l.StartedAt, humanBytes(l.Bytes),
+					strings.Join(l.Destinations, ","))
 			}
 		})
 	})

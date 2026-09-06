@@ -1361,3 +1361,90 @@ func putBackupIn(t *testing.T, cfgPath, destination, backupID string) {
 	require.NoError(t, os.WriteFile(filepath.Join(prefix, "manifest.json"), []byte(m), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(prefix, "dump.pgdump.zst.age"), []byte("not a dump"), 0o600))
 }
+
+// One backup written to two places is one backup. The catalog holds a row per
+// copy because retention differs per destination, but that is a fact about
+// retention -- and a listing showing the same id twice, with no column saying
+// why, made an operator doubt their catalog.
+func TestLs_OneLinePerBackupWhateverTheDestinations(t *testing.T) {
+	cfgPath := twoDestinations(t)
+	const id = "01BOTH0000000000000000000A"
+
+	putBackupIn(t, cfgPath, "main", id)
+	putBackupIn(t, cfgPath, "offsite", id)
+	recordBackupOn(t, cfgPath, id, "main")
+	recordBackupOn(t, cfgPath, id, "offsite")
+
+	code, out, errOut := run(t, "--config", cfgPath, "ls")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+
+	var rows int
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.Contains(line, id) {
+			rows++
+		}
+	}
+	assert.Equal(t, 1, rows, "counting backups with `ls | wc -l` has to give the right answer")
+	assert.Contains(t, out, "main,offsite", "and the line has to say where the copies are")
+
+	code, out, _ = run(t, "--config", cfgPath, "--output", "json", "ls")
+	require.Equal(t, cli.ExitOK, code)
+
+	var got struct {
+		Result struct {
+			Backups []struct {
+				ID           string   `json:"backup_id"`
+				Destinations []string `json:"destinations"`
+			} `json:"backups"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	require.Len(t, got.Result.Backups, 1)
+	assert.ElementsMatch(t, []string{"main", "offsite"}, got.Result.Backups[0].Destinations)
+}
+
+func recordBackupOn(t *testing.T, cfgPath, id, destination string) {
+	t.Helper()
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	cat, err := sqlite.Open(t.Context(), cfg.Catalog.Path)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, cat.Close()) }()
+
+	at := time.Now()
+	require.NoError(t, cat.RecordBackup(t.Context(), catalog.Backup{
+		ID: catalog.ID(id), SourceID: "prod-pg-main", Kind: "logical",
+		Destination: destination, Status: catalog.StatusCompleted,
+		StartedAt: at, FinishedAt: at.Add(time.Minute), SizeBytes: 10,
+	}))
+}
+
+// The list was printed twice: once by ValidationError.Error, once by the
+// renderer walking the same slice. "1 problem(s)" followed by that problem
+// twice makes a reader doubt the count before they doubt the code.
+func TestConfigValidate_ReportsEachProblemOnce(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "koffr.yml")
+	require.NoError(t, os.WriteFile(path,
+		[]byte("version: 1\nsources:\n  prod:\n    engine: mysql\n"), 0o600))
+
+	code, _, errOut := run(t, "--config", path, "config", "validate")
+	require.Equal(t, cli.ExitConfig, code)
+
+	counted := strings.Count(errOut, "sources.prod.engine:")
+	assert.Equal(t, 1, counted, "each problem once, or the count in the header is a lie:\n%s", errOut)
+
+	// And the JSON keeps them as data, where a script wants them.
+	code, out, _ := run(t, "--config", path, "--output", "json", "config", "validate")
+	require.Equal(t, cli.ExitConfig, code)
+
+	var got struct {
+		Error struct {
+			Problems []struct {
+				Path string `json:"path"`
+			} `json:"problems"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.NotEmpty(t, got.Error.Problems)
+}
