@@ -24,6 +24,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Gu1llaum-3/koffr/internal/logging"
 	"github.com/Gu1llaum-3/koffr/internal/notify"
 	"github.com/Gu1llaum-3/koffr/internal/scheduler"
 )
@@ -39,6 +40,7 @@ type Config struct {
 	Scheduler    Scheduler              `yaml:"scheduler,omitempty"`
 	Notify       Notify                 `yaml:"notify,omitempty"`
 	HTTP         HTTP                   `yaml:"http,omitempty"`
+	Log          Log                    `yaml:"log,omitempty"`
 	Destinations map[string]Destination `yaml:"destinations"`
 	Sources      map[string]Source      `yaml:"sources"`
 
@@ -108,6 +110,29 @@ func (s Scheduler) ExecutionWindow() scheduler.Window { return s.window }
 
 // CatchUpEnabled reports whether a missed window should be picked up.
 func (s Scheduler) CatchUpEnabled() bool { return s.CatchUp == nil || *s.CatchUp }
+
+// Log is EF-136.
+//
+// Format is left empty on purpose in the common case: the first person to run
+// Koffr is a person, and the CLI picks text or JSON from whether there is a
+// terminal on the other end (EF-114). Setting it here overrides that, which is
+// what a container wants.
+type Log struct {
+	// Level is debug, info, warn or error. Empty means info.
+	Level string `yaml:"level,omitempty"`
+
+	// Format is "text" or "json". Empty means: decide from the terminal.
+	Format string `yaml:"format,omitempty"`
+
+	// Path is a log file, in addition to the stream. Empty means none.
+	Path string `yaml:"path,omitempty"`
+
+	// MaxSizeMB is when the file rotates. Zero means 10.
+	MaxSizeMB int `yaml:"max_size_mb,omitempty"`
+
+	// MaxFiles is how many are kept, the live one included. Zero means 5.
+	MaxFiles int `yaml:"max_files,omitempty"`
+}
 
 // HTTP is the health and status listener (EF-132 to EF-135).
 //
@@ -364,6 +389,7 @@ func (c *Config) validate(v *validator) {
 	c.Scheduler.validate(v)
 	c.Notify.validate(v, c)
 	c.HTTP.validate(v)
+	c.Log.validate(v)
 
 	if len(c.Destinations) == 0 {
 		v.add("destinations", "no destinations", "a backup needs somewhere to go")
@@ -744,5 +770,18 @@ func (h *HTTP) validate(v *validator) {
 		v.add("http.listen",
 			fmt.Sprintf("%s is reachable from outside this machine and the endpoints have no authentication", host),
 			"set http.allow_public if that is deliberate")
+	}
+}
+
+// validate refuses a level or format that would only fail at start-up.
+func (l *Log) validate(v *validator) {
+	if err := logging.ValidateConfig(logging.Config{Level: l.Level, Format: l.Format}); err != nil {
+		v.add("log", err.Error(), "level: debug, info, warn or error; format: text or json")
+	}
+	if l.MaxSizeMB < 0 {
+		v.add("log.max_size_mb", "cannot be negative", "leave it out for 10")
+	}
+	if l.MaxFiles < 0 {
+		v.add("log.max_files", "cannot be negative", "leave it out for 5")
 	}
 }

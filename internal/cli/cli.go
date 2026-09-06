@@ -14,12 +14,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Gu1llaum-3/koffr/internal/config"
+	"github.com/Gu1llaum-3/koffr/internal/logging"
 	"github.com/Gu1llaum-3/koffr/internal/version"
 )
 
@@ -151,6 +153,12 @@ type app struct {
 	// usage error from a failure.
 	started bool
 
+	// log is the structured logger. Nil until a command that needs one builds
+	// it: `koffr version` has nothing to log and should not open a file to say
+	// so.
+	log      *slog.Logger
+	closeLog func() error
+
 	// command, result and renderText are filled in by whichever command ran.
 	command    string
 	result     any
@@ -251,12 +259,60 @@ func (a *app) emit(result any, renderText func(p *printer)) {
 	a.result, a.renderText = result, renderText
 }
 
+// setupLogging builds the logger for a long-running command (EF-136).
+//
+// Called by the scheduler and by nothing else for now. A command run by hand
+// reports through printf and warnf, which is prose for a person; a daemon needs
+// lines a machine can filter, and a file that does not grow without end.
+func (a *app) setupLogging(cfg config.Config) error {
+	format := cfg.Log.Format
+	if format == "" {
+		// EF-114: prose on a terminal, structured otherwise. A container and a
+		// systemd unit both get JSON without anyone having configured it, and
+		// someone watching the same daemon in a shell gets lines they can read.
+		format = "text"
+		if !a.interactive() {
+			format = "json"
+		}
+	}
+
+	log, closeLog, err := logging.New(logging.Config{
+		Format:       format,
+		Level:        cfg.Log.Level,
+		Path:         cfg.Log.Path,
+		MaxSizeBytes: int64(cfg.Log.MaxSizeMB) << 20,
+		MaxFiles:     cfg.Log.MaxFiles,
+		Writer:       a.streams.err(),
+	})
+	if err != nil {
+		return &Fault{Code: ExitConfig, Err: err}
+	}
+	a.log, a.closeLog = log, closeLog
+	return nil
+}
+
+// logf records a structured line when there is a logger, and prose otherwise.
+//
+// Both, never neither: a message that exists only in one of the two modes is a
+// message somebody will look for in the other.
+func (a *app) logf(ctx context.Context, level slog.Level, msg string, args ...any) {
+	if a.log != nil {
+		a.log.Log(ctx, level, msg, args...)
+		return
+	}
+	a.warnf("%s", msg)
+}
+
 // warnf writes a diagnostic to stderr.
 //
 // The write's error is discarded, and that is the one place it is the right
 // call: this *is* the error path, and there is nowhere left to report a stderr
 // that will not take bytes.
 func (a *app) warnf(format string, args ...any) {
+	if a.log != nil {
+		a.log.Warn(fmt.Sprintf(format, args...))
+		return
+	}
 	_, _ = fmt.Fprintf(a.streams.err(), format+"\n", args...)
 }
 
@@ -264,6 +320,14 @@ func (a *app) warnf(format string, args ...any) {
 // the answer, and in JSON mode it belongs to exactly one document.
 func (a *app) printf(format string, args ...any) {
 	if a.format == formatJSON {
+		return
+	}
+	// Through the logger once there is one, so a daemon's stderr is entirely
+	// structured. Mixing a prose line into a stream of JSON defeats the whole
+	// point: a log shipper parsing the stream chokes on the sentence, and the
+	// sentence is usually the one saying something interesting happened.
+	if a.log != nil {
+		a.log.Info(fmt.Sprintf(format, args...))
 		return
 	}
 	a.warnf(format, args...)

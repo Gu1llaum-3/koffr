@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -1503,6 +1504,11 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 		a.warnf("koffr: could not read the catalog, so no missed window will be picked up: %v", err)
 	}
 
+	if err := a.setupLogging(cfg); err != nil {
+		return err
+	}
+	defer func() { _ = a.closeLog() }()
+
 	hub, err := a.buildHub(cfg)
 	if err != nil {
 		return err
@@ -1542,8 +1548,9 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 				request:     source.Request{Kind: job.Kind},
 			})
 			if err == nil {
-				a.printf("%s: %s in %s to %s", job.SourceID, res.BackupID,
-					humanBytes(totalBytes(res.Manifest)), job.Destination)
+				a.logf(ctx, slog.LevelInfo, "backup completed",
+					"source", job.SourceID, "backup_id", string(res.BackupID),
+					"bytes", totalBytes(res.Manifest), "destination", job.Destination)
 				a.reportSuccess(ctx, hub, dms, job.SourceID, string(res.BackupID),
 					totalBytes(res.Manifest))
 			}
@@ -1553,7 +1560,8 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 		// attempt are exactly what an operator needs told, and in M4 they are
 		// what the notifier will listen to.
 		OnSkip: func(job scheduler.Job, why string) {
-			a.printf("skipped %s: %s", job.SourceID, why)
+			a.logf(ctx, slog.LevelWarn, "scheduled window passed over",
+				"source", job.SourceID, "reason", why)
 			hub.Publish(ctx, notify.Event{
 				Kind: notify.KindBackupSkipped, Severity: notify.SeverityWarning,
 				SourceID: job.SourceID,
@@ -1561,6 +1569,8 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 			})
 		},
 		OnStart: func(job scheduler.Job, catchUp bool) {
+			a.logf(ctx, slog.LevelInfo, "backup starting",
+				"source", job.SourceID, "destination", job.Destination, "catch_up", catchUp)
 			if !catchUp {
 				return
 			}
@@ -1579,8 +1589,10 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 			if res.Err == nil {
 				return // reported where the backup id is known
 			}
-			a.warnf("koffr: %s attempt %d failed (%s): %v",
-				res.Job.SourceID, res.Attempt, pipeline.ClassOf(res.Err), res.Err)
+			a.logf(ctx, slog.LevelError, "backup attempt failed",
+				"source", res.Job.SourceID, "attempt", res.Attempt,
+				"class", string(pipeline.ClassOf(res.Err)),
+				"will_retry", res.WillRetry, "error", res.Err.Error())
 			a.reportFailure(ctx, hub, res.Job.SourceID, res.Attempt, res.WillRetry, res.Err)
 		},
 	}

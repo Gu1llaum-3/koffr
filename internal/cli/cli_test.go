@@ -781,3 +781,90 @@ func TestConfig_RefusesADeadMansSwitchForAnUnknownSource(t *testing.T) {
 	assert.Equal(t, cli.ExitConfig, code)
 	assert.Contains(t, errOut, "typo-in-the-name")
 }
+
+// EF-114 and EF-136 together: prose when a person is watching, JSON when a
+// machine is. Nothing here is configured -- the daemon decides from whether
+// there is a terminal on the other end, so a container and a systemd unit both
+// get structured logs without anyone having asked.
+func TestSchedule_LogsJSONWhenNotOnATerminal(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath,
+		[]byte(strings.Replace(string(body), "    database: shop",
+			"    database: shop\n    schedule: \"@every 1s\"", 1)), 0o600))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	var out, errBuf strings.Builder
+	code := cli.Run(ctx, []string{"--config", cfgPath, "schedule"},
+		cli.Streams{Out: &out, Err: &errBuf})
+	require.Equal(t, cli.ExitOK, code)
+
+	var structured int
+	for _, line := range strings.Split(strings.TrimSpace(errBuf.String()), "\n") {
+		var rec map[string]any
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		structured++
+		assert.NotEmpty(t, rec["time"], "a log line nobody can correlate")
+		assert.NotEmpty(t, rec["level"])
+		testutil.AssertNoSecretLeak(t, line)
+	}
+	assert.Positive(t, structured, "no structured line reached stderr:\n%s", errBuf.String())
+
+	// stdout stays the command's answer, whatever the log does to stderr.
+	assert.Empty(t, strings.TrimSpace(out.String()),
+		"a log line on stdout would corrupt `koffr ls --output json | jq`")
+}
+
+// The failure of a backup is the line an operator greps for, so it carries the
+// fields they would filter on rather than a sentence they would have to parse.
+func TestSchedule_FailureLineCarriesFields(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath,
+		[]byte(strings.Replace(string(body), "    database: shop",
+			"    database: shop\n    schedule: \"@every 1s\"", 1)), 0o600))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+
+	var out, errBuf strings.Builder
+	_ = cli.Run(ctx, []string{"--config", cfgPath, "schedule"},
+		cli.Streams{Out: &out, Err: &errBuf})
+
+	var found map[string]any
+	for _, line := range strings.Split(errBuf.String(), "\n") {
+		var rec map[string]any
+		if json.Unmarshal([]byte(line), &rec) == nil && rec["msg"] == "backup attempt failed" {
+			found = rec
+		}
+	}
+	require.NotNil(t, found, "the failure was never logged:\n%s", errBuf.String())
+	assert.Equal(t, "prod-pg-main", found["source"])
+	// source, not config: an unreachable database could be a server that is
+	// down or a port that is wrong, and Koffr cannot tell. Retrying an
+	// unclassifiable failure is safer than declaring it permanent, and the
+	// class is what carries that decision into the line an operator greps.
+	assert.Equal(t, "source", found["class"])
+	assert.Contains(t, found, "will_retry")
+}
+
+// A level the machine does not know is refused while someone is looking at the
+// file, not when the daemon starts (PD-006).
+func TestConfig_RefusesAnUnknownLogLevel(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(strings.Replace(string(body), "catalog:",
+		"log:\n  level: chatty\ncatalog:", 1)), 0o600))
+
+	code, _, errOut := run(t, "--config", cfgPath, "config", "validate")
+	assert.Equal(t, cli.ExitConfig, code)
+	assert.Contains(t, errOut, "log")
+	assert.Contains(t, errOut, "chatty")
+}
