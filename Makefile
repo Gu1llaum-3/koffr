@@ -25,7 +25,7 @@ define tool
 	fi
 endef
 
-.PHONY: all build test cover lint lint-only vet vuln cross clean tidy hooks ci
+.PHONY: all build test cover lint lint-only vet vuln cross clean tidy hooks ci verify-milestone
 
 all: lint test build
 
@@ -78,3 +78,27 @@ hooks:
 
 clean:
 	rm -rf bin
+
+# verify-milestone is the manual gate at the end of a milestone. It is not in
+# `ci` on purpose: it takes tens of minutes and moves tens of gigabytes, and a
+# check that long stops being run if it sits in front of every push.
+#
+# It covers the exit criteria the fast suite cannot: a 10 GiB database to both
+# backend types, the memory ceiling at that size, the absence of any temporary
+# file, and the PostgreSQL 14 to 18 matrix. KOFFR_REQUIRE_DOCKER is set so a
+# missing runtime fails rather than reporting a pass nobody ran.
+verify-milestone: verify-pg-matrix
+	@echo "This moves tens of gigabytes and takes tens of minutes."
+	KOFFR_MILESTONE=1 KOFFR_REQUIRE_DOCKER=1 \
+		go test -tags milestone -timeout 120m -v ./test/milestone/...
+
+# M1 exit criterion 5. CI pins one major to stay under five minutes; this walks
+# all of them, because "supports PostgreSQL 14 to 18" is a claim and a claim
+# needs a run behind it (CT-001: five client toolchains, five servers).
+.PHONY: verify-pg-matrix
+verify-pg-matrix:
+	@for v in 14 15 16 17 18; do \
+		echo "== PostgreSQL $$v =="; \
+		KOFFR_REQUIRE_DOCKER=1 KOFFR_PG_IMAGE=postgres:$$v \
+			go test -count=1 ./internal/source/postgres/... || exit 1; \
+	done

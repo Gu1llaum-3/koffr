@@ -34,6 +34,17 @@ const (
 	database  = "probe"
 )
 
+// pgImage lets `make verify-milestone` run this suite against every supported
+// major (EF-003, M1 exit criterion 5). CI pins one; the milestone gate walks
+// 14 through 18, because "supports PostgreSQL 14 to 18" is a claim and a claim
+// needs a run behind it.
+func pgImage() string {
+	if img := os.Getenv("KOFFR_PG_IMAGE"); img != "" {
+		return img
+	}
+	return "postgres:17"
+}
+
 var shared struct {
 	host      string
 	port      int
@@ -68,7 +79,7 @@ func TestMain(m *testing.M) {
 
 func startPostgres() error {
 	ctx := context.Background()
-	container, err := tcpostgres.Run(ctx, "postgres:17",
+	container, err := tcpostgres.Run(ctx, pgImage(),
 		tcpostgres.WithDatabase(database),
 		tcpostgres.WithUsername(adminUser),
 		tcpostgres.WithPassword(adminPass),
@@ -199,8 +210,13 @@ func TestProbe_ReportsServerAndKinds(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, source.EnginePostgreSQL, info.Engine)
-	assert.True(t, strings.HasPrefix(info.ServerVersion, "17."),
-		"got %q", info.ServerVersion)
+
+	// The major the image says, whichever image that is: the milestone gate
+	// runs this suite against 14 through 18, and an assertion pinned to one of
+	// them would turn the matrix into four failures with nothing wrong.
+	wantMajor := strings.TrimPrefix(pgImage(), "postgres:")
+	assert.True(t, strings.HasPrefix(info.ServerVersion, wantMajor+"."),
+		"probe reported %q for image %s", info.ServerVersion, pgImage())
 	assert.Contains(t, info.Kinds, source.KindLogical)
 }
 
