@@ -1493,8 +1493,10 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	}
 
 	sched := &scheduler.Scheduler{
-		Location:      cfg.Scheduler.Location(),
-		MaxConcurrent: cfg.Scheduler.MaxConcurrent,
+		Location:            cfg.Scheduler.Location(),
+		MaxConcurrent:       cfg.Scheduler.MaxConcurrent,
+		Window:              cfg.Scheduler.ExecutionWindow(),
+		CancelOnWindowClose: cfg.Scheduler.Window.CancelOnClose,
 		// Without this the class never reaches the policy and a configuration
 		// mistake is retried every minute until someone mutes the alerts.
 		Classify: pipeline.ClassOf,
@@ -1539,8 +1541,14 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 		return a.printTimetable(cfg, jobs)
 	}
 
-	a.printf("scheduling %d source(s) in %s; SIGHUP rereads %s",
-		len(jobs), cfg.Scheduler.Location(), cfg.Path())
+	// Databasus does this and Koffr did not: a process that died left its job
+	// recorded as running for ever, so the catalog claimed a backup was in
+	// progress that no process was doing. Reconciling on start is the only
+	// moment the truth is knowable.
+	a.reconcileInterruptedJobs(ctx, cfg)
+
+	a.printf("scheduling %d source(s) in %s, window %s; SIGHUP rereads %s",
+		len(jobs), cfg.Scheduler.Location(), cfg.Scheduler.ExecutionWindow(), cfg.Path())
 
 	// EF-104. A reload replaces the timetable and says nothing about what is
 	// running: a backup halfway through is work already paid for.
@@ -1554,7 +1562,9 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	for {
 		select {
 		case err := <-done:
-			if errors.Is(err, context.Canceled) {
+			// Any context error means "you were asked to stop", not "you
+			// failed". A deadline and a signal are the same thing from here.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				a.printf("stopped")
 				return nil
 			}
@@ -1644,4 +1654,43 @@ func (a *app) printTimetable(cfg config.Config, jobs []scheduler.Job) error {
 		})
 	})
 	return nil
+}
+
+// reconcileInterruptedJobs closes out jobs a dead process left open.
+//
+// A crash, a SIGKILL or a machine reboot leaves a job recorded as running, and
+// nothing else will ever change that: the process that would have finished it
+// is gone. Left alone the catalog says a backup is in progress, which is the
+// one state an operator cannot act on -- neither "it worked" nor "it failed".
+//
+// Start-up is the only moment this is knowable, because a single-writer catalog
+// means anything still marked running belongs to a previous life.
+func (a *app) reconcileInterruptedJobs(ctx context.Context, cfg config.Config) {
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		a.warnf("koffr: could not open the catalog to reconcile interrupted jobs: %v", err)
+		return
+	}
+	defer func() { _ = cat.Close() }()
+
+	snap, err := cat.Export(ctx)
+	if err != nil {
+		a.warnf("koffr: could not read the catalog to reconcile interrupted jobs: %v", err)
+		return
+	}
+
+	for _, job := range snap.Jobs {
+		if job.Status != catalog.StatusRunning {
+			continue
+		}
+		job.Status = catalog.StatusFailed
+		job.ErrorClass = catalog.ErrClassCanceled
+		job.ErrorDetail = "Koffr stopped before this job finished; it was marked failed on the next start"
+		job.FinishedAt = time.Now().UTC()
+		if err := cat.RecordJob(ctx, job); err != nil {
+			a.warnf("koffr: could not close out interrupted job %s: %v", job.ID, err)
+			continue
+		}
+		a.printf("job %s (%s) was left running by a previous run; marked failed", job.ID, job.SourceID)
+	}
 }

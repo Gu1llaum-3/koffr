@@ -49,6 +49,9 @@ type recorder struct {
 	release chan struct{} // when non-nil, Execute blocks until it is closed
 	fail    func(attempt int) error
 	calls   atomic.Int32
+	// finished holds the error the last Execute returned, so a test can tell
+	// "still running" from "cancelled" without guessing.
+	finished atomic.Pointer[error]
 }
 
 func (r *recorder) Execute(ctx context.Context, job scheduler.Job) error {
@@ -63,12 +66,18 @@ func (r *recorder) Execute(ctx context.Context, job scheduler.Job) error {
 		select {
 		case <-release:
 		case <-ctx.Done():
-			return ctx.Err()
+			err := ctx.Err()
+			r.finished.Store(&err)
+			return err
 		}
 	}
 	if r.fail != nil {
-		return r.fail(n)
+		err := r.fail(n)
+		r.finished.Store(&err)
+		return err
 	}
+	var none error
+	r.finished.Store(&none)
 	return nil
 }
 
@@ -348,4 +357,119 @@ func TestRun_UsesTheInjectedClassifier(t *testing.T) {
 	assert.Equal(t, 1, int(r.calls.Load()),
 		"an error the classifier calls a configuration mistake must not be retried, "+
 			"however opaque the error itself is")
+}
+
+// EF-093: the execution window. A schedule says when to start; the window says
+// when starting is allowed at all, which is what keeps a big backup off the
+// link during business hours.
+func TestWindow_Allows(t *testing.T) {
+	night, err := scheduler.ParseWindow("22:00", "06:00")
+	require.NoError(t, err)
+
+	day, err := scheduler.ParseWindow("09:00", "17:00")
+	require.NoError(t, err)
+
+	at := func(h, m int) time.Time {
+		return time.Date(2026, 3, 1, h, m, 0, 0, time.UTC)
+	}
+
+	// A window that crosses midnight is the normal case for backups, and the
+	// one a naive start <= t <= end gets wrong.
+	assert.True(t, night.Allows(at(23, 0)))
+	assert.True(t, night.Allows(at(2, 0)))
+	assert.True(t, night.Allows(at(22, 0)), "the boundary is inclusive at the start")
+	assert.False(t, night.Allows(at(21, 59)))
+	assert.False(t, night.Allows(at(6, 0)), "and exclusive at the end, or 06:00 to 06:00 would mean nothing")
+	assert.False(t, night.Allows(at(12, 0)))
+
+	assert.True(t, day.Allows(at(9, 0)))
+	assert.True(t, day.Allows(at(16, 59)))
+	assert.False(t, day.Allows(at(8, 59)))
+	assert.False(t, day.Allows(at(23, 0)))
+
+	// No window means always.
+	assert.True(t, scheduler.Window{}.Allows(at(3, 0)))
+}
+
+func TestParseWindow_RefusesNonsense(t *testing.T) {
+	for _, tc := range [][2]string{{"25:00", "06:00"}, {"22:00", "6"}, {"22:00", "22:00"}} {
+		_, err := scheduler.ParseWindow(tc[0], tc[1])
+		assert.Error(t, err, "%q to %q", tc[0], tc[1])
+	}
+}
+
+// A job due outside the window is not started, and the skip is reported: an
+// operator who wrote both a schedule and a window needs to see which one won.
+func TestRun_WindowPreventsStarting(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T11:59:59Z")
+	r := &recorder{}
+
+	var skipped atomic.Int32
+	s := newScheduler(t, c, r, scheduler.Job{SourceID: "prod", Spec: "* * * * *"})
+	s.Window, _ = scheduler.ParseWindow("22:00", "06:00")
+	s.OnSkip = func(scheduler.Job, string) { skipped.Add(1) }
+
+	stop := run(t, s)
+	defer stop()
+
+	c.advance(time.Second)
+	eventually(t, "the window was never reported as the reason", func() bool { return skipped.Load() >= 1 })
+	assert.Empty(t, r.runs(), "midday is outside a 22:00-06:00 window")
+
+	// And inside it, the same job runs.
+	c.advance(11 * time.Hour)
+	eventually(t, "the job never ran once the window opened", func() bool { return len(r.runs()) == 1 })
+}
+
+// Overrunning the window is the operator's call, and the default is to let the
+// backup finish: cancelling at 95 % leaves nothing at all, and with no resume
+// that turns a late backup into no backup.
+func TestRun_OverrunningTheWindowLetsTheJobFinishByDefault(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T05:58:59Z")
+	release := make(chan struct{})
+	r := &recorder{release: release}
+
+	s := newScheduler(t, c, r, scheduler.Job{SourceID: "prod", Spec: "* * * * *"})
+	s.Window, _ = scheduler.ParseWindow("22:00", "06:00")
+
+	stop := run(t, s)
+	defer func() { close(release); stop() }()
+
+	c.advance(time.Second)
+	eventually(t, "the job never started inside the window", func() bool { return len(r.runs()) == 1 })
+
+	c.advance(2 * time.Hour) // well past 06:00
+	time.Sleep(30 * time.Millisecond)
+	assert.Equal(t, int32(0), r.calls.Load()-1, "no second attempt")
+	assert.Nil(t, r.finished.Load(), "the running job must still be running, not cancelled")
+}
+
+// Opted into, the window closing cancels what is still running. For someone
+// whose link is the constraint, a backup still pulling at nine in the morning
+// is the problem the window exists to solve.
+func TestRun_CancelOnWindowClose(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T05:58:59Z")
+	r := &recorder{release: make(chan struct{})} // never closed
+
+	s := newScheduler(t, c, r, scheduler.Job{SourceID: "prod", Spec: "* * * * *"})
+	s.Window, _ = scheduler.ParseWindow("22:00", "06:00")
+	s.CancelOnWindowClose = true
+
+	stop := run(t, s)
+	defer stop()
+
+	c.advance(time.Second)
+	eventually(t, "the job never started", func() bool { return len(r.runs()) == 1 })
+
+	c.advance(time.Hour) // 07:00, outside
+	eventually(t, "the window closed and the job was left running", func() bool {
+		return r.finished.Load() != nil
+	})
+	assert.ErrorIs(t, *r.finished.Load(), context.Canceled)
 }

@@ -84,6 +84,18 @@ type Scheduler struct {
 	// MaxConcurrent caps how many jobs run at once (EF-093). Zero means no cap.
 	MaxConcurrent int
 
+	// Window is when a job may start (EF-093). The zero value allows any time.
+	Window Window
+
+	// CancelOnWindowClose stops a job still running when the window closes.
+	//
+	// Off by default, and that default is a judgement rather than caution.
+	// Cancelling at 95 % leaves nothing at all, and with no resumable upload
+	// that turns a late backup into no backup -- which is the worse of the two
+	// outcomes for most people. Someone whose link is the constraint wants the
+	// other one, and says so.
+	CancelOnWindowClose bool
+
 	Retry RetryPolicy
 
 	// Classify says how an error should be treated. Injected because the class
@@ -107,7 +119,7 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	entries []*entry
-	running map[string]bool
+	running map[string]context.CancelFunc
 }
 
 // entry is a job with its parsed schedule and its next due time.
@@ -185,6 +197,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			s.enforceWindow()
 			for _, due := range s.due() {
 				s.start(ctx, &wg, due)
 			}
@@ -217,7 +230,11 @@ func (s *Scheduler) due() []*entry {
 			e.attempt = 0
 		}
 
-		if s.running[e.job.SourceID] {
+		if !s.Window.Allows(now) {
+			s.skip(e.job, "outside the execution window "+s.Window.String())
+			continue
+		}
+		if _, busy := s.running[e.job.SourceID]; busy {
 			// EF-045 would refuse this in the repository anyway, but finding
 			// out by taking a lock and failing is a worse way to learn it.
 			s.skip(e.job, "the previous run has not finished")
@@ -236,9 +253,11 @@ func (s *Scheduler) start(ctx context.Context, wg *sync.WaitGroup, e *entry) {
 		return
 	}
 	if s.running == nil {
-		s.running = map[string]bool{}
+		s.running = map[string]context.CancelFunc{}
 	}
-	s.running[e.job.SourceID] = true
+	// A context per job, so the window can end one without ending the others.
+	jobCtx, cancel := context.WithCancel(ctx)
+	s.running[e.job.SourceID] = cancel
 	e.attempt++
 	attempt := e.attempt
 	s.mu.Unlock()
@@ -246,7 +265,8 @@ func (s *Scheduler) start(ctx context.Context, wg *sync.WaitGroup, e *entry) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := s.Execute(ctx, e.job)
+		defer cancel()
+		err := s.Execute(jobCtx, e.job)
 
 		s.mu.Lock()
 		delete(s.running, e.job.SourceID)
@@ -339,4 +359,22 @@ func NextRun(spec string, after time.Time) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("scheduler: %q is not a schedule: %w", spec, err)
 	}
 	return schedule.Next(after), nil
+}
+
+// enforceWindow ends jobs still running once the window has closed.
+//
+// Opt-in, because the default answer is to let a backup finish: see
+// CancelOnWindowClose. Cancelling is what actually kills pg_dump, so the link
+// is free within seconds rather than whenever the process notices.
+func (s *Scheduler) enforceWindow() {
+	if !s.CancelOnWindowClose || !s.Window.IsSet() || s.Window.Allows(s.now()) {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, cancel := range s.running {
+		s.skip(Job{SourceID: id}, "the execution window closed while it was running")
+		cancel()
+	}
 }

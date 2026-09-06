@@ -71,8 +71,30 @@ type Scheduler struct {
 
 	Retry Retry `yaml:"retry,omitempty"`
 
+	// Window is when a job may start (EF-093). A schedule says when to try;
+	// this says when trying is allowed at all, which is what keeps a large
+	// backup off the link during business hours.
+	Window Window `yaml:"window,omitempty"`
+
 	location *time.Location
+	window   scheduler.Window
 }
+
+// Window is the daily span during which backups may start.
+type Window struct {
+	Start string `yaml:"start,omitempty"`
+	End   string `yaml:"end,omitempty"`
+
+	// CancelOnClose stops a backup still running when the window closes.
+	//
+	// Off by default, and deliberately: cancelling at 95 % leaves nothing, and
+	// with no resumable upload that turns a late backup into no backup. Someone
+	// whose link is the constraint wants the other answer and says so.
+	CancelOnClose bool `yaml:"cancel_on_close,omitempty"`
+}
+
+// ExecutionWindow is the parsed window.
+func (s Scheduler) ExecutionWindow() scheduler.Window { return s.window }
 
 // Retry is EF-094.
 type Retry struct {
@@ -496,6 +518,13 @@ func (s *Scheduler) validate(v *validator) {
 	if s.Retry.MaxDelay == 0 {
 		s.Retry.MaxDelay = 30 * time.Minute
 	}
+	w, err := scheduler.ParseWindow(s.Window.Start, s.Window.End)
+	if err != nil {
+		v.add("scheduler.window", err.Error(), "write the times as HH:MM, for example 22:00 to 06:00")
+	} else {
+		s.window = w
+	}
+
 	if s.Retry.MaxDelay < s.Retry.InitialDelay {
 		v.add("scheduler.retry.max_delay", "is shorter than the initial delay",
 			"the delay doubles up to this ceiling, so the ceiling has to be the larger one")

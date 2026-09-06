@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Gu1llaum-3/koffr/internal/catalog"
 	"github.com/Gu1llaum-3/koffr/internal/catalog/replica"
+	"github.com/Gu1llaum-3/koffr/internal/catalog/sqlite"
 	"github.com/Gu1llaum-3/koffr/internal/cli"
 	"github.com/Gu1llaum-3/koffr/internal/config"
 	"github.com/Gu1llaum-3/koffr/internal/crypto"
@@ -586,4 +588,92 @@ func TestConfig_RefusesABadSchedule(t *testing.T) {
 	assert.Equal(t, cli.ExitConfig, code)
 	assert.Contains(t, errOut, "sources.prod-pg-main.schedule")
 	assert.Contains(t, errOut, "@daily", "the message has to say what would have worked")
+}
+
+// A job left running by a process that died is the one state an operator cannot
+// act on: neither "it worked" nor "it failed". Start-up is the only moment it
+// is knowable, because a single-writer catalog means anything still marked
+// running belongs to a previous life. Databasus does this; Koffr did not.
+func TestSchedule_ClosesOutJobsLeftRunningByADeadProcess(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath,
+		[]byte(strings.Replace(string(body), "    database: shop",
+			"    database: shop\n    schedule: \"@daily\"", 1)), 0o600))
+
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	cat, err := sqlite.Open(t.Context(), cfg.Catalog.Path)
+	require.NoError(t, err)
+	require.NoError(t, cat.RecordJob(t.Context(), catalog.Job{
+		ID: "01JOBSTUCK0000000000000000", SourceID: "prod-pg-main", Kind: "logical",
+		Trigger: catalog.TriggerSchedule, Status: catalog.StatusRunning,
+		StartedAt: time.Now().Add(-time.Hour).UTC(),
+	}))
+	require.NoError(t, cat.Close())
+
+	// Not --dry-run: printing a timetable must not change the catalog, so the
+	// repair only happens on a real start. The scheduler is given a moment and
+	// then told to stop.
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	var out, errBuf strings.Builder
+	code := cli.Run(ctx, []string{"--config", cfgPath, "schedule"},
+		cli.Streams{Out: &out, Err: &errBuf})
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errBuf.String())
+	assert.Contains(t, errBuf.String(), "marked failed")
+
+	cat, err = sqlite.Open(t.Context(), cfg.Catalog.Path)
+	require.NoError(t, err)
+	defer func() { _ = cat.Close() }()
+
+	snap, err := cat.Export(t.Context())
+	require.NoError(t, err)
+	require.Len(t, snap.Jobs, 1)
+	assert.Equal(t, catalog.StatusFailed, snap.Jobs[0].Status,
+		"a job nobody is doing must not still read as in progress")
+	assert.Equal(t, catalog.ErrClassCanceled, snap.Jobs[0].ErrorClass)
+	assert.False(t, snap.Jobs[0].FinishedAt.IsZero())
+}
+
+// EF-093 through the configuration, because a window that only exists in the
+// scheduler's struct is a window nobody can set.
+func TestSchedule_WindowComesFromTheConfiguration(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	updated := strings.Replace(string(body), "catalog:", `scheduler:
+  window:
+    start: "22:00"
+    end: "06:00"
+catalog:`, 1)
+	updated = strings.Replace(updated, "    database: shop",
+		"    database: shop\n    schedule: \"@daily\"", 1)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(updated), 0o600))
+
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "22:00-06:00", cfg.Scheduler.ExecutionWindow().String())
+
+	code, _, errOut := run(t, "--config", cfgPath, "schedule", "--dry-run")
+	assert.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+}
+
+// A window nobody can agree on is worse than none, so it is refused at load.
+func TestConfig_RefusesAnAmbiguousWindow(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(strings.Replace(string(body), "catalog:",
+		`scheduler:
+  window:
+    start: "22:00"
+    end: "22:00"
+catalog:`, 1)), 0o600))
+
+	code, _, errOut := run(t, "--config", cfgPath, "config", "validate")
+	assert.Equal(t, cli.ExitConfig, code)
+	assert.Contains(t, errOut, "scheduler.window")
 }
