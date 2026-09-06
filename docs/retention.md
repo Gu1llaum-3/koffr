@@ -131,6 +131,39 @@ undone, and it is the only thing standing between an accidental
 until the lock expires whatever any rule says — which is the protection you
 asked for when you turned it on.
 
+## Several destinations
+
+A source may write to several destinations. The first is streamed to; the rest
+are **copies of the finished backup**, byte for byte, so the manifest's digests
+verify each one.
+
+```yaml
+sources:
+  shop:
+    destinations: [main, offsite]
+    retention: {keep_last: 7}
+    retention_by_destination:
+      offsite: {daily: 7, monthly: 12}
+```
+
+Copied rather than backed up again, deliberately. Streaming the database twice
+would read it twice, cost twice, and produce two backups that are not the same
+backup -- different digests, nothing to compare, and no way to tell which one is
+right when they disagree.
+
+**Order matters.** The database is held open until the first destination has the
+bytes, so the fastest one goes first and the slow offsite copy happens
+afterwards, from the repository.
+
+A copy that fails is a warning, never a failed backup. The backup on the first
+destination exists and is restorable, and reporting failure would send someone
+to rerun one that is already there. One destination refusing does not stop the
+next.
+
+Each destination is its own row in the catalog, which is what lets retention
+differ: seven days locally, twelve months offsite. `koffr prune` runs once per
+destination, with that destination's policy.
+
 ## Should the repository itself be backed up?
 
 No. A backup of a backup doubles the cost and adds a layer that can be wrong on
@@ -138,9 +171,10 @@ its own.
 
 What protects a repository is not a copy of it:
 
-- **A second destination**, written independently, so a bug in one write does
-  not reach both. This is the 3-2-1 rule and it is worth more than a copy,
-  because each destination is verified on its own terms.
+- **A second destination** (see above). This is the 3-2-1 rule, and it is worth
+  more than copying the repository yourself: Koffr checks each object's digest
+  as it copies, so a corrupted source object is caught at the moment it would
+  otherwise be duplicated.
 - **Immutability** on at least one of them (S3 Object Lock), which is what
   survives ransomware, a wrong `prune --confirm`, and Koffr itself being wrong.
 - **Versioning with a lifecycle rule**, which gives a window to undo a mistake

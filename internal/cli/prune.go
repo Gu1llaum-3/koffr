@@ -58,11 +58,12 @@ func (a *app) pruneCmd() *cobra.Command {
 // operator approving a deletion needs to see which rule spared each survivor
 // before believing the ones it did not.
 type pruneLine struct {
-	BackupID string `json:"backup_id"`
-	Source   string `json:"source"`
-	TakenAt  string `json:"taken_at"`
-	Keep     bool   `json:"keep"`
-	Reason   string `json:"reason"`
+	BackupID    string `json:"backup_id"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	TakenAt     string `json:"taken_at"`
+	Keep        bool   `json:"keep"`
+	Reason      string `json:"reason"`
 }
 
 func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrphans bool) error {
@@ -93,50 +94,48 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 	)
 	for _, id := range ids {
 		src, _ := cfg.Source(id)
-		if src.Retention.Policy().IsZero() {
-			// Said out loud rather than skipped in silence: an operator who
-			// expected a purge and got none should learn why here.
-			a.printf("%s: no retention policy, keeping everything", id)
-			continue
-		}
 
-		plan, err := a.planFor(ctx, cat, cfg, id, src)
-		if err != nil {
-			return err
-		}
-		for _, d := range plan {
-			lines = append(lines, pruneLine{
-				BackupID: string(d.Backup.ID), Source: id,
-				TakenAt: d.Backup.StartedAt.UTC().Format(time.RFC3339),
-				Keep:    d.Keep, Reason: d.Reason,
-			})
-		}
-		if !confirm {
-			continue
-		}
+		// One pass per destination, each with its own policy (EF-044). Keeping
+		// seven days locally and twelve months offsite is the point of writing
+		// to both, so a single pass over the source would be the wrong shape.
+		for _, destName := range src.Destinations {
+			policy := src.RetentionFor(destName)
+			if policy.IsZero() {
+				a.printf("%s on %s: no retention policy, keeping everything", id, destName)
+				continue
+			}
 
-		destName, _, err := a.destinationFor(cfg, src, "")
-		if err != nil {
-			return err
-		}
-		applied, err := a.applyFor(ctx, cat, cfg, src, plan)
-		if err != nil {
-			return err
-		}
-		deleted = append(deleted, applied.Deleted...)
-		freed += applied.FreedBytes
-		// Named by destination, not by source. It is the bucket that keeps
-		// what it deletes, and an operator told "shop keeps previous versions"
-		// would go looking at the wrong thing entirely.
-		if len(applied.Deleted) > 0 && !applied.SpaceReclaimed && !slices.Contains(keepsData, destName) {
-			keepsData = append(keepsData, destName)
+			plan, err := a.planFor(ctx, cat, cfg, id, src, destName, policy)
+			if err != nil {
+				return err
+			}
+			for _, d := range plan {
+				lines = append(lines, pruneLine{
+					BackupID: string(d.Backup.ID), Source: id, Destination: destName,
+					TakenAt: d.Backup.StartedAt.UTC().Format(time.RFC3339),
+					Keep:    d.Keep, Reason: d.Reason,
+				})
+			}
+			if !confirm {
+				continue
+			}
+
+			applied, err := a.applyFor(ctx, cat, cfg, destName, plan)
+			if err != nil {
+				return err
+			}
+			deleted = append(deleted, applied.Deleted...)
+			freed += applied.FreedBytes
+			if len(applied.Deleted) > 0 && !applied.SpaceReclaimed &&
+				!slices.Contains(keepsData, destName) {
+				keepsData = append(keepsData, destName)
+			}
 		}
 	}
 
 	// The replica in the repository still lists what was just deleted, and
 	// `catalog sync` merges rather than replaces -- so without this, a rebuild
-	// resurrects every pruned backup as a row nothing can restore. Refreshing
-	// it is what makes the two agree again.
+	// resurrects every pruned backup as a row nothing can restore.
 	if len(deleted) > 0 {
 		if warn := a.refreshReplica(ctx, cfg, cat); warn != "" {
 			a.warnf("koffr: %s", warn)
@@ -171,13 +170,14 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 
 	a.emit(out, func(p *printer) {
 		p.table(func(p *printer) {
-			p.printf("BACKUP ID\tSOURCE\tTAKEN\tVERDICT\tWHY\n")
+			p.printf("BACKUP ID\tSOURCE\tDESTINATION\tTAKEN\tVERDICT\tWHY\n")
 			for _, l := range lines {
 				verdict := "delete"
 				if l.Keep {
 					verdict = "keep"
 				}
-				p.printf("%s\t%s\t%s\t%s\t%s\n", l.BackupID, l.Source, l.TakenAt, verdict, l.Reason)
+				p.printf("%s\t%s\t%s\t%s\t%s\t%s\n",
+					l.BackupID, l.Source, l.Destination, l.TakenAt, verdict, l.Reason)
 			}
 		})
 		if len(orphanLines) > 0 {
@@ -211,9 +211,11 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 }
 
 func (a *app) planFor(
-	ctx context.Context, cat catalog.MetadataStore, cfg config.Config, id string, src config.Source,
+	ctx context.Context, cat catalog.MetadataStore, cfg config.Config,
+	id string, src config.Source, destName string, policy retention.Policy,
 ) ([]retention.Decision, error) {
-	backups, err := cat.ListBackups(ctx, catalog.BackupFilter{SourceID: id})
+	backups, err := cat.ListBackups(ctx,
+		catalog.BackupFilter{SourceID: id, Destination: destName})
 	if err != nil {
 		return nil, err
 	}
@@ -221,12 +223,12 @@ func (a *app) planFor(
 	// EF-065 wants the last *restorable* backup, and a catalog row is not one.
 	// Checking costs a Stat per backup and only until the first that is there,
 	// which is a price worth paying before deleting anything.
-	restorable, err := a.restorableCheck(ctx, cfg, src)
+	restorable, err := a.restorableCheck(ctx, cfg, destName)
 	if err != nil {
 		return nil, err
 	}
 
-	plan, err := retention.Plan(backups, src.Retention.Policy(),
+	plan, err := retention.Plan(backups, policy,
 		time.Now().In(cfg.Scheduler.Location()), retention.WithRestorable(restorable))
 	if err != nil {
 		// A kind this version cannot reason about. Refused for the whole pass,
@@ -239,11 +241,11 @@ func (a *app) planFor(
 
 func (a *app) applyFor(
 	ctx context.Context, cat catalog.MetadataStore, cfg config.Config,
-	src config.Source, plan []retention.Decision,
+	destName string, plan []retention.Decision,
 ) (retention.Applied, error) {
-	_, dest, err := a.destinationFor(cfg, src, "")
-	if err != nil {
-		return retention.Applied{}, err
+	dest, known := cfg.Destinations[destName]
+	if !known {
+		return retention.Applied{}, fault(ExitConfig, "no destination %q", destName)
 	}
 	st, err := openStorage(ctx, dest)
 	if err != nil {
@@ -292,11 +294,11 @@ func (a *app) refreshReplica(ctx context.Context, cfg config.Config, cat catalog
 // of objects a backup (ENF-010), so a prefix without one is litter whatever
 // else it holds.
 func (a *app) restorableCheck(
-	ctx context.Context, cfg config.Config, src config.Source,
+	ctx context.Context, cfg config.Config, destName string,
 ) (func(catalog.Backup) bool, error) {
-	_, dest, err := a.destinationFor(cfg, src, "")
-	if err != nil {
-		return nil, err
+	dest, known := cfg.Destinations[destName]
+	if !known {
+		return nil, fault(ExitConfig, "no destination %q", destName)
 	}
 	st, err := openStorage(ctx, dest)
 	if err != nil {

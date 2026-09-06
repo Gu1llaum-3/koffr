@@ -279,7 +279,7 @@ func Apply(
 		// The catalog row goes last and only if the objects went. A row for a
 		// backup still sitting in the repository would hide it from every
 		// listing while it kept being paid for.
-		if err := cat.ForgetBackup(ctx, b.ID); err != nil {
+		if err := cat.ForgetBackup(ctx, b.ID, b.Destination); err != nil {
 			failures = append(failures, fmt.Errorf(
 				"retention: %s was deleted from the repository but not from the catalog: %w", b.ID, err))
 			continue

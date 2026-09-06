@@ -492,3 +492,104 @@ func TestRun_RecordsAJobForAConfigurationRefusal(t *testing.T) {
 	require.Len(t, snap.Jobs, 1)
 	assert.Equal(t, catalog.StatusFailed, snap.Jobs[0].Status)
 }
+
+// EF-044, the 3-2-1 rule. The second destination is a copy of the finished
+// backup rather than a second backup: streaming the database twice would read
+// it twice, cost twice, and produce two backups that are not the same backup --
+// different digests, nothing to compare.
+func TestRun_MirrorsToASecondDestination(t *testing.T) {
+	r := newRig(t)
+	offsite := memory.New()
+
+	req := r.request(&fakeSource{payload: []byte("body")})
+	req.Mirrors = []backup.Mirrored{{Name: "offsite", Storage: offsite}}
+
+	res, err := r.runner.Run(t.Context(), req)
+	require.NoError(t, err)
+	assert.Empty(t, res.Warnings)
+
+	// Byte for byte, so the manifest's digests verify the copy as well as the
+	// original -- which is the point of copying rather than backing up again.
+	for _, obj := range res.Manifest.Objects {
+		key := res.Prefix + obj.Key
+		want := readAll(t, r.store, key)
+		got := readAll(t, offsite, key)
+		assert.Equal(t, want, got, "object %s differs between the two destinations", obj.Key)
+	}
+
+	_, err = offsite.Stat(t.Context(), res.Prefix+"manifest.json")
+	require.NoError(t, err, "without the manifest the copy is objects, not a backup")
+	_, err = offsite.Stat(t.Context(), res.Prefix+"RESTORE.md")
+	require.NoError(t, err, "the procedure has to travel with the backup (PD-001)")
+}
+
+// Each destination is its own row, because retention is per destination.
+func TestRun_MirrorIsRecordedSeparately(t *testing.T) {
+	r := newRig(t)
+	req := r.request(&fakeSource{payload: []byte("body")})
+	req.Mirrors = []backup.Mirrored{{Name: "offsite", Storage: memory.New()}}
+
+	_, err := r.runner.Run(t.Context(), req)
+	require.NoError(t, err)
+
+	rows, err := r.catalog.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	destinations := []string{rows[0].Destination, rows[1].Destination}
+	assert.Contains(t, destinations, "offsite")
+	assert.Len(t, destinations, 2)
+	assert.NotEqual(t, rows[0].Destination, rows[1].Destination)
+	assert.Equal(t, rows[0].ID, rows[1].ID, "one backup, two places")
+}
+
+// The mirror happens after the point of no return, so a destination that cannot
+// be reached is a warning about the second copy and never a failure of the
+// first. The backup exists; reporting failure would send an operator to rerun
+// one that is already there.
+func TestRun_AFailedMirrorIsAWarning(t *testing.T) {
+	r := newRig(t)
+	req := r.request(&fakeSource{payload: []byte("body")})
+	req.Mirrors = []backup.Mirrored{
+		{Name: "offsite", Storage: &failingStorage{Storage: memory.New(), failOn: ".age"}},
+	}
+
+	res, err := r.runner.Run(t.Context(), req)
+	require.NoError(t, err, "the backup on the first destination is complete and restorable")
+	require.NotEmpty(t, res.Warnings)
+	assert.Contains(t, res.Warnings[0], "offsite")
+
+	// And the first destination is untouched by the second's failure.
+	_, err = r.store.Stat(t.Context(), res.Prefix+"manifest.json")
+	require.NoError(t, err)
+}
+
+// One destination refusing must not stop the next: two copies are better than
+// none, and a run that gave up at the first stumble would deliver neither.
+func TestRun_OneFailedMirrorDoesNotStopTheOthers(t *testing.T) {
+	r := newRig(t)
+	working := memory.New()
+
+	req := r.request(&fakeSource{payload: []byte("body")})
+	req.Mirrors = []backup.Mirrored{
+		{Name: "broken", Storage: &failingStorage{Storage: memory.New(), failOn: ".age"}},
+		{Name: "working", Storage: working},
+	}
+
+	res, err := r.runner.Run(t.Context(), req)
+	require.NoError(t, err)
+	require.Len(t, res.Warnings, 1)
+
+	_, err = working.Stat(t.Context(), res.Prefix+"manifest.json")
+	require.NoError(t, err, "the destination that works has to get its copy")
+}
+
+func readAll(t *testing.T, st *memory.Storage, key string) []byte {
+	t.Helper()
+	rc, err := st.Get(t.Context(), key)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, rc.Close()) }()
+	body, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	return body
+}

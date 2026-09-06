@@ -33,11 +33,13 @@ import (
 // a tool that picked for them.
 func (a *app) destinationFor(cfg config.Config, src config.Source, want string) (string, config.Destination, error) {
 	if want == "" {
-		if len(src.Destinations) != 1 {
-			return "", config.Destination{}, fault(ExitUsage,
-				"this source writes to %d destinations (%v); name one with --destination",
-				len(src.Destinations), src.Destinations)
+		if len(src.Destinations) == 0 {
+			return "", config.Destination{}, fault(ExitUsage, "this source has no destination")
 		}
+		// The first is the one written to; the rest are copies of it (EF-044).
+		// Order in the configuration is therefore meaningful, and the fastest
+		// destination belongs first: the database is held open until that one
+		// has the bytes.
 		want = src.Destinations[0]
 	}
 	dest, ok := cfg.Destinations[want]

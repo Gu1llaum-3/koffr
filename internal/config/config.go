@@ -284,6 +284,11 @@ type Source struct {
 	// for a setting whose mistakes are unrecoverable (EF-105).
 	Retention Retention `yaml:"retention,omitempty"`
 
+	// RetentionByDestination overrides the policy for one destination
+	// (EF-044). Keeping seven days locally and twelve months offsite is the
+	// point of writing to both, and it cannot be said with one policy.
+	RetentionByDestination map[string]Retention `yaml:"retention_by_destination,omitempty"`
+
 	Destinations []string `yaml:"destinations"`
 	SSH          *SSH     `yaml:"ssh,omitempty"`
 }
@@ -536,6 +541,18 @@ func (s *Source) validate(v *validator, path string, destinations map[string]Des
 	// how a purge does something nobody asked for.
 	if err := s.Retention.Policy().Validate(); err != nil {
 		v.add(path+".retention", err.Error(), "counts are whole numbers, and none of them negative")
+	}
+	for name, r := range s.RetentionByDestination {
+		if !slices.Contains(s.Destinations, name) {
+			v.add(path+".retention_by_destination."+name,
+				fmt.Sprintf("this source does not write to %q", name),
+				"the key is a destination this source uses")
+			continue
+		}
+		if err := r.Policy().Validate(); err != nil {
+			v.add(path+".retention_by_destination."+name, err.Error(),
+				"counts are whole numbers, and none of them negative")
+		}
 	}
 
 	// A schedule that does not parse is a source that silently never runs.
@@ -837,4 +854,16 @@ func (l *Log) validate(v *validator) {
 	if l.MaxFiles < 0 {
 		v.add("log.max_files", "cannot be negative", "leave it out for 5")
 	}
+}
+
+// RetentionFor is the policy that applies to one destination.
+//
+// The per-destination entry wins outright rather than merging: two policies
+// half-applied would be a third policy nobody wrote, and a purge is not the
+// place to be clever about precedence.
+func (s Source) RetentionFor(destination string) retention.Policy {
+	if r, override := s.RetentionByDestination[destination]; override {
+		return r.Policy()
+	}
+	return s.Retention.Policy()
 }

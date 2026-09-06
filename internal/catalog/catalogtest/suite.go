@@ -53,6 +53,7 @@ func Suite(t *testing.T, h Harness) {
 	t.Run("Persistence", func(t *testing.T) { testPersistence(t, h) })
 	t.Run("TimestampsSurviveARoundTrip", func(t *testing.T) { testTimestamps(t, h) })
 	t.Run("ForgetBackup", func(t *testing.T) { testForgetBackup(t, h) })
+	t.Run("BackupExistsPerDestination", func(t *testing.T) { testBackupExistsPerDestination(t, h) })
 	t.Run("ExportImportRoundTrip", func(t *testing.T) { testExportImport(t, h) })
 	t.Run("ImportIsIdempotent", func(t *testing.T) { testImportIdempotent(t, h) })
 	t.Run("ImportIsAdditive", func(t *testing.T) { testImportAdditive(t, h) })
@@ -606,7 +607,7 @@ func testForgetBackup(t *testing.T, h Harness) {
 
 	require.NoError(t, s.RecordBackup(t.Context(), keep))
 	require.NoError(t, s.RecordBackup(t.Context(), drop))
-	require.NoError(t, s.ForgetBackup(t.Context(), drop.ID))
+	require.NoError(t, s.ForgetBackup(t.Context(), drop.ID, drop.Destination))
 
 	got, err := s.ListBackups(t.Context(), catalog.BackupFilter{})
 	require.NoError(t, err)
@@ -615,6 +616,31 @@ func testForgetBackup(t *testing.T, h Harness) {
 
 	// Idempotent: a retention pass may be re-run after an interruption, and a
 	// backup already forgotten is the state it was trying to reach.
-	require.NoError(t, s.ForgetBackup(t.Context(), drop.ID))
-	require.NoError(t, s.ForgetBackup(t.Context(), "01NEVEREXISTED000000000000"))
+	require.NoError(t, s.ForgetBackup(t.Context(), drop.ID, drop.Destination))
+	require.NoError(t, s.ForgetBackup(t.Context(), "01NEVEREXISTED000000000000", "main"))
+}
+
+// EF-044: the same backup on two destinations is two rows, because retention is
+// per destination. Pruning it from one must leave the other alone -- otherwise
+// a purge of local storage would hide a copy sitting safely offsite.
+func testBackupExistsPerDestination(t *testing.T, h Harness) {
+	s := h.New(t)
+
+	local, offsite := sampleBackup(), sampleBackup()
+	local.Destination, offsite.Destination = "main", "offsite"
+
+	require.NoError(t, s.RecordBackup(t.Context(), local))
+	require.NoError(t, s.RecordBackup(t.Context(), offsite))
+
+	got, err := s.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	require.Len(t, got, 2, "one backup, two destinations, two rows")
+
+	require.NoError(t, s.ForgetBackup(t.Context(), local.ID, "main"))
+
+	got, err = s.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "offsite", got[0].Destination,
+		"pruning local storage must not hide the copy that is still offsite")
 }

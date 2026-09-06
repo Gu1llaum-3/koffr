@@ -145,9 +145,9 @@ func importBackups(ctx context.Context, tx *sql.Tx, backups []catalog.Backup) er
 			                     started_at, finished_at, size_bytes, manifest_key,
 			                     start_lsn, end_lsn, binlog_file, binlog_pos)
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(id) DO UPDATE SET
+			ON CONFLICT(id, destination) DO UPDATE SET
 				source_id=excluded.source_id, kind=excluded.kind, parent_id=excluded.parent_id,
-				destination=excluded.destination, status=excluded.status,
+				status=excluded.status,
 				started_at=excluded.started_at, finished_at=excluded.finished_at,
 				size_bytes=excluded.size_bytes, manifest_key=excluded.manifest_key,
 				start_lsn=excluded.start_lsn, end_lsn=excluded.end_lsn,

@@ -466,6 +466,14 @@ func (a *app) doBackup(
 	}
 
 	a.printf("backing up %s to %s...", sourceID, destName)
+	// Every destination after the first is a copy of the finished backup
+	// (EF-044). Opened before the job starts, so a destination that cannot be
+	// reached is found now rather than after the database has been read.
+	mirrors, err := a.openMirrors(ctx, cfg, src, destName)
+	if err != nil {
+		return backup.Result{}, err
+	}
+
 	runner := &backup.Runner{
 		Storage:        st,
 		Catalog:        cat,
@@ -482,6 +490,7 @@ func (a *app) doBackup(
 		Executor:    ex,
 		Backup:      opt.request,
 		Destination: destName,
+		Mirrors:     mirrors,
 	})
 }
 
@@ -1691,10 +1700,8 @@ func scheduledJobs(cfg config.Config) ([]scheduler.Job, error) {
 		if src.Schedule == "" {
 			continue
 		}
-		if len(src.Destinations) != 1 {
-			return nil, fmt.Errorf(
-				"source %s is scheduled but writes to %d destinations; a scheduled job needs one",
-				id, len(src.Destinations))
+		if len(src.Destinations) == 0 {
+			return nil, fmt.Errorf("source %s is scheduled but has no destination", id)
 		}
 		jobs = append(jobs, scheduler.Job{
 			SourceID:    id,
@@ -1854,4 +1861,26 @@ func (a *app) schedulePrune(ctx context.Context, cfg config.Config) (stop func()
 		_ = pruner.Run(ctx)
 	}()
 	return func() { <-done }, nil
+}
+
+// openMirrors opens every destination but the primary.
+func (a *app) openMirrors(
+	ctx context.Context, cfg config.Config, src config.Source, primary string,
+) ([]backup.Mirrored, error) {
+	var out []backup.Mirrored
+	for _, name := range src.Destinations {
+		if name == primary {
+			continue
+		}
+		dest, known := cfg.Destinations[name]
+		if !known {
+			return nil, fault(ExitConfig, "no destination %q in %s", name, cfg.Path())
+		}
+		st, err := openStorage(ctx, dest)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, backup.Mirrored{Name: name, Storage: st})
+	}
+	return out, nil
 }

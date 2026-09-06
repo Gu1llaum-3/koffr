@@ -33,7 +33,7 @@ import (
 
 // SchemaVersion is the layout this build understands, kept in SQLite's own
 // user_version pragma rather than a table of our own.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // migrations are applied in order; index i takes the schema from version i to
 // i+1. They are never edited once released, only appended to.
@@ -83,6 +83,43 @@ CREATE TABLE verifications (
     finished_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_verifications_backup ON verifications(backup_id);
+`,
+	// v2: a backup exists once per destination it was written to (EF-044).
+	//
+	// The same backup on two destinations is two rows, because retention is
+	// per destination: keeping seven days locally and twelve months offsite is
+	// the whole point of writing to both. One row with a list would make
+	// "delete this backup from main" a rewrite of a column rather than a
+	// deletion, and every query would have to remember that.
+	//
+	// SQLite cannot alter a primary key, so the table is rebuilt. Existing rows
+	// carry their destination already.
+	`
+CREATE TABLE backups_v2 (
+    id           TEXT NOT NULL,
+    source_id    TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    parent_id    TEXT NOT NULL DEFAULT '',
+    destination  TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL,
+    started_at   INTEGER NOT NULL DEFAULT 0,
+    finished_at  INTEGER NOT NULL DEFAULT 0,
+    size_bytes   INTEGER NOT NULL DEFAULT 0,
+    manifest_key TEXT NOT NULL DEFAULT '',
+    start_lsn    TEXT NOT NULL DEFAULT '',
+    end_lsn      TEXT NOT NULL DEFAULT '',
+    binlog_file  TEXT NOT NULL DEFAULT '',
+    binlog_pos   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (id, destination)
+);
+
+INSERT INTO backups_v2 SELECT * FROM backups;
+DROP TABLE backups;
+ALTER TABLE backups_v2 RENAME TO backups;
+
+CREATE INDEX idx_backups_source_time ON backups(source_id, started_at DESC);
+CREATE INDEX idx_backups_parent      ON backups(parent_id);
+CREATE INDEX idx_backups_id          ON backups(id);
 `,
 }
 
@@ -198,9 +235,9 @@ func (s *Store) RecordBackup(ctx context.Context, b catalog.Backup) error {
 		                     started_at, finished_at, size_bytes, manifest_key,
 		                     start_lsn, end_lsn, binlog_file, binlog_pos)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(id) DO UPDATE SET
+		ON CONFLICT(id, destination) DO UPDATE SET
 			source_id=excluded.source_id, kind=excluded.kind, parent_id=excluded.parent_id,
-			destination=excluded.destination, status=excluded.status,
+			status=excluded.status,
 			started_at=excluded.started_at, finished_at=excluded.finished_at,
 			size_bytes=excluded.size_bytes, manifest_key=excluded.manifest_key,
 			start_lsn=excluded.start_lsn, end_lsn=excluded.end_lsn,
@@ -494,13 +531,18 @@ func binlogPosOf(b catalog.Backup) (int64, error) {
 	return int64(b.BinlogPos), nil
 }
 
-// ForgetBackup removes a backup's row.
+// ForgetBackup removes a backup's row for one destination.
+//
+// One destination, not the backup: a copy pruned from local storage is still
+// on the offsite one, and forgetting both would hide a backup that exists.
 //
 // Idempotent: retention may be re-run after an interrupted pass, and a backup
 // already forgotten is the state that pass was trying to reach.
-func (s *Store) ForgetBackup(ctx context.Context, id catalog.ID) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, string(id)); err != nil {
-		return fmt.Errorf("catalog/sqlite: forget backup %s: %w", id, err)
+func (s *Store) ForgetBackup(ctx context.Context, id catalog.ID, destination string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM backups WHERE id = ? AND destination = ?`,
+		string(id), destination); err != nil {
+		return fmt.Errorf("catalog/sqlite: forget backup %s on %s: %w", id, destination, err)
 	}
 	return nil
 }

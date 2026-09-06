@@ -73,6 +73,16 @@ type Request struct {
 	Executor    executor.Executor
 	Backup      source.Request
 	Destination string
+
+	// Mirrors are the other destinations this backup is copied to (EF-044,
+	// the 3-2-1 rule). Copied rather than backed up again: see Mirror.
+	Mirrors []Mirrored
+}
+
+// Mirrored is one extra destination, named and opened.
+type Mirrored struct {
+	Name    string
+	Storage storage.Storage
 }
 
 // Result describes the backup that was taken.
@@ -182,10 +192,18 @@ func (r *Runner) Run(ctx context.Context, req Request) (res Result, err error) {
 				"run `koffr catalog sync` to pick it up", backupID, b.Prefix(), err)
 	}
 
-	return Result{
+	// res is the named return: the deferred job record reads it, so warnings
+	// added below reach the caller.
+	res = Result{
 		BackupID: backupID, Prefix: b.Prefix(), Manifest: result,
 		Destination: req.Destination,
-	}, nil
+	}
+
+	// After the point of no return, so a mirror that fails is a warning about
+	// the second copy and never a failure of the first. The backup exists and
+	// is restorable; reporting failure would send an operator to rerun it.
+	res.Warnings = append(res.Warnings, r.mirror(ctx, req, b.Prefix(), result)...)
+	return res, nil
 }
 
 // openJob records the attempt as it starts.
