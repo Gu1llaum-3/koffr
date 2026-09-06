@@ -105,6 +105,14 @@ Better still, configure `notify.dead_mans_switch`. It is the only signal that
 survives Koffr being stopped, crashed, or uninstalled by someone tidying up: the
 alarm comes from a ping that never arrives.
 
+## Retention
+
+Nothing is deleted until a policy is written and a schedule applies it. See
+[retention.md](retention.md) — particularly the section on versioned buckets, if
+the destination is S3: deleting a backup there frees no space until a lifecycle
+rule expires the versions, and Koffr will tell you so rather than report a
+number your bill will not match.
+
 ## Logs
 
 Structured JSON on stderr, which journald captures:
