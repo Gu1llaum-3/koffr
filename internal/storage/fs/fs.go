@@ -334,12 +334,14 @@ func (s *Storage) pruneEmptyDirs(dir string) {
 // Capabilities reports what a filesystem can honestly do.
 func (s *Storage) Capabilities() storage.Capabilities {
 	return storage.Capabilities{
-		// A filesystem cannot enforce write-once, and claiming otherwise would
-		// be discovered by an attacker rather than by us (EF-042).
-		Immutable:      false,
-		Multipart:      false,
-		RangeReads:     true,
-		ServerSideCopy: false,
+		// Immutability would need the filesystem's own controls, which vary
+		// too much to promise anything.
+		Immutable:  false,
+		Multipart:  false,
+		RangeReads: true,
+		// A filesystem gives the bytes back when the file goes, which is the
+		// one thing it is unambiguously good at.
+		DeleteReclaimsSpace: true,
 	}
 }
 

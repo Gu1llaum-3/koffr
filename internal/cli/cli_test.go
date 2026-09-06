@@ -1244,3 +1244,34 @@ func TestSchedule_NoPruneScheduleMeansNoPurge(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, entries, 2, "a purge nobody scheduled must not happen")
 }
+
+// A purge on a versioned or Object-Locked bucket removes the backup from view
+// and frees nothing: the bytes stay behind a delete marker until a lifecycle
+// rule expires them. Measured on MinIO, the bucket went from 291 KiB to 292 KiB
+// while the purge reported freeing 190 KiB. Saying so is the whole fix.
+func TestPrune_SaysWhenNoSpaceIsReclaimed(t *testing.T) {
+	// The fs backend reclaims, so this asserts the honest case end to end and
+	// the retention package covers the other one against a double.
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_last: 1")
+
+	for i, id := range []string{"01AAA00000000000000000000A", "01BBB00000000000000000000B"} {
+		putBackup(t, cfgPath, id)
+		recordBackup(t, cfgPath, id, time.Now().Add(-time.Duration(i)*24*time.Hour))
+	}
+
+	code, out, _ := run(t, "--config", cfgPath, "--output", "json", "prune", "--confirm")
+	require.Equal(t, cli.ExitOK, code)
+
+	var got struct {
+		Result struct {
+			Deleted        int   `json:"deleted"`
+			Freed          int64 `json:"freed_bytes"`
+			SpaceReclaimed bool  `json:"space_reclaimed"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, 1, got.Result.Deleted)
+	assert.True(t, got.Result.SpaceReclaimed, "a filesystem gives the bytes back")
+	assert.Positive(t, got.Result.Freed)
+}

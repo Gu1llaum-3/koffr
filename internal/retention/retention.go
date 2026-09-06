@@ -256,6 +256,8 @@ func Apply(
 	var result Applied
 	var failures []error
 
+	result.SpaceReclaimed = st.Capabilities().DeleteReclaimsSpace
+
 	for _, b := range ToDelete(plan) {
 		src, err := storage.ForSource(b.SourceID)
 		if err != nil {
@@ -284,7 +286,9 @@ func Apply(
 		}
 
 		result.Deleted = append(result.Deleted, b.ID)
-		result.FreedBytes += freed
+		if result.SpaceReclaimed {
+			result.FreedBytes += freed
+		}
 	}
 
 	if len(failures) > 0 {
@@ -295,8 +299,21 @@ func Apply(
 
 // Applied is what a pass actually did.
 type Applied struct {
-	Deleted    []catalog.ID
+	Deleted []catalog.ID
+
+	// FreedBytes is what the destination actually gave back, and is zero when
+	// it gives nothing back. See SpaceReclaimed.
 	FreedBytes int64
+
+	// SpaceReclaimed says whether deleting removed the bytes or only the
+	// listing.
+	//
+	// False on a versioned or Object-Locked bucket, where a delete writes a
+	// marker and the data stays -- and stays billed -- until a lifecycle rule
+	// expires it. Reported rather than assumed, because a purge announcing it
+	// freed 190 MiB when the bill did not move is a number somebody will plan
+	// capacity against.
+	SpaceReclaimed bool
 }
 
 // deletePrefix removes every object under a backup's prefix.

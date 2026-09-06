@@ -103,4 +103,18 @@ type Capabilities struct {
 	Multipart      bool
 	RangeReads     bool
 	ServerSideCopy bool
+
+	// DeleteReclaimsSpace says whether removing an object actually gives the
+	// bytes back.
+	//
+	// It is false on a versioned or Object-Locked bucket, where a delete writes
+	// a marker and the data stays -- and stays billed -- until a lifecycle rule
+	// expires it. Retention needs to know: a purge that reports freeing 190 MiB
+	// on such a bucket has freed nothing, and reporting it anyway builds
+	// confidence on a number that is not true.
+	//
+	// A filesystem always reclaims. This is phrased as the question an operator
+	// asks rather than as two S3 facts, so a backend that does something else
+	// again still has one honest answer to give.
+	DeleteReclaimsSpace bool
 }

@@ -60,6 +60,10 @@ type Storage struct {
 	// immutable records what the bucket can actually enforce, discovered at
 	// construction rather than assumed. See Capabilities.
 	immutable bool
+
+	// reclaims records whether a delete gives the bytes back. False on a
+	// versioned or locked bucket, where it writes a marker instead.
+	reclaims bool
 }
 
 // New builds a Storage over an already-configured S3 client.
@@ -83,6 +87,11 @@ func New(ctx context.Context, client *awss3.Client, cfg Config) (*Storage, error
 		}),
 	}
 	s.immutable = bucketHasObjectLock(ctx, client, cfg.Bucket)
+
+	// Asked once, at construction, and asked of the bucket rather than of the
+	// configuration: what matters is what the bucket does, not what someone
+	// believes it does.
+	s.reclaims = !s.immutable && !bucketIsVersioned(ctx, client, cfg.Bucket)
 	return s, nil
 }
 
@@ -100,6 +109,27 @@ func bucketHasObjectLock(ctx context.Context, client *awss3.Client, bucket strin
 		return false
 	}
 	return out.ObjectLockConfiguration.ObjectLockEnabled == types.ObjectLockEnabledEnabled
+}
+
+// bucketIsVersioned reports whether a delete leaves the data behind.
+//
+// On a versioned bucket, DeleteObject without a version id writes a delete
+// marker: the object stops being listed and every byte of it stays, and stays
+// billed, until a lifecycle rule expires the noncurrent versions. A purge that
+// reported freeing that space would be reporting something that did not happen.
+//
+// Unreadable configuration reads as versioned, which makes the reporting
+// cautious rather than optimistic: claiming less than was freed costs nothing,
+// claiming more costs trust.
+func bucketIsVersioned(ctx context.Context, client *awss3.Client, bucket string) bool {
+	out, err := client.GetBucketVersioning(ctx, &awss3.GetBucketVersioningInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		return true
+	}
+	return out.Status == types.BucketVersioningStatusEnabled ||
+		out.Status == types.BucketVersioningStatusSuspended
 }
 
 // key maps a repository key onto an object key inside the bucket.
@@ -301,10 +331,11 @@ func (s *Storage) Delete(ctx context.Context, key string) error {
 // Capabilities reports what this bucket can do, as discovered at construction.
 func (s *Storage) Capabilities() storage.Capabilities {
 	return storage.Capabilities{
-		Immutable:      s.immutable,
-		Multipart:      true,
-		RangeReads:     true,
-		ServerSideCopy: true,
+		Immutable:           s.immutable,
+		Multipart:           true,
+		RangeReads:          true,
+		DeleteReclaimsSpace: s.reclaims,
+		ServerSideCopy:      true,
 	}
 }
 

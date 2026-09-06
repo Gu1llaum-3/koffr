@@ -383,6 +383,21 @@ func testCapabilitiesAreHonest(t *testing.T, newStorage Factory) {
 		_, err := s.GetRange(t.Context(), "ranged", 2, 3)
 		assert.Error(t, err, "range reads were requested and silently ignored")
 	}
+
+	// A backend claiming a delete gives the bytes back has to actually stop
+	// listing them. Retention reports freed space from this claim, and a purge
+	// that reports freeing what it did not is worse than one that admits it
+	// cannot.
+	if caps.DeleteReclaimsSpace {
+		put(t, s, "reclaim/one", []byte("payload"))
+		require.NoError(t, s.Delete(t.Context(), "reclaim/one"))
+
+		var remaining int
+		for range s.List(t.Context(), "reclaim/") {
+			remaining++
+		}
+		assert.Zero(t, remaining, "the object was deleted and the backend still lists it")
+	}
 }
 
 func testLargeObject(t *testing.T, newStorage Factory) {

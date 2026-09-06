@@ -225,3 +225,46 @@ func TestApply_ManifestFirstAtEveryPosition(t *testing.T) {
 		})
 	}
 }
+
+// A versioned or Object-Locked bucket keeps the data behind a delete marker.
+// Measured on MinIO: three backups, keep_last 1, and the bucket went from
+// 291 KiB to 292 KiB while the purge reported freeing 190 KiB. Reporting a
+// number the bill will not match is how somebody plans capacity wrongly.
+func TestApply_ReportsNoSpaceFreedWhereNoneIs(t *testing.T) {
+	st, cat := repo(t, "01NEWEST00000000000000000A", "01OLDER000000000000000000B")
+
+	backups, _ := cat.ListBackups(t.Context(), catalog.BackupFilter{})
+	plan, err := retention.Plan(backups, retention.Policy{KeepLast: 1}, now)
+	require.NoError(t, err)
+
+	applied, err := retention.Apply(t.Context(), &versionedStorage{Storage: st}, cat, plan)
+	require.NoError(t, err)
+
+	assert.Len(t, applied.Deleted, 1, "the backup is still removed from view, which is the useful half")
+	assert.False(t, applied.SpaceReclaimed)
+	assert.Zero(t, applied.FreedBytes,
+		"claiming bytes the destination did not give back is worse than admitting it kept them")
+}
+
+// And on a destination that does reclaim, the number is real.
+func TestApply_ReportsSpaceFreedWhereThereIs(t *testing.T) {
+	st, cat := repo(t, "01NEWEST00000000000000000A", "01OLDER000000000000000000B")
+
+	backups, _ := cat.ListBackups(t.Context(), catalog.BackupFilter{})
+	plan, err := retention.Plan(backups, retention.Policy{KeepLast: 1}, now)
+	require.NoError(t, err)
+
+	applied, err := retention.Apply(t.Context(), st, cat, plan)
+	require.NoError(t, err)
+	assert.True(t, applied.SpaceReclaimed)
+	assert.Positive(t, applied.FreedBytes)
+}
+
+// versionedStorage stands in for a bucket that keeps what it deletes.
+type versionedStorage struct{ storage.Storage }
+
+func (s *versionedStorage) Capabilities() storage.Capabilities {
+	caps := s.Storage.Capabilities()
+	caps.DeleteReclaimsSpace = false
+	return caps
+}

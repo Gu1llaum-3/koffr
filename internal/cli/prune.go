@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -84,9 +86,10 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 	defer func() { _ = cat.Close() }()
 
 	var (
-		lines   []pruneLine
-		deleted []catalog.ID
-		freed   int64
+		lines     []pruneLine
+		deleted   []catalog.ID
+		freed     int64
+		keepsData []string
 	)
 	for _, id := range ids {
 		src, _ := cfg.Source(id)
@@ -112,12 +115,22 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 			continue
 		}
 
+		destName, _, err := a.destinationFor(cfg, src, "")
+		if err != nil {
+			return err
+		}
 		applied, err := a.applyFor(ctx, cat, cfg, src, plan)
 		if err != nil {
 			return err
 		}
 		deleted = append(deleted, applied.Deleted...)
 		freed += applied.FreedBytes
+		// Named by destination, not by source. It is the bucket that keeps
+		// what it deletes, and an operator told "shop keeps previous versions"
+		// would go looking at the wrong thing entirely.
+		if len(applied.Deleted) > 0 && !applied.SpaceReclaimed && !slices.Contains(keepsData, destName) {
+			keepsData = append(keepsData, destName)
+		}
 	}
 
 	// The replica in the repository still lists what was just deleted, and
@@ -150,7 +163,11 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 		Orphans []orphanLine `json:"orphans,omitempty"`
 		Deleted int          `json:"deleted"`
 		Freed   int64        `json:"freed_bytes"`
-	}{!confirm, lines, orphanLines, len(deleted), freed}
+		// SpaceReclaimed is false when the destination keeps what it deletes.
+		// A script watching freed_bytes needs to know the number is zero
+		// because nothing was freed, not because nothing was deleted.
+		SpaceReclaimed bool `json:"space_reclaimed"`
+	}{!confirm, lines, orphanLines, len(deleted), freed, len(keepsData) == 0}
 
 	a.emit(out, func(p *printer) {
 		p.table(func(p *printer) {
@@ -177,6 +194,15 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 				}
 			}
 			p.printf("\n%d would be deleted. Nothing was: pass --confirm.\n", wouldGo)
+			return
+		}
+		if len(keepsData) > 0 {
+			// Said in full rather than as a footnote. An operator reading
+			// "deleted 3" on a versioned bucket will assume the bill moved,
+			// and it did not.
+			p.printf("\ndeleted %d. No space was reclaimed: %s keeps previous versions "+
+				"of what it deletes, so the bytes stay until a bucket lifecycle rule "+
+				"expires them.\n", out.Deleted, strings.Join(keepsData, ", "))
 			return
 		}
 		p.printf("\ndeleted %d, freed %s\n", out.Deleted, humanBytes(out.Freed))

@@ -201,7 +201,12 @@ func (s *Storage) Delete(ctx context.Context, key string) error {
 
 // Capabilities reports what memory can honestly do.
 func (s *Storage) Capabilities() storage.Capabilities {
-	return storage.Capabilities{Immutable: false, Multipart: false, RangeReads: true}
+	return storage.Capabilities{
+		Immutable: false, Multipart: false, RangeReads: true,
+		// A map gives the bytes back, which is the whole of its resemblance to
+		// a filesystem.
+		DeleteReclaimsSpace: true,
+	}
 }
 
 var _ storage.Storage = (*Storage)(nil)
