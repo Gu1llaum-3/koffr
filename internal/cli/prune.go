@@ -18,6 +18,7 @@ func (a *app) pruneCmd() *cobra.Command {
 	var (
 		sourceID string
 		confirm  bool
+		orphans  bool
 	)
 	c := &cobra.Command{
 		Use:   "prune [source]",
@@ -42,10 +43,12 @@ func (a *app) pruneCmd() *cobra.Command {
 			if len(args) == 1 {
 				sourceID = args[0]
 			}
-			return a.runPrune(cmd.Context(), sourceID, confirm)
+			return a.runPrune(cmd.Context(), sourceID, confirm, orphans)
 		},
 	}
 	c.Flags().BoolVar(&confirm, "confirm", false, "actually delete; without it nothing is touched")
+	c.Flags().BoolVar(&orphans, "orphans", false,
+		"also sweep objects left by a job that died before writing its manifest")
 	return c
 }
 
@@ -60,7 +63,7 @@ type pruneLine struct {
 	Reason   string `json:"reason"`
 }
 
-func (a *app) runPrune(ctx context.Context, sourceID string, confirm bool) error {
+func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrphans bool) error {
 	cfg, err := a.loadConfig()
 	if err != nil {
 		return err
@@ -127,12 +130,27 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm bool) error
 		}
 	}
 
+	var orphanLines []orphanLine
+	if sweepOrphans {
+		found, err := a.sweepOrphans(ctx, cfg, confirm)
+		if err != nil {
+			return err
+		}
+		orphanLines = found
+		if confirm {
+			for _, o := range found {
+				freed += o.Bytes
+			}
+		}
+	}
+
 	out := struct {
-		DryRun  bool        `json:"dry_run"`
-		Backups []pruneLine `json:"backups"`
-		Deleted int         `json:"deleted"`
-		Freed   int64       `json:"freed_bytes"`
-	}{!confirm, lines, len(deleted), freed}
+		DryRun  bool         `json:"dry_run"`
+		Backups []pruneLine  `json:"backups"`
+		Orphans []orphanLine `json:"orphans,omitempty"`
+		Deleted int          `json:"deleted"`
+		Freed   int64        `json:"freed_bytes"`
+	}{!confirm, lines, orphanLines, len(deleted), freed}
 
 	a.emit(out, func(p *printer) {
 		p.table(func(p *printer) {
@@ -145,6 +163,12 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm bool) error
 				p.printf("%s\t%s\t%s\t%s\t%s\n", l.BackupID, l.Source, l.TakenAt, verdict, l.Reason)
 			}
 		})
+		if len(orphanLines) > 0 {
+			p.printf("\norphan objects (a job died before writing its manifest):\n")
+			for _, o := range orphanLines {
+				p.printf("  %s  %s\n", o.Prefix, humanBytes(o.Bytes))
+			}
+		}
 		if out.DryRun {
 			var wouldGo int
 			for _, l := range lines {
@@ -269,4 +293,47 @@ func (a *app) restorableCheck(
 		_, err = st.Stat(ctx, backup.ManifestKey())
 		return err == nil
 	}, nil
+}
+
+// orphanLine is one prefix with objects and no manifest.
+type orphanLine struct {
+	Prefix string `json:"prefix"`
+	Bytes  int64  `json:"bytes"`
+}
+
+// orphanGrace is how recently a prefix may have been touched and still be
+// considered a job in progress rather than litter.
+//
+// Generous on purpose. A backup being written has objects and no manifest,
+// which from outside is exactly what litter looks like, and deleting a running
+// job is a far worse outcome than paying for a stale prefix another day. A
+// 10 GiB backup takes minutes; this allows for one taking hours.
+const orphanGrace = 24 * time.Hour
+
+// sweepOrphans finds, and with confirm removes, objects no manifest points at.
+//
+// Off unless asked. Sweeping is the one deletion Koffr can make that is not
+// described by any policy, so it stays a thing an operator does deliberately.
+func (a *app) sweepOrphans(ctx context.Context, cfg config.Config, confirm bool) ([]orphanLine, error) {
+	var out []orphanLine
+	for _, name := range sortedKeys(cfg.Destinations) {
+		st, err := openStorage(ctx, cfg.Destinations[name])
+		if err != nil {
+			return nil, err
+		}
+		found, err := retention.FindOrphansOlderThan(ctx, st, orphanGrace)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range found {
+			out = append(out, orphanLine{Prefix: o.Prefix, Bytes: o.Bytes})
+		}
+		if !confirm || len(found) == 0 {
+			continue
+		}
+		if _, err := retention.RemoveOrphans(ctx, st, found); err != nil {
+			return nil, fmt.Errorf("prune: sweeping orphans in %s: %w", name, err)
+		}
+	}
+	return out, nil
 }

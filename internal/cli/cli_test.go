@@ -1111,3 +1111,72 @@ func TestPrune_KeepsSomethingThatIsActuallyThere(t *testing.T) {
 		"deleting the only backup that still exists, to keep a row that restores nothing, "+
 			"is the one mistake this rule exists to prevent")
 }
+
+// Objects a dead job left behind are invisible to `koffr ls` and to a purge
+// that reads the catalog, and paid for every month. --orphans is how they are
+// found, and it obeys the same rule as everything else here: nothing goes
+// without --confirm.
+func TestPrune_SweepsOrphansOnlyWhenAsked(t *testing.T) {
+	cfgPath := configFile(t)
+	repoDir := filepath.Join(filepath.Dir(cfgPath), "repo")
+
+	putBackup(t, cfgPath, "01GOOD0000000000000000000A")
+	recordBackup(t, cfgPath, "01GOOD0000000000000000000A", time.Now())
+
+	// A prefix with objects and no manifest, aged past the grace period.
+	litter := filepath.Join(repoDir, "sources", "prod-pg-main", "logical", "01LITTER00000000000000000B")
+	require.NoError(t, os.MkdirAll(litter, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(litter, "dump.pgdump.zst.age"),
+		[]byte("half an upload"), 0o600))
+	old := time.Now().Add(-48 * time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(litter, "dump.pgdump.zst.age"), old, old))
+
+	// Without the flag, nothing is even looked for.
+	code, out, _ := run(t, "--config", cfgPath, "prune", "--confirm")
+	require.Equal(t, cli.ExitOK, code)
+	assert.NotContains(t, out, "01LITTER")
+	_, err := os.Stat(litter)
+	require.NoError(t, err)
+
+	// With the flag but no --confirm, it is reported and left alone.
+	code, out, _ = run(t, "--config", cfgPath, "prune", "--orphans")
+	require.Equal(t, cli.ExitOK, code)
+	assert.Contains(t, out, "01LITTER")
+	_, err = os.Stat(litter)
+	require.NoError(t, err, "a dry run that deleted something would be the worst bug in the program")
+
+	// And with both.
+	code, _, errOut := run(t, "--config", cfgPath, "prune", "--orphans", "--confirm")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	_, err = os.Stat(litter)
+	assert.True(t, os.IsNotExist(err))
+
+	// The complete backup is untouched, whatever the catalog says about it:
+	// the repository is the truth, and a manifest makes a backup.
+	_, err = os.Stat(filepath.Join(repoDir, "sources", "prod-pg-main", "logical",
+		"01GOOD0000000000000000000A", "manifest.json"))
+	require.NoError(t, err)
+}
+
+// A backup being written has objects and no manifest, which from outside is
+// exactly what litter looks like. The grace period is what stops a sweep
+// destroying a running job.
+func TestPrune_LeavesABackupInProgressAlone(t *testing.T) {
+	cfgPath := configFile(t)
+	repoDir := filepath.Join(filepath.Dir(cfgPath), "repo")
+
+	putBackup(t, cfgPath, "01GOOD0000000000000000000A")
+	recordBackup(t, cfgPath, "01GOOD0000000000000000000A", time.Now())
+
+	inflight := filepath.Join(repoDir, "sources", "prod-pg-main", "logical", "01INFLIGHT000000000000000C")
+	require.NoError(t, os.MkdirAll(inflight, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(inflight, "dump.pgdump.zst.age"),
+		[]byte("being written right now"), 0o600))
+
+	code, out, _ := run(t, "--config", cfgPath, "prune", "--orphans", "--confirm")
+	require.Equal(t, cli.ExitOK, code)
+	assert.NotContains(t, out, "01INFLIGHT")
+
+	_, err := os.Stat(inflight)
+	require.NoError(t, err, "deleting a running job is a far worse outcome than paying for a stale prefix")
+}
