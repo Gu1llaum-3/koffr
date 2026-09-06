@@ -1309,14 +1309,26 @@ func (a *app) runCatalogSync(ctx context.Context, destination string, fromManife
 	if err != nil {
 		return err
 	}
-	name, dest, err := a.anyDestination(cfg, destination)
-	if err != nil {
-		return err
+
+	// Every destination, not one. With a second copy kept longer than the
+	// first (EF-044), no single destination holds the whole history -- and
+	// requiring one to be named made a rebuild impossible for exactly the
+	// configuration that most needs it: lose the catalog, and nothing would
+	// bring it back.
+	//
+	// Import merges, so reading several is how the catalog learns that a
+	// backup is on both.
+	names := sortedKeys(cfg.Destinations)
+	if destination != "" {
+		if _, known := cfg.Destinations[destination]; !known {
+			return fault(ExitUsage, "no destination %q in %s", destination, cfg.Path())
+		}
+		names = []string{destination}
 	}
-	st, err := openStorage(ctx, dest)
-	if err != nil {
-		return err
+	if len(names) == 0 {
+		return fault(ExitConfig, "%s defines no destinations", cfg.Path())
 	}
+
 	cat, err := openCatalog(ctx, cfg)
 	if err != nil {
 		return err
@@ -1328,34 +1340,57 @@ func (a *app) runCatalogSync(ctx context.Context, destination string, fromManife
 		return err
 	}
 
-	snap, source, skipped, err := a.recover(ctx, cfg, st, name, fromManifests)
-	if err != nil {
-		return err
+	var (
+		sources  []string
+		skipped  []string
+		failures []string
+	)
+	for _, name := range names {
+		st, err := openStorage(ctx, cfg.Destinations[name])
+		if err != nil {
+			// One unreachable destination must not stop the others: a
+			// half-rebuilt catalog beats none, and the gap is reported.
+			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		snap, from, dropped, err := a.recover(ctx, cfg, st, name, fromManifests)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		if err := cat.Import(ctx, snap); err != nil {
+			return err
+		}
+		sources = append(sources, name+" ("+from+")")
+		skipped = append(skipped, dropped...)
 	}
-	if err := cat.Import(ctx, snap); err != nil {
-		return err
+	for _, f := range failures {
+		a.warnf("koffr: could not rebuild from %s", f)
 	}
+	if len(sources) == 0 {
+		return fault(ExitFailure, "no destination could be read")
+	}
+
 	after, err := cat.Export(ctx)
 	if err != nil {
 		return err
 	}
 
 	out := struct {
-		Destination string   `json:"destination"`
-		Source      string   `json:"source"`
-		Backups     int      `json:"backups"`
-		Jobs        int      `json:"jobs"`
-		Added       int      `json:"added"`
-		Skipped     []string `json:"skipped,omitempty"`
+		Sources []string `json:"rebuilt_from"`
+		Backups int      `json:"backups"`
+		Jobs    int      `json:"jobs"`
+		Added   int      `json:"added"`
+		Skipped []string `json:"skipped,omitempty"`
 	}{
-		Destination: name, Source: source,
+		Sources: sources,
 		Backups: len(after.Backups), Jobs: len(after.Jobs),
 		Added:   len(after.Backups) - len(before.Backups),
 		Skipped: skipped,
 	}
 	a.emit(out, func(p *printer) {
-		p.printf("rebuilt from %s (%s): %d backups, %d jobs, %d new\n",
-			out.Destination, out.Source, out.Backups, out.Jobs, out.Added)
+		p.printf("rebuilt from %s: %d backup records, %d jobs, %d new\n",
+			strings.Join(out.Sources, ", "), out.Backups, out.Jobs, out.Added)
 		for _, s := range out.Skipped {
 			p.printf("skipped: %s\n", s)
 		}
@@ -1404,26 +1439,6 @@ func (a *app) recover(
 		rebuilt.Backups[i].Destination = destName
 	}
 	return rebuilt.Snapshot, "manifests", rebuilt.Skipped, nil
-}
-
-// anyDestination resolves a destination without needing a source, because a
-// rebuild is exactly the situation where the catalog cannot say which source
-// wrote what.
-func (a *app) anyDestination(cfg config.Config, want string) (string, config.Destination, error) {
-	if want != "" {
-		dest, ok := cfg.Destinations[want]
-		if !ok {
-			return "", config.Destination{}, fault(ExitUsage, "no destination %q in %s", want, cfg.Path())
-		}
-		return want, dest, nil
-	}
-	names := sortedKeys(cfg.Destinations)
-	if len(names) != 1 {
-		return "", config.Destination{}, fault(ExitUsage,
-			"%s defines %d destinations (%s); name one with --destination",
-			cfg.Path(), len(names), strings.Join(names, ", "))
-	}
-	return names[0], cfg.Destinations[names[0]], nil
 }
 
 // confirmRestore is EF-085: nothing is overwritten without being asked, and

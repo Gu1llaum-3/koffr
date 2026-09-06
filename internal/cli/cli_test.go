@@ -403,11 +403,12 @@ func TestCatalogSync_RebuildsFromTheReplica(t *testing.T) {
 	require.Equal(t, cli.ExitOK, code)
 	var forced struct {
 		Result struct {
-			Source string `json:"source"`
+			RebuiltFrom []string `json:"rebuilt_from"`
 		} `json:"result"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &forced))
-	assert.Equal(t, "manifests", forced.Result.Source)
+	require.NotEmpty(t, forced.Result.RebuiltFrom)
+	assert.Contains(t, forced.Result.RebuiltFrom[0], "manifests")
 }
 
 // The level that has to work when everything is gone: no replica, no key, just
@@ -1405,13 +1406,17 @@ func TestLs_OneLinePerBackupWhateverTheDestinations(t *testing.T) {
 
 func recordBackupOn(t *testing.T, cfgPath, id, destination string) {
 	t.Helper()
+	recordBackupFull(t, cfgPath, id, destination, time.Now())
+}
+
+func recordBackupFull(t *testing.T, cfgPath, id, destination string, at time.Time) {
+	t.Helper()
 	cfg, err := config.Load(cfgPath)
 	require.NoError(t, err)
 	cat, err := sqlite.Open(t.Context(), cfg.Catalog.Path)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, cat.Close()) }()
 
-	at := time.Now()
 	require.NoError(t, cat.RecordBackup(t.Context(), catalog.Backup{
 		ID: catalog.ID(id), SourceID: "prod-pg-main", Kind: "logical",
 		Destination: destination, Status: catalog.StatusCompleted,
