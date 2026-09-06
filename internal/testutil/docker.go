@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"testing"
 	"time"
 )
 
@@ -15,6 +16,10 @@ import (
 // A skipped test reads as a pass in a summary. For the storage and source
 // backends, skipping everywhere would mean shipping a repository whose S3
 // support was never once exercised.
+//
+// The name says Docker because that was the first thing it gated. It means
+// something broader now: this environment is expected to have everything, so
+// nothing may quietly skip. SkipOrFailWithoutTool reads it too.
 const RequireDockerEnv = "KOFFR_REQUIRE_DOCKER"
 
 // EnsureDockerHost points testcontainers at whichever daemon the docker CLI is
@@ -79,4 +84,21 @@ func SkipOrFailWithoutDocker(unavailable string) (skip bool, fatal string) {
 			"%s is set, so a container runtime is required: %s", RequireDockerEnv, unavailable)
 	}
 	return true, ""
+}
+
+// SkipOrFailWithoutTool applies the same rule to a client binary that
+// SkipOrFailWithoutDocker applies to a container runtime.
+//
+// A laptop without the PostgreSQL client tools is a normal state. A CI run
+// without them is a suite that silently tested nothing, which is the failure
+// mode this whole file exists to prevent.
+func SkipOrFailWithoutTool(tb testing.TB, name, why string) {
+	tb.Helper()
+	if _, err := exec.LookPath(name); err == nil {
+		return
+	}
+	if os.Getenv(RequireDockerEnv) != "" {
+		tb.Fatalf("%s is set, so %s must be installed: %s", RequireDockerEnv, name, why)
+	}
+	tb.Skipf("%s is not on PATH: %s", name, why)
 }

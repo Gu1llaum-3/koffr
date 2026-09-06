@@ -56,6 +56,9 @@ func TestRestoreWithoutKoffr(t *testing.T) {
 	if skip {
 		t.Skip("no container runtime: " + unavailable)
 	}
+	// Koffr shells out to the client binaries and cannot embed them (CT-001),
+	// so taking the backup half of this test needs pg_dump on this machine.
+	testutil.SkipOrFailWithoutTool(t, "pg_dump", "the backup half of this test runs here")
 
 	ctx := context.Background()
 	dir := t.TempDir()
