@@ -78,6 +78,14 @@ type Scheduler struct {
 
 	Retry Retry `yaml:"retry,omitempty"`
 
+	// Prune is when the scheduler applies retention policies, as a cron spec.
+	// Empty means never: a purge that ran without anyone deciding it should is
+	// the one automation whose mistakes cannot be undone.
+	//
+	// It runs at most one source at a time and skips a source whose backup is
+	// in flight, like everything else the scheduler drives.
+	Prune string `yaml:"prune,omitempty"`
+
 	// CatchUp picks up a scheduled window that went by while Koffr was not
 	// running. A pointer so that leaving it out means yes: a machine rebooting
 	// at 2 AM otherwise loses the night with nothing to show for it, and losing
@@ -658,6 +666,13 @@ func (s *Scheduler) validate(v *validator) {
 	if s.Retry.MaxDelay == 0 {
 		s.Retry.MaxDelay = 30 * time.Minute
 	}
+	if s.Prune != "" {
+		if err := scheduler.ValidateSpec(s.Prune); err != nil {
+			v.add("scheduler.prune", fmt.Sprintf("%q is not a schedule: %v", s.Prune, err),
+				"cron, or a shortcut: @daily is the usual answer")
+		}
+	}
+
 	w, err := scheduler.ParseWindow(s.Window.Start, s.Window.End)
 	if err != nil {
 		v.add("scheduler.window", err.Error(), "write the times as HH:MM, for example 22:00 to 06:00")

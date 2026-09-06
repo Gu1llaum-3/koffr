@@ -3,6 +3,8 @@ package retention_test
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,4 +171,57 @@ func (s *refusingStorage) Delete(ctx context.Context, key string) error {
 		return assert.AnError
 	}
 	return s.Storage.Delete(ctx, key)
+}
+
+// The manifest-first guarantee, checked at a size where an invalid sort
+// comparator would have had room to misbehave. Nine objects is more than a
+// backup has, and more than the threshold where Go's sort changes strategy.
+func TestApply_ManifestFirstAtEveryPosition(t *testing.T) {
+	for position := range 9 {
+		t.Run(fmt.Sprintf("manifest at %d", position), func(t *testing.T) {
+			st := memory.New()
+			cat, err := sqlite.Open(t.Context(), t.TempDir()+"/catalog.db")
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, cat.Close()) })
+
+			src, err := storage.ForSource("prod")
+			require.NoError(t, err)
+			keep, err := src.Backup(storage.DirLogical, "01KEEP0000000000000000000A")
+			require.NoError(t, err)
+			drop, err := src.Backup(storage.DirLogical, "01DROP0000000000000000000B")
+			require.NoError(t, err)
+
+			for i := range 9 {
+				name := fmt.Sprintf("obj-%02d.age", i)
+				if i == position {
+					name = storage.ManifestFile
+				}
+				_, err := st.Put(t.Context(), drop.Prefix()+name,
+					bytes.NewReader([]byte("x")), storage.PutOptions{})
+				require.NoError(t, err)
+			}
+			_, err = st.Put(t.Context(), keep.Prefix()+storage.ManifestFile,
+				bytes.NewReader([]byte("x")), storage.PutOptions{})
+			require.NoError(t, err)
+
+			for i, id := range []string{"01KEEP0000000000000000000A", "01DROP0000000000000000000B"} {
+				require.NoError(t, cat.RecordBackup(t.Context(), catalog.Backup{
+					ID: catalog.ID(id), SourceID: "prod", Kind: "logical",
+					Status: catalog.StatusCompleted, StartedAt: now.Add(-time.Duration(i) * time.Hour),
+				}))
+			}
+
+			backups, _ := cat.ListBackups(t.Context(), catalog.BackupFilter{})
+			plan, err := retention.Plan(backups, retention.Policy{KeepLast: 1}, now)
+			require.NoError(t, err)
+
+			order := &recordingStorage{Storage: st}
+			_, err = retention.Apply(t.Context(), order, cat, plan)
+			require.NoError(t, err)
+
+			require.NotEmpty(t, order.deleted)
+			assert.True(t, strings.HasSuffix(order.deleted[0], storage.ManifestFile),
+				"an interrupted pass must never leave a manifest pointing at objects that are gone")
+		})
+	}
 }

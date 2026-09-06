@@ -1600,6 +1600,16 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 		return &Fault{Code: ExitConfig, Err: err}
 	}
 
+	// Retention on its own timetable, and only if one was written. A purge that
+	// ran because nobody said it should not is the one automation whose
+	// mistakes cannot be undone -- so this stays opt-in even though a
+	// repository that grows for ever is the alternative.
+	stopPrune, err := a.schedulePrune(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer stopPrune()
+
 	if dryRun {
 		return a.printTimetable(cfg, jobs)
 	}
@@ -1800,4 +1810,48 @@ func lastSuccessfulBackups(ctx context.Context, cfg config.Config) (map[string]t
 		}
 	}
 	return latest, nil
+}
+
+// schedulePrune runs the retention policies on their own cron, alongside the
+// backups.
+//
+// A scheduler of its own rather than another job in the main one: a purge is
+// not a backup, it must not consume a backup's concurrency slot, and a source
+// whose purge overran should not have its next backup skipped for it.
+func (a *app) schedulePrune(ctx context.Context, cfg config.Config) (stop func(), err error) {
+	if cfg.Scheduler.Prune == "" {
+		return func() {}, nil
+	}
+
+	pruner := &scheduler.Scheduler{
+		Location:      cfg.Scheduler.Location(),
+		MaxConcurrent: 1,
+		Window:        cfg.Scheduler.ExecutionWindow(),
+		// No catch-up. A missed backup is a gap in history worth making good;
+		// a missed purge is a day of extra storage, and hurrying to delete
+		// things after an outage is the wrong instinct entirely.
+		DisableCatchUp: true,
+		Execute: func(ctx context.Context, _ scheduler.Job) error {
+			// --confirm, because a scheduled dry run would be a daily report
+			// nobody reads. The decision was made when the policy was written.
+			return a.runPrune(ctx, "", true, false)
+		},
+		OnResult: func(res scheduler.Result) {
+			if res.Err != nil {
+				a.logf(ctx, slog.LevelError, "scheduled purge failed", "error", res.Err.Error())
+			}
+		},
+	}
+	if err := pruner.SetJobs([]scheduler.Job{{SourceID: "retention", Spec: cfg.Scheduler.Prune}}); err != nil {
+		return nil, &Fault{Code: ExitConfig, Err: err}
+	}
+
+	a.printf("retention runs on %s", cfg.Scheduler.Prune)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = pruner.Run(ctx)
+	}()
+	return func() { <-done }, nil
 }

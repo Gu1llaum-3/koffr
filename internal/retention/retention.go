@@ -316,9 +316,20 @@ func deletePrefix(ctx context.Context, st storage.Storage, prefix string) (int64
 		freed += info.Size
 	}
 
-	sort.Slice(keys, func(i, j int) bool {
-		return strings.HasSuffix(keys[i], storage.ManifestFile)
-	})
+	// The manifest is deleted first, and this used to be a sort with a
+	// comparator that ignored j -- not a strict weak ordering, so sort.Slice's
+	// result was formally unspecified. It happened to work in all 1829 orders
+	// tried, which is not the same as being guaranteed, and "the manifest goes
+	// first" is a guarantee about what an interrupted pass leaves behind.
+	//
+	// Moving it explicitly says the same thing and depends on nothing.
+	for i, key := range keys {
+		if strings.HasSuffix(key, "/"+storage.ManifestFile) {
+			keys[0], keys[i] = keys[i], keys[0]
+			break
+		}
+	}
+
 	for _, key := range keys {
 		if err := st.Delete(ctx, key); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return 0, fmt.Errorf("retention: delete %s: %w", key, err)

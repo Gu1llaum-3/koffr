@@ -1180,3 +1180,67 @@ func TestPrune_LeavesABackupInProgressAlone(t *testing.T) {
 	_, err := os.Stat(inflight)
 	require.NoError(t, err, "deleting a running job is a far worse outcome than paying for a stale prefix")
 }
+
+// A pilot left running keeps every backup for ever unless something applies the
+// policy. This is that something, and it stays opt-in: a purge that ran because
+// nobody said it should not is the one automation whose mistakes cannot be
+// undone.
+func TestSchedule_RunsRetentionOnItsOwnTimetable(t *testing.T) {
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_last: 1")
+
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	updated := strings.Replace(string(body), "catalog:",
+		"scheduler:\n  prune: \"@every 1s\"\ncatalog:", 1)
+	updated = strings.Replace(updated, "    retention:",
+		"    schedule: \"@every 1h\"\n    retention:", 1)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(updated), 0o600))
+
+	for i, id := range []string{"01AAA00000000000000000000A", "01BBB00000000000000000000B"} {
+		putBackup(t, cfgPath, id)
+		recordBackup(t, cfgPath, id, time.Now().Add(-time.Duration(i)*24*time.Hour))
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+
+	var out, errBuf strings.Builder
+	code := cli.Run(ctx, []string{"--config", cfgPath, "schedule"},
+		cli.Streams{Out: &out, Err: &errBuf})
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errBuf.String())
+
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
+	entries, err := os.ReadDir(prefix)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "the policy should have been applied without anyone typing prune")
+	assert.Equal(t, "01AAA00000000000000000000A", entries[0].Name())
+}
+
+// Without a prune schedule, nothing is purged however long the daemon runs.
+func TestSchedule_NoPruneScheduleMeansNoPurge(t *testing.T) {
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_last: 1")
+
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(strings.Replace(string(body),
+		"    retention:", "    schedule: \"@every 1h\"\n    retention:", 1)), 0o600))
+
+	for i, id := range []string{"01AAA00000000000000000000A", "01BBB00000000000000000000B"} {
+		putBackup(t, cfgPath, id)
+		recordBackup(t, cfgPath, id, time.Now().Add(-time.Duration(i)*24*time.Hour))
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	var out, errBuf strings.Builder
+	_ = cli.Run(ctx, []string{"--config", cfgPath, "schedule"},
+		cli.Streams{Out: &out, Err: &errBuf})
+
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
+	entries, err := os.ReadDir(prefix)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2, "a purge nobody scheduled must not happen")
+}
