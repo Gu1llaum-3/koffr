@@ -268,6 +268,18 @@ func (d *Destination) validate(v *validator, path string) {
 		if d.Bucket == "" {
 			v.add(path+".bucket", "no bucket", "name the bucket backups go to")
 		}
+		// Optional, and deliberately so: left unset, the SDK finds instance
+		// credentials, which is what running in EKS or on EC2 wants. Set, they
+		// are secrets like any other and have to be resolved here -- nothing
+		// else does it, and an unresolved key reaches the SDK as an empty
+		// string that fails at the first upload.
+		d.AccessKeyID.validate(v, path+".access_key_id", false)
+		d.SecretAccessKey.validate(v, path+".secret_access_key", false)
+		if d.AccessKeyID.IsZero() != d.SecretAccessKey.IsZero() {
+			v.add(path+".secret_access_key",
+				"an access key without its secret, or the other way round",
+				"set both, or neither and let the SDK find instance credentials")
+		}
 	case "":
 		v.add(path+".type", "no type", `one of "fs" or "s3"`)
 	default:

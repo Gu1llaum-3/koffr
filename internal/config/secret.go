@@ -75,6 +75,15 @@ func (s *Secret) validate(v *validator, path string, required bool) {
 				"export it before running Koffr, or point at a file instead")
 			return
 		}
+		// Set to nothing is not a value. LookupEnv reports it as present, so
+		// `export PGPASSWORD=` would produce an empty credential and a
+		// connection refused in the middle of the night rather than a message
+		// at load time (PD-006).
+		if value == "" {
+			v.add(path, fmt.Sprintf("the environment variable %s is set but empty", target),
+				"give it a value, or remove the export so the problem is obvious")
+			return
+		}
 		s.value = value
 	case "file":
 		info, err := os.Stat(target)

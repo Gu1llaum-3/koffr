@@ -308,3 +308,60 @@ func TestResolvePath(t *testing.T) {
 		assert.Contains(t, err.Error(), "koffr.yml")
 	})
 }
+
+// A destination's credentials are secrets like any other, and they were the one
+// place nothing resolved them: `access_key_id: env:NAME` stayed unresolved, so
+// the S3 backend received an empty key and failed with "static credentials are
+// empty". Every S3 configuration using explicit keys was broken, and no test
+// saw it because the storage tests build their client directly.
+func TestLoad_ResolvesDestinationCredentials(t *testing.T) {
+	setIdentity(t)
+	t.Setenv("PGPASSWORD", "x")
+	t.Setenv("KOFFR_S3_KEY", "AKIAEXAMPLE")
+	t.Setenv("KOFFR_S3_SECRET", testutil.SecretSentinel)
+
+	cfg, err := config.Load(write(t, strings.Replace(valid, `  main:
+    type: fs
+    path: /var/backups/koffr`, `  main:
+    type: s3
+    bucket: koffr-backups
+    region: eu-west-3
+    access_key_id: env:KOFFR_S3_KEY
+    secret_access_key: env:KOFFR_S3_SECRET`, 1)))
+	require.NoError(t, err)
+
+	dest := cfg.Destinations["main"]
+	assert.Equal(t, "AKIAEXAMPLE", dest.AccessKeyID.Value())
+	assert.Equal(t, testutil.SecretSentinel, dest.SecretAccessKey.Value(),
+		"an unresolved key reaches the SDK as an empty string, which fails at the first upload")
+}
+
+// A destination with no keys is the normal case in EKS or on EC2, where the SDK
+// finds instance credentials. Requiring them would break the deployment that
+// needs them least.
+func TestLoad_S3WithoutExplicitCredentials(t *testing.T) {
+	setIdentity(t)
+	t.Setenv("PGPASSWORD", "x")
+
+	cfg, err := config.Load(write(t, strings.Replace(valid, `  main:
+    type: fs
+    path: /var/backups/koffr`, `  main:
+    type: s3
+    bucket: koffr-backups
+    region: eu-west-3`, 1)))
+	require.NoError(t, err)
+	assert.True(t, cfg.Destinations["main"].AccessKeyID.IsZero())
+}
+
+// An environment variable set to nothing is not a password. LookupEnv reports
+// it as present, so `export PGPASSWORD=` produced an empty credential and a
+// connection refused at 3 AM instead of a message at load time.
+func TestLoad_RejectsAnEmptyEnvironmentVariable(t *testing.T) {
+	setIdentity(t)
+	t.Setenv("PGPASSWORD", "")
+
+	_, err := config.Load(write(t, valid))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PGPASSWORD")
+	assert.Contains(t, err.Error(), "empty")
+}

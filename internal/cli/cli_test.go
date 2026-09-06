@@ -433,8 +433,12 @@ func TestCatalogSync_RebuildsFromManifestsWithoutAKey(t *testing.T) {
 	_, err = st.Put(t.Context(), b.ManifestKey(), bytes.NewReader(buf.Bytes()), storage.PutOptions{})
 	require.NoError(t, err)
 
-	// No identity at all: the fallback must not need one.
-	t.Setenv("KOFFR_IDENTITY", "")
+	// An identity that cannot open anything in this repository. That is what
+	// "no key" looks like from a valid configuration -- crypto.identity is
+	// required, so an operator without the real key has a wrong one, not an
+	// absent one. The manifest path must not care either way.
+	wrong, _ := testutil.AgeIdentity(t)
+	t.Setenv("KOFFR_IDENTITY", wrong)
 
 	code, out, errOut := run(t, "--config", cfgPath, "catalog", "sync", "--from-manifests")
 	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
