@@ -101,10 +101,17 @@ func testStreamsAreSeparate(t *testing.T, h Harness) {
 
 	out, err := io.ReadAll(p.Stdout())
 	require.NoError(t, err)
+
+	// Both streams reach EOF before Wait, never alongside it. Wait is allowed
+	// to close the read ends -- that is what lets the pipeline tear down a job
+	// it has abandoned -- so collecting stderr afterwards races with it. This
+	// test won that race on macOS every time and lost it on Linux in CI, which
+	// is the shape a latent race always has.
+	stderr := <-stderrCh
 	require.NoError(t, p.Wait())
 
 	assert.Equal(t, "to-stdout\n", string(out))
-	assert.Equal(t, "to-stderr\n", <-stderrCh)
+	assert.Equal(t, "to-stderr\n", stderr)
 }
 
 // The exit status is how a source failure is told apart from a storage failure,
