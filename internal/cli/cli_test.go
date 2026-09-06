@@ -1275,3 +1275,89 @@ func TestPrune_SaysWhenNoSpaceIsReclaimed(t *testing.T) {
 	assert.True(t, got.Result.SpaceReclaimed, "a filesystem gives the bytes back")
 	assert.Positive(t, got.Result.Freed)
 }
+
+// With a second copy kept longer than the first (EF-044), everything past the
+// local retention window lives only offsite. Looking in the first destination
+// alone made half the backups unreachable -- and the tell was that verifying
+// EF-044 needed the configuration reordered by hand.
+func TestLocate_FindsABackupOnAnyDestination(t *testing.T) {
+	cfgPath := twoDestinations(t)
+
+	// Present only on the second destination, as it would be after a prune of
+	// the first.
+	const id = "01OFFSITE0000000000000000A"
+	putBackupIn(t, cfgPath, "offsite", id)
+
+	code, out, errOut := run(t, "--config", cfgPath, "show", id)
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, id)
+}
+
+// The catalog is a cache (ADR-0004). Losing it must not make a backup
+// unreachable, so every configured destination is tried when it says nothing.
+func TestLocate_WorksWithNoCatalogAtAll(t *testing.T) {
+	cfgPath := twoDestinations(t)
+	const id = "01OFFSITE0000000000000000A"
+	putBackupIn(t, cfgPath, "offsite", id)
+
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	_ = os.Remove(cfg.Catalog.Path)
+
+	code, out, errOut := run(t, "--config", cfgPath, "show", id)
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, id)
+}
+
+// --from is for the operator who knows better: testing the offsite copy
+// specifically, or working around a catalog that is stale.
+func TestLocate_FromNamesTheDestinationItLookedIn(t *testing.T) {
+	cfgPath := twoDestinations(t)
+	const id = "01OFFSITE0000000000000000A"
+	putBackupIn(t, cfgPath, "offsite", id)
+
+	code, _, errOut := run(t, "--config", cfgPath, "show", id, "--from", "main")
+	assert.NotEqual(t, cli.ExitOK, code)
+	assert.Contains(t, errOut, "on main",
+		"an operator has to know which destination was searched, not just that it failed")
+
+	code, _, errOut = run(t, "--config", cfgPath, "show", id, "--from", "nowhere")
+	assert.Equal(t, cli.ExitUsage, code)
+	assert.Contains(t, errOut, "main, offsite", "list what would have worked")
+}
+
+// twoDestinations writes a configuration with main and offsite.
+func twoDestinations(t *testing.T) string {
+	t.Helper()
+	cfgPath := configFile(t)
+	dir := filepath.Dir(cfgPath)
+
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	updated := strings.Replace(string(body), "destinations:\n  main:",
+		"destinations:\n  offsite:\n    type: fs\n    path: "+filepath.Join(dir, "offsite")+"\n  main:", 1)
+	updated = strings.Replace(updated, "    destinations: [main]", "    destinations: [main, offsite]", 1)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(updated), 0o600))
+	return cfgPath
+}
+
+// putBackupIn writes a backup into one named destination only.
+func putBackupIn(t *testing.T, cfgPath, destination, backupID string) {
+	t.Helper()
+	dir := filepath.Dir(cfgPath)
+	root := filepath.Join(dir, "repo")
+	if destination != "main" {
+		root = filepath.Join(dir, destination)
+	}
+	prefix := filepath.Join(root, "sources", "prod-pg-main", "logical", backupID)
+	require.NoError(t, os.MkdirAll(prefix, 0o700))
+
+	m := `{"format_version":1,"backup_id":"` + backupID + `","source_id":"prod-pg-main",` +
+		`"engine":"postgresql","server_version":"17.0","kind":"logical","parent_id":null,` +
+		`"started_at":"2026-01-01T00:00:00Z","finished_at":"2026-01-01T00:00:01Z","status":"completed",` +
+		`"objects":[{"key":"dump.pgdump.zst.age","size_bytes":9,"sha256":"` + strings.Repeat("0", 64) +
+		`","codec":"zstd","encryption":"age","recipients":["age1x"]}],` +
+		`"tool":{"name":"postgresql","version":"17.0","args_digest":""},"koffr_version":"test"}`
+	require.NoError(t, os.WriteFile(filepath.Join(prefix, "manifest.json"), []byte(m), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(prefix, "dump.pgdump.zst.age"), []byte("not a dump"), 0o600))
+}

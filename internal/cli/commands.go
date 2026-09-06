@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -581,7 +582,7 @@ func (a *app) runLs(ctx context.Context, sourceID string, limit int) error {
 // ---------------------------------------------------------------- show
 
 func (a *app) showCmd() *cobra.Command {
-	var sourceID string
+	var sourceID, from string
 	c := &cobra.Command{
 		Use:   "show <backup-id>",
 		Short: "Show one backup's manifest",
@@ -595,15 +596,16 @@ func (a *app) showCmd() *cobra.Command {
 			if err := a.begin(cmd); err != nil {
 				return err
 			}
-			return a.runShow(cmd.Context(), args[0], sourceID)
+			return a.runShow(cmd.Context(), args[0], sourceID, from)
 		},
 	}
 	c.Flags().StringVar(&sourceID, "source", "", "source the backup belongs to (needed if several are configured)")
+	c.Flags().StringVar(&from, "from", "", fromFlagHelp)
 	return c
 }
 
-func (a *app) runShow(ctx context.Context, backupID, sourceID string) error {
-	found, err := a.locate(ctx, backupID, sourceID)
+func (a *app) runShow(ctx context.Context, backupID, sourceID, from string) error {
+	found, err := a.locate(ctx, backupID, sourceID, from)
 	if err != nil {
 		return err
 	}
@@ -634,6 +636,7 @@ func (a *app) runShow(ctx context.Context, backupID, sourceID string) error {
 func (a *app) fetchCmd() *cobra.Command {
 	var (
 		sourceID string
+		from     string
 		object   string
 		outDir   string
 		raw      bool
@@ -651,10 +654,11 @@ func (a *app) fetchCmd() *cobra.Command {
 			if err := a.begin(cmd); err != nil {
 				return err
 			}
-			return a.runFetch(cmd.Context(), args[0], sourceID, object, outDir, raw)
+			return a.runFetch(cmd.Context(), args[0], sourceID, from, object, outDir, raw)
 		},
 	}
 	c.Flags().StringVar(&sourceID, "source", "", "source the backup belongs to")
+	c.Flags().StringVar(&from, "from", "", fromFlagHelp)
 	c.Flags().StringVar(&object, "object", "", "fetch only this object (default: all of them)")
 	c.Flags().StringVar(&outDir, "into", ".", "directory to write into, or - for stdout")
 	c.Flags().BoolVar(&raw, "raw", false,
@@ -668,8 +672,8 @@ type fetchedFile struct {
 	Bytes  int64  `json:"bytes"`
 }
 
-func (a *app) runFetch(ctx context.Context, backupID, sourceID, only, outDir string, raw bool) error {
-	found, err := a.locate(ctx, backupID, sourceID)
+func (a *app) runFetch(ctx context.Context, backupID, sourceID, from, only, outDir string, raw bool) error {
+	found, err := a.locate(ctx, backupID, sourceID, from)
 	if err != nil {
 		return err
 	}
@@ -762,6 +766,7 @@ func (a *app) fetchOne(
 func (a *app) restoreCmd() *cobra.Command {
 	var (
 		sourceID string
+		from     string
 		into     string
 		target   string
 		create   bool
@@ -788,13 +793,14 @@ func (a *app) restoreCmd() *cobra.Command {
 				return fault(ExitUsage, "--into is required: name the database to restore into")
 			}
 			return a.runRestore(cmd.Context(), args[0], restoreOptions{
-				sourceID: sourceID, into: into, target: target, create: create,
+				sourceID: sourceID, from: from, into: into, target: target, create: create,
 				noOwner: noOwner, globals: globals, jobs: jobs,
 				force: force, yes: yes,
 			})
 		},
 	}
 	c.Flags().StringVar(&sourceID, "source", "", "source the backup belongs to")
+	c.Flags().StringVar(&from, "from", "", fromFlagHelp)
 	c.Flags().StringVar(&into, "into", "", "database to restore into (required)")
 	c.Flags().BoolVar(&create, "create", false, "create the target database first; fails if it exists")
 	c.Flags().BoolVar(&noOwner, "no-owner", false, "restore without reassigning ownership")
@@ -810,7 +816,9 @@ func (a *app) restoreCmd() *cobra.Command {
 
 type restoreOptions struct {
 	sourceID string
-	into     string
+	// from names the destination to read from. Empty means wherever it is.
+	from string
+	into string
 	// target names another configured source whose server receives the
 	// restore. It is a source id rather than a host and a password because a
 	// credential on a command line is visible in ps (ENF-021), and because the
@@ -825,7 +833,7 @@ type restoreOptions struct {
 }
 
 func (a *app) runRestore(ctx context.Context, backupID string, opt restoreOptions) error {
-	found, err := a.locate(ctx, backupID, opt.sourceID)
+	found, err := a.locate(ctx, backupID, opt.sourceID, opt.from)
 	if err != nil {
 		return err
 	}
@@ -981,18 +989,27 @@ var errReaderGone = errors.New("the restore stopped reading")
 type located struct {
 	cfg      config.Config
 	sourceID string
-	backup   storage.Backup
-	storage  storage.Storage
-	manifest manifest.Manifest
+	// destination is where it was actually found, which is not always the
+	// first one configured.
+	destination string
+	backup      storage.Backup
+	storage     storage.Storage
+	manifest    manifest.Manifest
 }
 
-// locate finds a backup by id.
+// locate finds a backup by id, on whichever destination holds it.
 //
-// It asks the catalog first because that is the fast path, and falls back to
-// the repository because the catalog is a cache: a backup the catalog lost is
-// still restorable, and a tool that cannot find it is the tool failing, not the
-// backup.
-func (a *app) locate(ctx context.Context, backupID, sourceID string) (*located, error) {
+// Not the first destination: with a second copy kept longer than the first
+// (EF-044), everything past the local retention window lives only offsite, and
+// looking in one place would make half the backups unreachable. That is exactly
+// what happened before this, and the tell was that verifying it needed the
+// configuration reordered by hand.
+//
+// The catalog is asked which destinations hold it, because the catalog now
+// knows -- one row per copy. When it does not know, every configured
+// destination is tried in order: the catalog is a cache (ADR-0004), and a
+// backup it has forgotten is still restorable.
+func (a *app) locate(ctx context.Context, backupID, sourceID, from string) (*located, error) {
 	cfg, err := a.loadConfig()
 	if err != nil {
 		return nil, err
@@ -1007,14 +1024,6 @@ func (a *app) locate(ctx context.Context, backupID, sourceID string) (*located, 
 	if err != nil {
 		return nil, err
 	}
-	_, dest, err := a.destinationFor(cfg, src, "")
-	if err != nil {
-		return nil, err
-	}
-	st, err := openStorage(ctx, dest)
-	if err != nil {
-		return nil, err
-	}
 
 	layoutSource, err := storage.ForSource(sourceID)
 	if err != nil {
@@ -1025,13 +1034,94 @@ func (a *app) locate(ctx context.Context, backupID, sourceID string) (*located, 
 		return nil, fault(ExitUsage, "%v", err)
 	}
 
-	m, err := restore.Fetcher{Storage: st}.Manifest(ctx, b)
+	candidates, err := a.destinationsHolding(ctx, cfg, src, backupID, from)
 	if err != nil {
-		return nil, fmt.Errorf("no backup %s under %s: %w", backupID, layoutSource.Prefix(), err)
+		return nil, err
 	}
-	return &located{
-		cfg: cfg, sourceID: sourceID, backup: b, storage: st, manifest: m,
-	}, nil
+
+	var tried []string
+	for _, name := range candidates {
+		dest, known := cfg.Destinations[name]
+		if !known {
+			return nil, fault(ExitUsage, "no destination %q in %s", name, cfg.Path())
+		}
+		st, err := openStorage(ctx, dest)
+		if err != nil {
+			// A destination that cannot be opened is not a destination that
+			// lacks the backup: say so and move on, so one broken endpoint
+			// does not hide a copy sitting on another.
+			tried = append(tried, fmt.Sprintf("%s (unreachable)", name))
+			continue
+		}
+		m, err := restore.Fetcher{Storage: st}.Manifest(ctx, b)
+		if err != nil {
+			tried = append(tried, name)
+			continue
+		}
+		return &located{
+			cfg: cfg, sourceID: sourceID, destination: name,
+			backup: b, storage: st, manifest: m,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("no backup %s under %s on %s",
+		backupID, layoutSource.Prefix(), strings.Join(tried, ", "))
+}
+
+// destinationsHolding decides where to look, in order.
+func (a *app) destinationsHolding(
+	ctx context.Context, cfg config.Config, src config.Source, backupID, from string,
+) ([]string, error) {
+	if from != "" {
+		if !slices.Contains(src.Destinations, from) {
+			return nil, fault(ExitUsage,
+				"this source does not write to %q; it writes to %s",
+				from, strings.Join(src.Destinations, ", "))
+		}
+		return []string{from}, nil
+	}
+
+	// What the catalog knows, kept in the configuration's order so the fastest
+	// destination is tried first.
+	known := a.catalogDestinations(ctx, cfg, backupID)
+	var ordered []string
+	for _, name := range src.Destinations {
+		if slices.Contains(known, name) {
+			ordered = append(ordered, name)
+		}
+	}
+	if len(ordered) > 0 {
+		return ordered, nil
+	}
+
+	// The catalog knows nothing -- lost, never rebuilt, or this backup predates
+	// it. Every destination is a candidate, because the repository is the
+	// truth.
+	return src.Destinations, nil
+}
+
+// catalogDestinations lists the destinations the catalog records for a backup.
+//
+// A failure here is not an error: the catalog is a cache, and being unable to
+// consult it means looking everywhere rather than giving up.
+func (a *app) catalogDestinations(ctx context.Context, cfg config.Config, backupID string) []string {
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = cat.Close() }()
+
+	backups, err := cat.ListBackups(ctx, catalog.BackupFilter{})
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, b := range backups {
+		if string(b.ID) == backupID && b.Destination != "" {
+			out = append(out, b.Destination)
+		}
+	}
+	return out
 }
 
 // sourceOfBackup asks the catalog which source a backup belongs to, and when
@@ -1884,3 +1974,7 @@ func (a *app) openMirrors(
 	}
 	return out, nil
 }
+
+// fromFlagHelp is shared because the flag means the same thing everywhere, and
+// three slightly different sentences would be three chances to disagree.
+const fromFlagHelp = "read from this destination; by default, wherever the backup is"
