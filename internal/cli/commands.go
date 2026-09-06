@@ -26,6 +26,7 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/executor"
 	"github.com/Gu1llaum-3/koffr/internal/executor/local"
 	"github.com/Gu1llaum-3/koffr/internal/manifest"
+	"github.com/Gu1llaum-3/koffr/internal/notify"
 	"github.com/Gu1llaum-3/koffr/internal/pipeline"
 	"github.com/Gu1llaum-3/koffr/internal/restore"
 	"github.com/Gu1llaum-3/koffr/internal/scheduler"
@@ -1501,6 +1502,17 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 		a.warnf("koffr: could not read the catalog, so no missed window will be picked up: %v", err)
 	}
 
+	hub, err := a.buildHub(cfg)
+	if err != nil {
+		return err
+	}
+	defer hub.Wait()
+
+	dms, err := a.buildDeadMansSwitch(cfg)
+	if err != nil {
+		return err
+	}
+
 	sched := &scheduler.Scheduler{
 		Location:            cfg.Scheduler.Location(),
 		MaxConcurrent:       cfg.Scheduler.MaxConcurrent,
@@ -1531,6 +1543,8 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 			if err == nil {
 				a.printf("%s: %s in %s to %s", job.SourceID, res.BackupID,
 					humanBytes(totalBytes(res.Manifest)), job.Destination)
+				a.reportSuccess(ctx, hub, dms, job.SourceID, string(res.BackupID),
+					totalBytes(res.Manifest))
 			}
 			return err
 		},
@@ -1539,12 +1553,34 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 		// what the notifier will listen to.
 		OnSkip: func(job scheduler.Job, why string) {
 			a.printf("skipped %s: %s", job.SourceID, why)
+			hub.Publish(ctx, notify.Event{
+				Kind: notify.KindBackupSkipped, Severity: notify.SeverityWarning,
+				SourceID: job.SourceID,
+				Message:  "a scheduled window was passed over: " + why,
+			})
 		},
-		OnResult: func(job scheduler.Job, attempt int, err error) {
-			if err != nil {
-				a.warnf("koffr: %s attempt %d failed (%s): %v",
-					job.SourceID, attempt, pipeline.ClassOf(err), err)
+		OnStart: func(job scheduler.Job, catchUp bool) {
+			if !catchUp {
+				return
 			}
+			// A backup running is routine. A backup running because last
+			// night's did not is a fact worth telling someone, and it is the
+			// only signal that a window was ever missed.
+			a.printf("%s: making good a missed window", job.SourceID)
+			hub.Publish(ctx, notify.Event{
+				Kind: notify.KindBackupCaughtUp, Severity: notify.SeverityWarning,
+				SourceID: job.SourceID,
+				Message: "a scheduled backup did not run when it should have; " +
+					"one is being taken now",
+			})
+		},
+		OnResult: func(res scheduler.Result) {
+			if res.Err == nil {
+				return // reported where the backup id is known
+			}
+			a.warnf("koffr: %s attempt %d failed (%s): %v",
+				res.Job.SourceID, res.Attempt, pipeline.ClassOf(res.Err), res.Err)
+			a.reportFailure(ctx, hub, res.Job.SourceID, res.Attempt, res.WillRetry, res.Err)
 		},
 	}
 	if err := sched.SetJobs(jobs); err != nil {
@@ -1559,7 +1595,7 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	// recorded as running for ever, so the catalog claimed a backup was in
 	// progress that no process was doing. Reconciling on start is the only
 	// moment the truth is knowable.
-	a.reconcileInterruptedJobs(ctx, cfg)
+	a.reconcileInterruptedJobs(ctx, cfg, hub)
 
 	a.printf("scheduling %d source(s) in %s, window %s; SIGHUP rereads %s",
 		len(jobs), cfg.Scheduler.Location(), cfg.Scheduler.ExecutionWindow(), cfg.Path())
@@ -1679,7 +1715,7 @@ func (a *app) printTimetable(cfg config.Config, jobs []scheduler.Job) error {
 //
 // Start-up is the only moment this is knowable, because a single-writer catalog
 // means anything still marked running belongs to a previous life.
-func (a *app) reconcileInterruptedJobs(ctx context.Context, cfg config.Config) {
+func (a *app) reconcileInterruptedJobs(ctx context.Context, cfg config.Config, hub *notify.Hub) {
 	cat, err := openCatalog(ctx, cfg)
 	if err != nil {
 		a.warnf("koffr: could not open the catalog to reconcile interrupted jobs: %v", err)
@@ -1706,6 +1742,12 @@ func (a *app) reconcileInterruptedJobs(ctx context.Context, cfg config.Config) {
 			continue
 		}
 		a.printf("job %s (%s) was left running by a previous run; marked failed", job.ID, job.SourceID)
+		hub.Publish(ctx, notify.Event{
+			Kind: notify.KindJobInterrupted, Severity: notify.SeverityWarning,
+			SourceID: job.SourceID,
+			Message: "a backup was still recorded as running when Koffr started, " +
+				"so the previous run ended without finishing it",
+		})
 	}
 }
 

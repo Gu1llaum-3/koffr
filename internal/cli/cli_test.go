@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -686,4 +690,94 @@ catalog:`, 1)), 0o600))
 	code, _, errOut := run(t, "--config", cfgPath, "config", "validate")
 	assert.Equal(t, cli.ExitConfig, code)
 	assert.Contains(t, errOut, "scheduler.window")
+}
+
+// The event the user asked for: a backup running because last night's did not
+// is a fact worth telling someone, and the only signal a window was ever
+// missed. End to end, through the configuration, to a real HTTP receiver.
+func TestSchedule_NotifiesOnCatchUpAndFailure(t *testing.T) {
+	var mu sync.Mutex
+	var received []map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var ev map[string]any
+		if json.Unmarshal(body, &ev) == nil {
+			mu.Lock()
+			received = append(received, ev)
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfgPath := configFile(t)
+	t.Setenv("KOFFR_WEBHOOK", srv.URL)
+
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	updated := strings.Replace(string(body), "catalog:", `notify:
+  webhooks:
+    - url: env:KOFFR_WEBHOOK
+      min_severity: warning
+catalog:`, 1)
+	updated = strings.Replace(updated, "    database: shop",
+		"    database: shop\n    schedule: \"@every 1s\"", 1)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(updated), 0o600))
+
+	// The source points at a port nothing listens on, so the catch-up fires and
+	// then fails -- both events in one run.
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+
+	var out, errBuf strings.Builder
+	code := cli.Run(ctx, []string{"--config", cfgPath, "schedule"},
+		cli.Streams{Out: &out, Err: &errBuf})
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errBuf.String())
+
+	mu.Lock()
+	defer mu.Unlock()
+	kinds := map[string]bool{}
+	for _, ev := range received {
+		kinds[ev["kind"].(string)] = true
+		testutil.AssertNoSecretLeak(t, ev["message"].(string))
+	}
+	assert.True(t, kinds["backup.caught_up"],
+		"a missed window being made good has to be reported; got %v", kinds)
+	assert.True(t, kinds["backup.failed"] || kinds["backup.retrying"],
+		"a failing backup has to be reported; got %v", kinds)
+	assert.False(t, kinds["backup.completed"],
+		"a channel asking for warnings and above must not receive routine successes")
+}
+
+// A broken alerting channel is worse than none, because absent is obvious and
+// broken looks like quiet. It is refused when the configuration loads.
+func TestConfig_RefusesABrokenWebhook(t *testing.T) {
+	cfgPath := configFile(t)
+	t.Setenv("KOFFR_WEBHOOK", "not-a-url")
+
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(strings.Replace(string(body), "catalog:",
+		"notify:\n  webhooks:\n    - url: env:KOFFR_WEBHOOK\ncatalog:", 1)), 0o600))
+
+	code, _, errOut := run(t, "--config", cfgPath, "config", "validate")
+	assert.Equal(t, cli.ExitConfig, code)
+	assert.Contains(t, errOut, "notify.webhooks[0]")
+}
+
+// A monitor watching a source that does not exist will alarm tonight, for a
+// reason nobody will be able to find.
+func TestConfig_RefusesADeadMansSwitchForAnUnknownSource(t *testing.T) {
+	cfgPath := configFile(t)
+	t.Setenv("KOFFR_DMS", "https://hc-ping.example/abc")
+
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(strings.Replace(string(body), "catalog:",
+		"notify:\n  dead_mans_switch:\n    typo-in-the-name: env:KOFFR_DMS\ncatalog:", 1)), 0o600))
+
+	code, _, errOut := run(t, "--config", cfgPath, "config", "validate")
+	assert.Equal(t, cli.ExitConfig, code)
+	assert.Contains(t, errOut, "typo-in-the-name")
 }

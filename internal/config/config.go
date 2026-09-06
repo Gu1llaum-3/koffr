@@ -23,6 +23,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/Gu1llaum-3/koffr/internal/notify"
 	"github.com/Gu1llaum-3/koffr/internal/scheduler"
 )
 
@@ -35,6 +36,7 @@ type Config struct {
 	Crypto       Crypto                 `yaml:"crypto"`
 	Catalog      Catalog                `yaml:"catalog"`
 	Scheduler    Scheduler              `yaml:"scheduler,omitempty"`
+	Notify       Notify                 `yaml:"notify,omitempty"`
 	Destinations map[string]Destination `yaml:"destinations"`
 	Sources      map[string]Source      `yaml:"sources"`
 
@@ -104,6 +106,50 @@ func (s Scheduler) ExecutionWindow() scheduler.Window { return s.window }
 
 // CatchUpEnabled reports whether a missed window should be picked up.
 func (s Scheduler) CatchUpEnabled() bool { return s.CatchUp == nil || *s.CatchUp }
+
+// Notify is EF-130 and EF-131.
+//
+// Everything here is optional. A Koffr with no notifications configured is a
+// Koffr nobody hears from, which is a legitimate choice for a laptop and a
+// terrible one for a server -- so `koffr check` says which it is rather than
+// this refusing to load.
+type Notify struct {
+	Webhooks []Webhook `yaml:"webhooks,omitempty"`
+	Email    *Email    `yaml:"email,omitempty"`
+
+	// DeadMansSwitch maps a source id to the monitor watching it (EF-131).
+	// Per source, because that is how Healthchecks.io and Uptime Kuma work:
+	// one check, one URL, one schedule to compare against.
+	DeadMansSwitch map[string]Secret `yaml:"dead_mans_switch,omitempty"`
+}
+
+// Webhook is one POST target.
+type Webhook struct {
+	URL Secret `yaml:"url"`
+
+	// MinSeverity is info, warning or error. Empty means warning: a channel
+	// that reports every nightly success is a channel people mute, and a muted
+	// channel reports nothing at all.
+	MinSeverity string `yaml:"min_severity,omitempty"`
+
+	// Kinds restricts to these events. Empty means all of them.
+	Kinds []string `yaml:"kinds,omitempty"`
+
+	Headers  map[string]Secret `yaml:"headers,omitempty"`
+	Template string            `yaml:"template,omitempty"`
+}
+
+// Email is the SMTP channel.
+type Email struct {
+	Host        string   `yaml:"host"`
+	Port        int      `yaml:"port,omitempty"`
+	From        string   `yaml:"from"`
+	To          []string `yaml:"to"`
+	Username    string   `yaml:"username,omitempty"`
+	Password    Secret   `yaml:"password,omitempty"`
+	MinSeverity string   `yaml:"min_severity,omitempty"`
+	Kinds       []string `yaml:"kinds,omitempty"`
+}
 
 // Retry is EF-094.
 type Retry struct {
@@ -297,6 +343,7 @@ func (c *Config) validate(v *validator) {
 	}
 
 	c.Scheduler.validate(v)
+	c.Notify.validate(v, c)
 
 	if len(c.Destinations) == 0 {
 		v.add("destinations", "no destinations", "a backup needs somewhere to go")
@@ -537,5 +584,109 @@ func (s *Scheduler) validate(v *validator) {
 	if s.Retry.MaxDelay < s.Retry.InitialDelay {
 		v.add("scheduler.retry.max_delay", "is shorter than the initial delay",
 			"the delay doubles up to this ceiling, so the ceiling has to be the larger one")
+	}
+}
+
+// validate resolves the notification secrets and refuses a channel that could
+// not deliver.
+//
+// A webhook URL is a Secret because Slack, Discord and Healthchecks.io all put
+// a token in the path: a configuration file carrying one verbatim is a
+// configuration file that cannot be committed, which is the whole point of
+// EF-103.
+func (n *Notify) validate(v *validator, cfg *Config) {
+	for i := range n.Webhooks {
+		n.Webhooks[i].validate(v, fmt.Sprintf("notify.webhooks[%d]", i))
+	}
+	if n.Email != nil {
+		n.Email.validate(v, "notify.email")
+	}
+	for source, url := range n.DeadMansSwitch {
+		path := "notify.dead_mans_switch." + source
+		url.validate(v, path, true)
+		n.DeadMansSwitch[source] = url
+
+		// A monitor watching a source that does not exist will alarm tonight,
+		// for a reason nobody will be able to find: the check is armed and
+		// nothing will ever ping it.
+		if _, known := cfg.Sources[source]; !known {
+			v.add(path, fmt.Sprintf("there is no source called %q", source),
+				"the key is a source id; check it against the sources section")
+			continue
+		}
+		if url.Value() == "" {
+			continue
+		}
+		if _, err := notify.NewDeadMansSwitch(notify.DeadMansSwitchConfig{
+			URLs: map[string]string{source: url.Value()},
+		}); err != nil {
+			v.add(path, err.Error(), "an https URL from Healthchecks.io or Uptime Kuma")
+		}
+	}
+}
+
+func (w *Webhook) validate(v *validator, path string) {
+	w.URL.validate(v, path+".url", true)
+	for name, value := range w.Headers {
+		value.validate(v, path+".headers."+name, true)
+		w.Headers[name] = value
+	}
+	w.MinSeverity = validSeverity(v, path+".min_severity", w.MinSeverity)
+
+	// Built here, not when the scheduler starts. Alerting that is broken is
+	// worse than alerting that is absent -- absent is obvious, broken looks
+	// like quiet -- so the URL and the template are checked while someone is
+	// still looking at the file (PD-006).
+	if w.URL.Value() == "" {
+		return
+	}
+	if _, err := notify.NewWebhook(notify.WebhookConfig{
+		URL: w.URL.Value(), Template: w.Template,
+	}); err != nil {
+		v.add(path, err.Error(), "an http or https URL, and a template that parses")
+	}
+}
+
+func (e *Email) validate(v *validator, path string) {
+	if e.Host == "" {
+		v.add(path+".host", "no host", "name the SMTP server")
+	}
+	if e.From == "" {
+		v.add(path+".from", "no from address", "mail needs a sender")
+	}
+	if len(e.To) == 0 {
+		v.add(path+".to", "no recipients", "name at least one address to alert")
+	}
+	if !e.Password.IsZero() {
+		e.Password.validate(v, path+".password", true)
+	}
+	if e.Username != "" && e.Password.IsZero() {
+		v.add(path+".password", "a username with no password",
+			"this is the shape a missing environment variable leaves behind")
+		return
+	}
+	if _, err := notify.NewEmail(notify.EmailConfig{
+		Host: e.Host, Port: e.Port, From: e.From, To: e.To,
+		Username: e.Username, Password: e.Password.Value(),
+	}); err != nil {
+		v.add(path, err.Error(), "check the addresses and the server")
+	}
+	e.MinSeverity = validSeverity(v, path+".min_severity", e.MinSeverity)
+}
+
+// validSeverity defaults to warning.
+//
+// Not info: a channel that reports every nightly success is a channel people
+// mute, and a muted channel reports nothing at all -- including the one night
+// it mattered.
+func validSeverity(v *validator, path, given string) string {
+	switch given {
+	case "":
+		return "warning"
+	case "info", "warning", "error":
+		return given
+	default:
+		v.add(path, fmt.Sprintf("%q is not a severity", given), `one of "info", "warning" or "error"`)
+		return "warning"
 	}
 }

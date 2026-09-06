@@ -132,12 +132,32 @@ type Scheduler struct {
 	// run if the previous one had finished" (EF-092).
 	OnSkip func(job Job, why string)
 
+	// OnStart says a job is beginning, and whether it is making good a window
+	// that went by unattended. The distinction is the whole value of the
+	// notification: a backup running is routine, a backup running because last
+	// night's did not is a fact worth telling someone.
+	OnStart func(job Job, catchUp bool)
+
 	// OnResult reports every attempt's outcome, for the notifier to pick up.
-	OnResult func(job Job, attempt int, err error)
+	OnResult func(Result)
 
 	mu      sync.Mutex
 	entries []*entry
 	running map[string]context.CancelFunc
+}
+
+// Result is what one attempt did.
+//
+// WillRetry is decided here rather than by the reporter, because the policy
+// that decides it lives here. A notifier guessing at it would eventually
+// disagree, and "backup failed" followed silently by a success reads worse
+// than either message alone.
+type Result struct {
+	Job       Job
+	Attempt   int
+	CatchUp   bool
+	WillRetry bool
+	Err       error
 }
 
 // entry is a job with its parsed schedule and its next due time.
@@ -281,6 +301,7 @@ func (s *Scheduler) start(ctx context.Context, wg *sync.WaitGroup, e *entry) {
 	// job was merely selected would lose the missed window to a full
 	// concurrency slot or a closed execution window, which is the one case it
 	// exists for.
+	wasCatchUp := e.catchUp
 	e.catchUp = false
 	if s.running == nil {
 		s.running = map[string]context.CancelFunc{}
@@ -292,15 +313,21 @@ func (s *Scheduler) start(ctx context.Context, wg *sync.WaitGroup, e *entry) {
 	attempt := e.attempt
 	s.mu.Unlock()
 
+	if s.OnStart != nil {
+		s.OnStart(e.job, wasCatchUp)
+	}
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		defer cancel()
 		err := s.Execute(jobCtx, e.job)
 
+		willRetry := err != nil && s.shouldRetry(err, attempt)
+
 		s.mu.Lock()
 		delete(s.running, e.job.SourceID)
-		if err != nil && s.shouldRetry(err, attempt) {
+		if willRetry {
 			e.retryAt = s.now().Add(s.Retry.Delay(attempt))
 		} else {
 			e.retryAt = time.Time{}
@@ -308,7 +335,10 @@ func (s *Scheduler) start(ctx context.Context, wg *sync.WaitGroup, e *entry) {
 		s.mu.Unlock()
 
 		if s.OnResult != nil {
-			s.OnResult(e.job, attempt, err)
+			s.OnResult(Result{
+				Job: e.job, Attempt: attempt, CatchUp: wasCatchUp,
+				WillRetry: willRetry, Err: err,
+			})
 		}
 	}()
 }
