@@ -1,0 +1,79 @@
+# Koffr as a system service.
+#
+# Install:
+#   install -m 0755 koffr /usr/local/bin/koffr
+#   useradd --system --home /var/lib/koffr --shell /usr/sbin/nologin koffr
+#   install -d -o koffr -g koffr -m 0750 /var/lib/koffr /var/log/koffr /etc/koffr
+#   install -o koffr -g koffr -m 0640 koffr.yml   /etc/koffr/koffr.yml
+#   install -o koffr -g koffr -m 0600 koffr.env   /etc/koffr/koffr.env
+#   systemctl enable --now koffr
+#
+# See docs/running-as-a-service.md for what each hardening line costs you.
+
+[Unit]
+Description=Koffr backups
+Documentation=https://github.com/Gu1llaum-3/koffr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=koffr
+Group=koffr
+
+# Secrets are references, and this is what they refer to. 0600, owned by koffr,
+# and never the same file as the configuration -- the configuration is meant to
+# be committable (EF-103) and this is not.
+EnvironmentFile=/etc/koffr/koffr.env
+
+ExecStart=/usr/local/bin/koffr --config /etc/koffr/koffr.yml schedule
+
+# SIGHUP rereads the configuration without disturbing a backup in progress
+# (EF-104). `systemctl reload koffr` is the supported way to apply a change.
+ExecReload=/bin/kill -HUP $MAINPID
+
+# SIGTERM cancels running backups, which is what kills pg_dump rather than
+# leaving it holding a connection. The timeout is generous because a large
+# upload finishing is worth more than a fast stop.
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+Restart=on-failure
+RestartSec=30s
+
+# --- Hardening -------------------------------------------------------------
+#
+# Koffr holds credentials for every database it backs up, which makes it worth
+# more to an attacker than most of what runs on the same machine.
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+
+# ProtectSystem=strict makes everything read-only, so every path Koffr writes
+# to has to be named. Add the destination here too if it is a local directory.
+ReadWritePaths=/var/lib/koffr /var/log/koffr
+
+# Koffr speaks TCP to databases and object stores, and Unix sockets to nothing
+# in particular -- but libpq will try one if a host looks local.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
