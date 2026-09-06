@@ -71,6 +71,12 @@ type Scheduler struct {
 
 	Retry Retry `yaml:"retry,omitempty"`
 
+	// CatchUp picks up a scheduled window that went by while Koffr was not
+	// running. A pointer so that leaving it out means yes: a machine rebooting
+	// at 2 AM otherwise loses the night with nothing to show for it, and losing
+	// a night quietly is the failure the scheduler exists to prevent.
+	CatchUp *bool `yaml:"catch_up,omitempty"`
+
 	// Window is when a job may start (EF-093). A schedule says when to try;
 	// this says when trying is allowed at all, which is what keeps a large
 	// backup off the link during business hours.
@@ -95,6 +101,9 @@ type Window struct {
 
 // ExecutionWindow is the parsed window.
 func (s Scheduler) ExecutionWindow() scheduler.Window { return s.window }
+
+// CatchUpEnabled reports whether a missed window should be picked up.
+func (s Scheduler) CatchUpEnabled() bool { return s.CatchUp == nil || *s.CatchUp }
 
 // Retry is EF-094.
 type Retry struct {

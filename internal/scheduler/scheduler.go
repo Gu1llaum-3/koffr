@@ -84,6 +84,24 @@ type Scheduler struct {
 	// MaxConcurrent caps how many jobs run at once (EF-093). Zero means no cap.
 	MaxConcurrent int
 
+	// LastSuccess reports when a source last completed a backup, and whether it
+	// ever has. It is what makes catching up possible: the calendar alone
+	// cannot tell a window that was taken from one that went by unattended.
+	//
+	// Nil means no history, which disables catching up rather than treating
+	// every source as overdue.
+	LastSuccess func(sourceID string) (time.Time, bool)
+
+	// DisableCatchUp turns off picking up a missed window.
+	//
+	// Negative so the zero value is the safe answer. Koffr reasons in calendar
+	// time -- "at 2 AM" -- so a machine rebooting at 2 AM loses the night
+	// entirely, and losing a night quietly is the failure this exists to
+	// prevent. Exactly one backup is taken however many windows went by: three
+	// identical ones in a row are worth no more than one and cost three times
+	// the link.
+	DisableCatchUp bool
+
 	// Window is when a job may start (EF-093). The zero value allows any time.
 	Window Window
 
@@ -138,6 +156,9 @@ type entry struct {
 	// zero.
 	retryAt time.Time
 	attempt int
+	// catchUp marks a window that went by while Koffr was not running. It is
+	// cleared as soon as one backup is started, never accumulated.
+	catchUp bool
 }
 
 var parser = cron.NewParser(
@@ -161,6 +182,7 @@ func (s *Scheduler) SetJobs(jobs []Job) error {
 			job:      j,
 			schedule: schedule,
 			next:     schedule.Next(now),
+			catchUp:  s.missedAWindow(j.SourceID, schedule, now),
 		})
 	}
 
@@ -215,6 +237,9 @@ func (s *Scheduler) due() []*entry {
 	var ready []*entry
 	for _, e := range s.entries {
 		switch {
+		case e.catchUp:
+			// Taken as soon as the window allows, without waiting for the next
+			// scheduled time: waiting would cost a second night.
 		case !e.retryAt.IsZero():
 			if now.Before(e.retryAt) {
 				continue
@@ -252,6 +277,11 @@ func (s *Scheduler) start(ctx context.Context, wg *sync.WaitGroup, e *entry) {
 		s.skip(e.job, fmt.Sprintf("%d jobs already running", s.MaxConcurrent))
 		return
 	}
+	// The catch-up flag is spent here and nowhere earlier: clearing it when the
+	// job was merely selected would lose the missed window to a full
+	// concurrency slot or a closed execution window, which is the one case it
+	// exists for.
+	e.catchUp = false
 	if s.running == nil {
 		s.running = map[string]context.CancelFunc{}
 	}
@@ -377,4 +407,22 @@ func (s *Scheduler) enforceWindow() {
 		s.skip(Job{SourceID: id}, "the execution window closed while it was running")
 		cancel()
 	}
+}
+
+// missedAWindow reports whether a scheduled run went by unattended.
+//
+// The test is exact and needs no search: if the first fire *after* the last
+// success is already in the past, a window elapsed with nothing running. A
+// source that has never been backed up has missed every window there has been,
+// which is the strongest case of all -- it has no backup, and waiting until
+// tonight is another night without one.
+func (s *Scheduler) missedAWindow(sourceID string, schedule cron.Schedule, now time.Time) bool {
+	if s.DisableCatchUp || s.LastSuccess == nil {
+		return false
+	}
+	last, ever := s.LastSuccess(sourceID)
+	if !ever {
+		return true
+	}
+	return schedule.Next(last).Before(now)
 }

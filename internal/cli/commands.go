@@ -1492,11 +1492,25 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 				"or drive `koffr backup` from cron instead", cfg.Path())
 	}
 
+	// The catalog answers "when did this source last succeed", which is what
+	// tells a window that was taken from one that went by unattended. It is
+	// read once, at start: a scheduler that reopened the catalog on every tick
+	// would spend its life contending with the jobs it started.
+	lastSuccess, err := lastSuccessfulBackups(ctx, cfg)
+	if err != nil {
+		a.warnf("koffr: could not read the catalog, so no missed window will be picked up: %v", err)
+	}
+
 	sched := &scheduler.Scheduler{
 		Location:            cfg.Scheduler.Location(),
 		MaxConcurrent:       cfg.Scheduler.MaxConcurrent,
 		Window:              cfg.Scheduler.ExecutionWindow(),
 		CancelOnWindowClose: cfg.Scheduler.Window.CancelOnClose,
+		DisableCatchUp:      !cfg.Scheduler.CatchUpEnabled(),
+		LastSuccess: func(sourceID string) (time.Time, bool) {
+			at, ok := lastSuccess[sourceID]
+			return at, ok
+		},
 		// Without this the class never reaches the policy and a configuration
 		// mistake is retried every minute until someone mutes the alerts.
 		Classify: pipeline.ClassOf,
@@ -1693,4 +1707,30 @@ func (a *app) reconcileInterruptedJobs(ctx context.Context, cfg config.Config) {
 		}
 		a.printf("job %s (%s) was left running by a previous run; marked failed", job.ID, job.SourceID)
 	}
+}
+
+// lastSuccessfulBackups reports when each source last completed a backup.
+//
+// Completed, not attempted: a source whose last three jobs failed has still
+// missed its windows, and treating a failure as coverage is how a gap becomes
+// invisible.
+func lastSuccessfulBackups(ctx context.Context, cfg config.Config) (map[string]time.Time, error) {
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = cat.Close() }()
+
+	backups, err := cat.ListBackups(ctx, catalog.BackupFilter{Status: catalog.StatusCompleted})
+	if err != nil {
+		return nil, err
+	}
+
+	latest := make(map[string]time.Time, len(backups))
+	for _, b := range backups {
+		if at, seen := latest[b.SourceID]; !seen || b.StartedAt.After(at) {
+			latest[b.SourceID] = b.StartedAt
+		}
+	}
+	return latest, nil
 }

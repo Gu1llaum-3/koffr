@@ -473,3 +473,165 @@ func TestRun_CancelOnWindowClose(t *testing.T) {
 	})
 	assert.ErrorIs(t, *r.finished.Load(), context.Canceled)
 }
+
+// Catch-up. Koffr reasons in calendar time -- "at 2 AM" -- so a machine that
+// was rebooting at 2 AM simply loses the night. Databasus reasons from the last
+// backup's date and picks the missed run up on the way back, which is better on
+// exactly the case where a backup goes missing and nobody notices.
+//
+// This is that behaviour, kept alongside the calendar: the schedule still says
+// when, and the execution window still keeps a catch-up out of business hours.
+func TestRun_CatchesUpAWindowMissedWhileDown(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T09:00:00Z")
+	r := &recorder{}
+
+	// Last success was two days ago; the schedule is nightly. Two windows went
+	// by with nothing running.
+	lastSuccess := time.Date(2026, 2, 27, 2, 0, 0, 0, time.UTC)
+
+	s := newScheduler(t, c, r, scheduler.Job{SourceID: "prod", Spec: "0 2 * * *"})
+	s.LastSuccess = func(string) (time.Time, bool) { return lastSuccess, true }
+	require.NoError(t, s.SetJobs([]scheduler.Job{{SourceID: "prod", Spec: "0 2 * * *"}}))
+
+	stop := run(t, s)
+	defer stop()
+
+	eventually(t, "a missed window was never picked up", func() bool { return len(r.runs()) == 1 })
+
+	// One, not two. Three identical backups in a row are worth no more than
+	// one, and they cost three times the link.
+	c.advance(2 * time.Hour)
+	time.Sleep(30 * time.Millisecond)
+	assert.Len(t, r.runs(), 1, "a catch-up runs once, however many windows were missed")
+}
+
+// A source backed up within its schedule has missed nothing, and starting the
+// scheduler must not produce a backup nobody asked for.
+func TestRun_NoCatchUpWhenNothingWasMissed(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T09:00:00Z")
+	r := &recorder{}
+
+	s := &scheduler.Scheduler{
+		Now: c.Now, Tick: time.Millisecond, Execute: r.Execute,
+		LastSuccess: func(string) (time.Time, bool) {
+			return time.Date(2026, 3, 1, 2, 0, 0, 0, time.UTC), true // this morning
+		},
+	}
+	require.NoError(t, s.SetJobs([]scheduler.Job{{SourceID: "prod", Spec: "0 2 * * *"}}))
+
+	stop := run(t, s)
+	defer stop()
+
+	time.Sleep(30 * time.Millisecond)
+	assert.Empty(t, r.runs())
+}
+
+// Never backed up is the strongest case for catching up: the source has no
+// backup at all, and waiting until tonight is another night without one.
+func TestRun_CatchesUpASourceNeverBackedUp(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T09:00:00Z")
+	r := &recorder{}
+
+	s := &scheduler.Scheduler{
+		Now: c.Now, Tick: time.Millisecond, Execute: r.Execute,
+		LastSuccess: func(string) (time.Time, bool) { return time.Time{}, false },
+	}
+	require.NoError(t, s.SetJobs([]scheduler.Job{{SourceID: "prod", Spec: "0 2 * * *"}}))
+
+	stop := run(t, s)
+	defer stop()
+
+	eventually(t, "a source with no backup at all was left without one", func() bool {
+		return len(r.runs()) == 1
+	})
+}
+
+// A catch-up is still a backup, so it obeys the window. Picking up last night's
+// missed run at ten in the morning would put the very load on the link that the
+// window exists to keep off it.
+func TestRun_CatchUpWaitsForTheWindow(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T09:00:00Z")
+	r := &recorder{}
+
+	s := &scheduler.Scheduler{
+		Now: c.Now, Tick: time.Millisecond, Execute: r.Execute,
+		LastSuccess: func(string) (time.Time, bool) { return time.Time{}, false },
+	}
+	s.Window, _ = scheduler.ParseWindow("22:00", "06:00")
+	require.NoError(t, s.SetJobs([]scheduler.Job{{SourceID: "prod", Spec: "0 2 * * *"}}))
+
+	stop := run(t, s)
+	defer stop()
+
+	time.Sleep(30 * time.Millisecond)
+	assert.Empty(t, r.runs(), "ten in the morning is not the time to pick up last night")
+
+	c.advance(14 * time.Hour) // 23:00, inside
+	eventually(t, "the catch-up never ran once the window opened", func() bool {
+		return len(r.runs()) == 1
+	})
+}
+
+func TestRun_CatchUpCanBeTurnedOff(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T09:00:00Z")
+	r := &recorder{}
+
+	s := &scheduler.Scheduler{
+		Now: c.Now, Tick: time.Millisecond, Execute: r.Execute,
+		DisableCatchUp: true,
+		LastSuccess:    func(string) (time.Time, bool) { return time.Time{}, false },
+	}
+	require.NoError(t, s.SetJobs([]scheduler.Job{{SourceID: "prod", Spec: "0 2 * * *"}}))
+
+	stop := run(t, s)
+	defer stop()
+
+	time.Sleep(30 * time.Millisecond)
+	assert.Empty(t, r.runs())
+}
+
+// The catch-up flag survives everything short of the job actually starting.
+// Losing a missed window to a full concurrency slot would be losing it to the
+// one condition it exists to survive.
+func TestRun_CatchUpSurvivesAFullConcurrencySlot(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	c := newClock(t, "2026-03-01T09:00:00Z")
+	release := make(chan struct{})
+	r := &recorder{release: release}
+
+	s := &scheduler.Scheduler{
+		Now: c.Now, Tick: time.Millisecond, Execute: r.Execute, MaxConcurrent: 1,
+		LastSuccess: func(string) (time.Time, bool) { return time.Time{}, false },
+	}
+	require.NoError(t, s.SetJobs([]scheduler.Job{
+		{SourceID: "a", Spec: "0 2 * * *"},
+		{SourceID: "b", Spec: "0 2 * * *"},
+	}))
+
+	var once sync.Once
+	letGo := func() { once.Do(func() { close(release) }) }
+	stop := run(t, s)
+	defer func() { letGo(); stop() }()
+
+	eventually(t, "nothing started", func() bool { return len(r.runs()) == 1 })
+	time.Sleep(20 * time.Millisecond)
+	require.Len(t, r.runs(), 1, "the cap holds")
+
+	// The slot frees, and the source that lost the race still gets its
+	// catch-up rather than waiting for tonight.
+	letGo()
+	eventually(t, "the second source lost its missed window to a busy slot", func() bool {
+		return len(r.runs()) == 2
+	})
+}

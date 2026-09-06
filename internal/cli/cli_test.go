@@ -631,11 +631,21 @@ func TestSchedule_ClosesOutJobsLeftRunningByADeadProcess(t *testing.T) {
 
 	snap, err := cat.Export(t.Context())
 	require.NoError(t, err)
-	require.Len(t, snap.Jobs, 1)
-	assert.Equal(t, catalog.StatusFailed, snap.Jobs[0].Status,
+
+	// Not a count: the scheduler also catches up a source that has never been
+	// backed up, so it records a job of its own. The stuck one is what this
+	// test is about.
+	var stuck *catalog.Job
+	for i, j := range snap.Jobs {
+		if j.ID == "01JOBSTUCK0000000000000000" {
+			stuck = &snap.Jobs[i]
+		}
+	}
+	require.NotNil(t, stuck, "the interrupted job vanished from the catalog")
+	assert.Equal(t, catalog.StatusFailed, stuck.Status,
 		"a job nobody is doing must not still read as in progress")
-	assert.Equal(t, catalog.ErrClassCanceled, snap.Jobs[0].ErrorClass)
-	assert.False(t, snap.Jobs[0].FinishedAt.IsZero())
+	assert.Equal(t, catalog.ErrClassCanceled, stuck.ErrorClass)
+	assert.False(t, stuck.FinishedAt.IsZero())
 }
 
 // EF-093 through the configuration, because a window that only exists in the
