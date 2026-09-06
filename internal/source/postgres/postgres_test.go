@@ -558,3 +558,94 @@ func TestCredentials_WorkForADatabaseOtherThanTheSource(t *testing.T) {
 
 	assert.Equal(t, other, strings.TrimSpace(string(out)))
 }
+
+// EF-019, and a gap the documentation work found: GRANT SELECT ON ALL TABLES
+// does not cover sequences, and pg_dump reads last_value from every one of
+// them. The check passed, the backup then failed halfway through with
+// "permission denied for sequence" -- which is precisely the partial dump the
+// requirement exists to prevent.
+func TestProbe_RefusesARoleThatCannotReadSequences(t *testing.T) {
+	skipUnlessReady(t)
+
+	const role = "koffr_no_sequences"
+	admin(t,
+		"CREATE ROLE "+role+" LOGIN PASSWORD 'x' BYPASSRLS",
+		"GRANT CONNECT ON DATABASE "+database+" TO "+role,
+		"GRANT USAGE ON SCHEMA public TO "+role,
+		"CREATE TABLE IF NOT EXISTS seqtest(id serial PRIMARY KEY, v text)",
+		"GRANT SELECT ON ALL TABLES IN SCHEMA public TO "+role,
+	)
+	t.Cleanup(func() {
+		conn, err := pgx.Connect(context.Background(), adminDSN())
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(context.Background()) }()
+		for _, sql := range []string{
+			"DROP TABLE IF EXISTS seqtest",
+			"DROP OWNED BY " + role + " CASCADE",
+			"DROP ROLE IF EXISTS " + role,
+		} {
+			_, _ = conn.Exec(context.Background(), sql)
+		}
+	})
+
+	cfg := baseConfig()
+	cfg.User, cfg.Password = role, "x"
+
+	_, err := newSource(t, cfg).Probe(t.Context(), localExec(t))
+	require.Error(t, err, "the check passed and pg_dump would have failed halfway through")
+	assert.Contains(t, err.Error(), "seqtest_id_seq")
+	assert.Contains(t, err.Error(), "SEQUENCES",
+		"the message has to name the grant that fixes it")
+}
+
+// EF-020 promises a read-only role is enough, and it was not: pg_dumpall
+// --globals-only reads pg_authid for role passwords, which is superuser-only.
+// The dump succeeded and the sidecar failed, so the whole backup failed on a
+// configuration the documentation described as correct.
+//
+// --no-role-passwords reads pg_roles instead, which any role may read. It also
+// keeps password hashes out of the repository, which is the better answer
+// twice over.
+func TestOpen_GlobalsWorkWithAReadOnlyRole(t *testing.T) {
+	skipUnlessReady(t)
+
+	const role = "koffr_read_only"
+	admin(t,
+		"CREATE ROLE "+role+" LOGIN PASSWORD 'x' BYPASSRLS",
+		"GRANT CONNECT ON DATABASE "+database+" TO "+role,
+		"GRANT USAGE ON SCHEMA public TO "+role,
+		"GRANT SELECT ON ALL TABLES IN SCHEMA public TO "+role,
+		"GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO "+role,
+	)
+	t.Cleanup(func() {
+		conn, err := pgx.Connect(context.Background(), adminDSN())
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(context.Background()) }()
+		for _, sql := range []string{
+			"DROP OWNED BY " + role + " CASCADE", "DROP ROLE IF EXISTS " + role,
+		} {
+			_, _ = conn.Exec(context.Background(), sql)
+		}
+	})
+
+	cfg := baseConfig()
+	cfg.User, cfg.Password = role, "x"
+
+	stream, err := newSource(t, cfg).Open(t.Context(), localExec(t), source.Request{Kind: source.KindLogical})
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, stream.Reader)
+	require.NoError(t, err)
+
+	sidecars, err := stream.Sidecars()
+	require.NoError(t, err, "a read-only role has to be enough (EF-020)")
+	require.NoError(t, stream.Close())
+
+	globals := string(sidecars["globals.sql"])
+	assert.Contains(t, globals, "CREATE ROLE", "the roles themselves still have to be there")
+	assert.NotContains(t, globals, "PASSWORD",
+		"a password hash in a backup is a liability nobody asked for")
+}

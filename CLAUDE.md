@@ -104,6 +104,7 @@ internal/
   verify/           the three verification tiers
   notify/           webhooks, email, dead man's switch
 adr/                architecture decision records
+docs/               operator documentation
 docs/spikes/        probe reports
 spikes/             throwaway probe code, excluded from build and lint
 ```

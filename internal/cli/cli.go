@@ -375,10 +375,24 @@ func (a *app) emitError(code int, err error) {
 		if f != nil {
 			body.Problems = f.Problems
 		}
-		a.writeJSON(response{Koffr: version.Value, Command: a.command, OK: false, Error: body})
+		// The result rides along when the command produced one. `koffr check`
+		// fails precisely when it has the most to say, and the first version of
+		// this threw those findings away -- the command that exists to report
+		// what is wrong reported nothing as soon as something was.
+		a.writeJSON(response{
+			Koffr: version.Value, Command: a.command, OK: false,
+			Result: a.result, Error: body,
+		})
 		return
 	}
 
+	if a.renderText != nil {
+		p := newPrinter(a.streams.out())
+		a.renderText(p)
+		if renderErr := p.Err(); renderErr != nil {
+			a.warnf("koffr: writing output: %v", renderErr)
+		}
+	}
 	a.warnf("koffr: %s", err.Error())
 	if f != nil {
 		for _, p := range f.Problems {

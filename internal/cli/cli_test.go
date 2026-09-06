@@ -868,3 +868,51 @@ func TestConfig_RefusesAnUnknownLogLevel(t *testing.T) {
 	assert.Contains(t, errOut, "log")
 	assert.Contains(t, errOut, "chatty")
 }
+
+// `koffr check` fails exactly when it has the most to say. Discarding the
+// findings on the failure path made the command that exists to report what is
+// wrong report nothing as soon as something was.
+func TestCheck_ReportsItsFindingsWhenItFails(t *testing.T) {
+	cfgPath := configFile(t)
+
+	t.Run("text", func(t *testing.T) {
+		code, out, errOut := run(t, "--config", cfgPath, "check")
+		require.NotEqual(t, cli.ExitOK, code)
+		assert.Contains(t, out, "prod-pg-main", "the table has to be printed, not swallowed")
+		assert.Contains(t, out, "FAIL")
+		assert.Contains(t, errOut, "checks failed")
+	})
+
+	t.Run("json", func(t *testing.T) {
+		code, out, _ := run(t, "--config", cfgPath, "--output", "json", "check")
+		require.NotEqual(t, cli.ExitOK, code)
+
+		var got struct {
+			OK     bool `json:"ok"`
+			Result struct {
+				Checks []struct {
+					What    string `json:"what"`
+					Target  string `json:"target"`
+					OK      bool   `json:"ok"`
+					Problem string `json:"problem"`
+				} `json:"checks"`
+				Failed int `json:"failed"`
+			} `json:"result"`
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &got), "output was not JSON: %s", out)
+		assert.False(t, got.OK)
+		assert.Positive(t, got.Result.Failed)
+		require.NotEmpty(t, got.Result.Checks, "a script needs to know which check failed, not just that one did")
+
+		var named bool
+		for _, c := range got.Result.Checks {
+			if !c.OK {
+				named = named || c.Problem != ""
+			}
+		}
+		assert.True(t, named, "a failed check has to say why")
+	})
+}

@@ -110,11 +110,17 @@ func extraTablespaces(ctx context.Context, conn *pgx.Conn) (int, error) {
 // So the question is asked before pg_dump starts, and an answer of "no" refuses
 // the source rather than producing a partial dump.
 func checkPrivileges(ctx context.Context, conn *pgx.Conn, user string) error {
+	// Sequences are in this list, and they were not until a role built exactly
+	// as the documentation described walked straight past this check and failed
+	// halfway through pg_dump with "permission denied for sequence". pg_dump
+	// reads last_value from every sequence, and GRANT SELECT ON ALL TABLES does
+	// not cover them -- so the check said yes and produced the partial dump
+	// EF-019 exists to prevent.
 	const q = `
-		SELECT n.nspname, c.relname, c.relrowsecurity
+		SELECT n.nspname, c.relname, c.relrowsecurity, c.relkind = 'S' AS is_sequence
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE c.relkind IN ('r', 'p', 'm', 'f')
+		WHERE c.relkind IN ('r', 'p', 'm', 'f', 'S')
 		  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 		  AND n.nspname NOT LIKE 'pg\_toast%'
 		  AND n.nspname NOT LIKE 'pg\_temp%'
@@ -136,17 +142,23 @@ func checkPrivileges(ctx context.Context, conn *pgx.Conn, user string) error {
 	}
 	defer rows.Close()
 
-	var unreadable, rlsBlocked []string
+	var unreadable, unreadableSeq, rlsBlocked []string
 	for rows.Next() {
 		var schema, name string
-		var rls bool
-		if err := rows.Scan(&schema, &name, &rls); err != nil {
+		var rls, isSequence bool
+		if err := rows.Scan(&schema, &name, &rls, &isSequence); err != nil {
 			return fmt.Errorf("postgres: check read privileges: %w", err)
 		}
 		qualified := schema + "." + name
-		if rls {
+		switch {
+		case rls:
 			rlsBlocked = append(rlsBlocked, qualified)
-		} else {
+		case isSequence:
+			// Separate from tables because the grant that fixes it is a
+			// different one, and a message naming the wrong GRANT is a message
+			// that sends someone round the houses.
+			unreadableSeq = append(unreadableSeq, qualified)
+		default:
 			unreadable = append(unreadable, qualified)
 		}
 	}
@@ -157,7 +169,12 @@ func checkPrivileges(ctx context.Context, conn *pgx.Conn, user string) error {
 	var problems []string
 	if len(unreadable) > 0 {
 		problems = append(problems, fmt.Sprintf(
-			"cannot read %s", summarise(unreadable)))
+			"cannot read %s; grant SELECT ON ALL TABLES IN SCHEMA", summarise(unreadable)))
+	}
+	if len(unreadableSeq) > 0 {
+		problems = append(problems, fmt.Sprintf(
+			"cannot read sequence %s, which pg_dump reads the current value of; "+
+				"grant SELECT ON ALL SEQUENCES IN SCHEMA", summarise(unreadableSeq)))
 	}
 	if len(rlsBlocked) > 0 {
 		problems = append(problems, fmt.Sprintf(
@@ -429,6 +446,18 @@ func (s *logicalStream) sidecars() (map[string][]byte, error) {
 		Path: dumpallPath,
 		Args: []string{
 			"--globals-only",
+			// Roles without their password hashes, and that is two decisions
+			// in one flag.
+			//
+			// It is what makes EF-020 true: pg_dumpall reads pg_authid for
+			// passwords, which is superuser-only, so a read-only role produced
+			// a complete dump and a failed sidecar -- the whole backup failing
+			// on a configuration the documentation called correct.
+			//
+			// And a password hash in a backup repository is a liability nobody
+			// asked for. The restored roles need their passwords set again,
+			// which RESTORE.md says.
+			"--no-role-passwords",
 			"--no-password",
 			"--host=" + s.session.Host(),
 			"--port=" + strconv.Itoa(s.session.Port()),

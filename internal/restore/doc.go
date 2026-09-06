@@ -169,6 +169,9 @@ func postgresLogical(objects []objectView) procedure {
 			Body: "Roles live in the cluster, not in a database, so a dump of one database " +
 				"does not carry them. Restoring without this step produces a database whose " +
 				"owners and grants do not exist.\n\n" +
+				"The roles come back without their passwords. Koffr does not read them: doing so " +
+				"needs superuser, and a password hash sitting in a backup repository is a " +
+				"liability nobody asked for. Set them again after restoring.\n\n" +
 				"psql will report an error for every role the cluster already has, including " +
 				"the superuser, and exit non-zero because of it. That is expected and not a " +
 				"failure: the roles that were missing have been created. Read the errors " +
