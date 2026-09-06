@@ -493,3 +493,14 @@ func binlogPosOf(b catalog.Backup) (int64, error) {
 	}
 	return int64(b.BinlogPos), nil
 }
+
+// ForgetBackup removes a backup's row.
+//
+// Idempotent: retention may be re-run after an interrupted pass, and a backup
+// already forgotten is the state that pass was trying to reach.
+func (s *Store) ForgetBackup(ctx context.Context, id catalog.ID) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, string(id)); err != nil {
+		return fmt.Errorf("catalog/sqlite: forget backup %s: %w", id, err)
+	}
+	return nil
+}

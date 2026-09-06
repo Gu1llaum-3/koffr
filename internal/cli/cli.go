@@ -199,6 +199,7 @@ func (a *app) newRoot() *cobra.Command {
 		a.configCmd(),
 		a.catalogCmd(),
 		a.scheduleCmd(),
+		a.pruneCmd(),
 		a.checkCmd(),
 		a.backupCmd(),
 		a.lsCmd(),

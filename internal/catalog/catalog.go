@@ -66,6 +66,15 @@ type MetadataStore interface {
 	// status endpoint (EF-134).
 	Overview(ctx context.Context) (Overview, error)
 
+	// ForgetBackup removes a backup that no longer exists in the repository.
+	//
+	// The only deletion in this interface, and it exists for retention: a
+	// catalog row for objects that are gone would advertise a backup nothing
+	// can restore. Forgetting one that is still in the repository would be the
+	// opposite mistake -- invisible, unlisted, and paid for every month -- so
+	// the caller deletes the objects first.
+	ForgetBackup(ctx context.Context, id ID) error
+
 	// Export returns everything the catalog holds, in a form that can be
 	// written to the repository and read back by a different Koffr.
 	//

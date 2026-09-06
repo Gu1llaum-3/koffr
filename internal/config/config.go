@@ -26,6 +26,7 @@ import (
 
 	"github.com/Gu1llaum-3/koffr/internal/logging"
 	"github.com/Gu1llaum-3/koffr/internal/notify"
+	"github.com/Gu1llaum-3/koffr/internal/retention"
 	"github.com/Gu1llaum-3/koffr/internal/scheduler"
 )
 
@@ -110,6 +111,32 @@ func (s Scheduler) ExecutionWindow() scheduler.Window { return s.window }
 
 // CatchUpEnabled reports whether a missed window should be picked up.
 func (s Scheduler) CatchUpEnabled() bool { return s.CatchUp == nil || *s.CatchUp }
+
+// Retention is EF-060. Rules are a union: a backup any rule wants is kept.
+type Retention struct {
+	// KeepLast keeps this many of the most recent, whatever their age.
+	KeepLast int `yaml:"keep_last,omitempty"`
+
+	// KeepWithin keeps everything taken more recently than this.
+	KeepWithin time.Duration `yaml:"keep_within,omitempty"`
+
+	// Hourly to Yearly keep the newest backup of each of that many periods.
+	// "daily: 7" means seven days, not seven backups.
+	Hourly  int `yaml:"hourly,omitempty"`
+	Daily   int `yaml:"daily,omitempty"`
+	Weekly  int `yaml:"weekly,omitempty"`
+	Monthly int `yaml:"monthly,omitempty"`
+	Yearly  int `yaml:"yearly,omitempty"`
+}
+
+// Policy is the retention policy this source declares.
+func (r Retention) Policy() retention.Policy {
+	return retention.Policy{
+		KeepLast: r.KeepLast, KeepWithin: r.KeepWithin,
+		Hourly: r.Hourly, Daily: r.Daily, Weekly: r.Weekly,
+		Monthly: r.Monthly, Yearly: r.Yearly,
+	}
+}
 
 // Log is EF-136.
 //
@@ -243,6 +270,11 @@ type Source struct {
 	SSLMode     string `yaml:"sslmode,omitempty"`
 	SSLRootCert string `yaml:"sslrootcert,omitempty"`
 	BinDir      string `yaml:"bin_dir,omitempty"`
+
+	// Retention is what may be deleted. Absent means nothing is: a source with
+	// no policy keeps every backup for ever, which is the only safe default
+	// for a setting whose mistakes are unrecoverable (EF-105).
+	Retention Retention `yaml:"retention,omitempty"`
 
 	Destinations []string `yaml:"destinations"`
 	SSH          *SSH     `yaml:"ssh,omitempty"`
@@ -492,6 +524,12 @@ func (s *Source) validate(v *validator, path string, destinations map[string]Des
 	if s.SSH != nil {
 		s.SSH.validate(v, path+".ssh")
 	}
+	// A policy with a negative count is a typo, and guessing what it meant is
+	// how a purge does something nobody asked for.
+	if err := s.Retention.Policy().Validate(); err != nil {
+		v.add(path+".retention", err.Error(), "counts are whole numbers, and none of them negative")
+	}
+
 	// A schedule that does not parse is a source that silently never runs.
 	// Finding out at load time is the whole of PD-006 (EF-090).
 	if s.Schedule != "" {

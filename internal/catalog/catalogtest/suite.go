@@ -52,6 +52,7 @@ func Suite(t *testing.T, h Harness) {
 	t.Run("CloseIsIdempotent", func(t *testing.T) { testCloseIdempotent(t, h) })
 	t.Run("Persistence", func(t *testing.T) { testPersistence(t, h) })
 	t.Run("TimestampsSurviveARoundTrip", func(t *testing.T) { testTimestamps(t, h) })
+	t.Run("ForgetBackup", func(t *testing.T) { testForgetBackup(t, h) })
 	t.Run("ExportImportRoundTrip", func(t *testing.T) { testExportImport(t, h) })
 	t.Run("ImportIsIdempotent", func(t *testing.T) { testImportIdempotent(t, h) })
 	t.Run("ImportIsAdditive", func(t *testing.T) { testImportAdditive(t, h) })
@@ -594,4 +595,26 @@ func sampleJob() catalog.Job {
 		Trigger: catalog.TriggerManual, Status: catalog.StatusCompleted,
 		StartedAt: at, FinishedAt: at.Add(time.Minute),
 	}
+}
+
+// testForgetBackup is retention's only deletion, and the contract every backend
+// has to honour identically: the row goes, nothing else moves.
+func testForgetBackup(t *testing.T, h Harness) {
+	s := h.New(t)
+	keep, drop := sampleBackup(), sampleBackup()
+	drop.ID = "01FORGET000000000000000000"
+
+	require.NoError(t, s.RecordBackup(t.Context(), keep))
+	require.NoError(t, s.RecordBackup(t.Context(), drop))
+	require.NoError(t, s.ForgetBackup(t.Context(), drop.ID))
+
+	got, err := s.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, keep.ID, got[0].ID)
+
+	// Idempotent: a retention pass may be re-run after an interruption, and a
+	// backup already forgotten is the state it was trying to reach.
+	require.NoError(t, s.ForgetBackup(t.Context(), drop.ID))
+	require.NoError(t, s.ForgetBackup(t.Context(), "01NEVEREXISTED000000000000"))
 }

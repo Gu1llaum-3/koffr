@@ -228,6 +228,7 @@ func TestNoSecretInAnyCommandOutput(t *testing.T) {
 		"koffr config show":     {},
 		"koffr catalog sync":    {},
 		"koffr schedule":        {"--dry-run"},
+		"koffr prune":           {},
 		"koffr check":           {},
 		"koffr ls":              {},
 		"koffr show":            {"01JQ0000000000000000000000"},
@@ -915,4 +916,124 @@ func TestCheck_ReportsItsFindingsWhenItFails(t *testing.T) {
 		}
 		assert.True(t, named, "a failed check has to say why")
 	})
+}
+
+// EF-064 and EF-105: nothing is deleted without --confirm, and the run without
+// it is the supported way to use this command. An operator approving a deletion
+// has to be able to read one first.
+func TestPrune_DryRunByDefault(t *testing.T) {
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_last: 1")
+
+	for i, id := range []string{"01AAA00000000000000000000A", "01BBB00000000000000000000B"} {
+		putBackup(t, cfgPath, id)
+		recordBackup(t, cfgPath, id, time.Now().Add(-time.Duration(i)*24*time.Hour))
+	}
+
+	code, out, _ := run(t, "--config", cfgPath, "prune")
+	require.Equal(t, cli.ExitOK, code)
+	assert.Contains(t, out, "Nothing was")
+	assert.Contains(t, out, "delete")
+	assert.Contains(t, out, "among the last 1", "the reason is what makes a dry run readable")
+
+	// And nothing moved.
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
+	entries, err := os.ReadDir(prefix)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2, "a dry run that deleted something would be the worst bug in the program")
+}
+
+func TestPrune_ConfirmDeletes(t *testing.T) {
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_last: 1")
+
+	for i, id := range []string{"01AAA00000000000000000000A", "01BBB00000000000000000000B"} {
+		putBackup(t, cfgPath, id)
+		recordBackup(t, cfgPath, id, time.Now().Add(-time.Duration(i)*24*time.Hour))
+	}
+
+	code, out, errOut := run(t, "--config", cfgPath, "prune", "--confirm")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, "deleted 1")
+
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
+	entries, err := os.ReadDir(prefix)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "01AAA00000000000000000000A", entries[0].Name(), "the newest survives")
+
+	// The catalog agrees, which is the half that stops `koffr ls` advertising
+	// a backup nothing can restore.
+	code, out, _ = run(t, "--config", cfgPath, "ls")
+	require.Equal(t, cli.ExitOK, code)
+	assert.NotContains(t, out, "01BBB00000000000000000000B")
+}
+
+// A source with no policy keeps everything, and says so rather than staying
+// quiet: an operator who expected a purge should learn here why there was none.
+func TestPrune_NoPolicyKeepsEverything(t *testing.T) {
+	cfgPath := configFile(t)
+	putBackup(t, cfgPath, "01AAA00000000000000000000A")
+	recordBackup(t, cfgPath, "01AAA00000000000000000000A", time.Now())
+
+	code, _, errOut := run(t, "--config", cfgPath, "prune", "--confirm")
+	require.Equal(t, cli.ExitOK, code)
+	assert.Contains(t, errOut, "no retention policy")
+
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
+	entries, err := os.ReadDir(prefix)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1)
+}
+
+// The guard that makes this safe to ship before M2. A physical backup can have
+// incrementals depending on it and WAL whose replay starts from it, and this
+// version cannot reason about either -- so it stops the whole pass rather than
+// deleting the part it thinks it understands.
+func TestPrune_RefusesAKindItCannotReasonAbout(t *testing.T) {
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_last: 1")
+
+	putBackup(t, cfgPath, "01AAA00000000000000000000A")
+	recordBackup(t, cfgPath, "01AAA00000000000000000000A", time.Now())
+	recordBackupOfKind(t, cfgPath, "01PHYS0000000000000000000P", time.Now().Add(-48*time.Hour), "physical")
+
+	code, _, errOut := run(t, "--config", cfgPath, "prune", "--confirm")
+	assert.Equal(t, cli.ExitConfig, code)
+	assert.Contains(t, errOut, "physical")
+	assert.Contains(t, errOut, "Nothing was deleted")
+
+	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
+	entries, err := os.ReadDir(prefix)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "a partial purge is worse than none, because it looks like it worked")
+}
+
+func withRetention(t *testing.T, cfgPath, rule string) {
+	t.Helper()
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath, []byte(strings.Replace(string(body),
+		"    destinations: [main]",
+		"    retention:"+"\n"+rule+"\n"+"    destinations: [main]", 1)), 0o600))
+}
+
+func recordBackup(t *testing.T, cfgPath, id string, at time.Time) {
+	t.Helper()
+	recordBackupOfKind(t, cfgPath, id, at, "logical")
+}
+
+func recordBackupOfKind(t *testing.T, cfgPath, id string, at time.Time, kind string) {
+	t.Helper()
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	cat, err := sqlite.Open(t.Context(), cfg.Catalog.Path)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, cat.Close()) }()
+
+	require.NoError(t, cat.RecordBackup(t.Context(), catalog.Backup{
+		ID: catalog.ID(id), SourceID: "prod-pg-main", Kind: kind,
+		Destination: "main", Status: catalog.StatusCompleted,
+		StartedAt: at, FinishedAt: at.Add(time.Minute), SizeBytes: 10,
+	}))
 }

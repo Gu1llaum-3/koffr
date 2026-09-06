@@ -308,7 +308,27 @@ func (s *Storage) Delete(ctx context.Context, key string) error {
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete %q: %w", key, err)
 	}
+	s.pruneEmptyDirs(filepath.Dir(p))
 	return nil
+}
+
+// pruneEmptyDirs removes directories a deletion left behind, up to the root.
+//
+// S3 has no directories, so nothing there needs this and the Storage contract
+// does not mention it. A filesystem does, and an operator asking "did the purge
+// work" answers it with ls rather than with an API -- a repository full of
+// empty directories says no even when it worked.
+//
+// Errors are ignored on purpose. os.Remove refuses a directory that is not
+// empty, which is exactly the stop condition, and a concurrent writer that has
+// just created one wins the race harmlessly.
+func (s *Storage) pruneEmptyDirs(dir string) {
+	for dir != s.root && strings.HasPrefix(dir, s.root) {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 // Capabilities reports what a filesystem can honestly do.
