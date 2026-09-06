@@ -1037,3 +1037,49 @@ func recordBackupOfKind(t *testing.T, cfgPath, id string, at time.Time, kind str
 		StartedAt: at, FinishedAt: at.Add(time.Minute), SizeBytes: 10,
 	}))
 }
+
+// The catalog copy in the repository still lists what a prune just deleted, and
+// `catalog sync` merges rather than replaces. Without refreshing it, a rebuild
+// resurrects every pruned backup as a row nothing can restore -- which a real
+// run found: two on disk, four in the catalog.
+func TestPrune_RefreshesTheCatalogCopyInTheRepository(t *testing.T) {
+	cfgPath := configFile(t)
+	withRetention(t, cfgPath, "      keep_last: 1")
+
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	repoDir := filepath.Join(filepath.Dir(cfgPath), "repo")
+	st, err := fs.New(repoDir)
+	require.NoError(t, err)
+	sealer, err := crypto.NewSealer(cfg.Crypto.Recipients)
+	require.NoError(t, err)
+
+	ids := []string{"01AAA00000000000000000000A", "01BBB00000000000000000000B"}
+	for i, id := range ids {
+		putBackup(t, cfgPath, id)
+		recordBackup(t, cfgPath, id, time.Now().Add(-time.Duration(i)*24*time.Hour))
+	}
+
+	// The replica as it stands before the prune: both backups.
+	cat, err := sqlite.Open(t.Context(), cfg.Catalog.Path)
+	require.NoError(t, err)
+	snap, err := cat.Export(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, cat.Close())
+	require.NoError(t, replica.Write(t.Context(), st, sealer, snap))
+
+	code, _, errOut := run(t, "--config", cfgPath, "prune", "--confirm")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+
+	// Lose the catalog entirely, the way a dead machine does, and rebuild.
+	require.NoError(t, os.Remove(cfg.Catalog.Path))
+	code, _, errOut = run(t, "--config", cfgPath, "catalog", "sync")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+
+	code, out, _ := run(t, "--config", cfgPath, "ls")
+	require.Equal(t, cli.ExitOK, code)
+	assert.Contains(t, out, ids[0])
+	assert.NotContains(t, out, ids[1],
+		"a rebuild must not resurrect a backup the purge deleted; "+
+			"the row would advertise something nothing can restore")
+}

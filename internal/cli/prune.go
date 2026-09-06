@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Gu1llaum-3/koffr/internal/catalog"
+	"github.com/Gu1llaum-3/koffr/internal/catalog/replica"
 	"github.com/Gu1llaum-3/koffr/internal/config"
 	"github.com/Gu1llaum-3/koffr/internal/retention"
 )
@@ -115,6 +116,16 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm bool) error
 		freed += applied.FreedBytes
 	}
 
+	// The replica in the repository still lists what was just deleted, and
+	// `catalog sync` merges rather than replaces -- so without this, a rebuild
+	// resurrects every pruned backup as a row nothing can restore. Refreshing
+	// it is what makes the two agree again.
+	if len(deleted) > 0 {
+		if warn := a.refreshReplica(ctx, cfg, cat); warn != "" {
+			a.warnf("koffr: %s", warn)
+		}
+	}
+
 	out := struct {
 		DryRun  bool        `json:"dry_run"`
 		Backups []pruneLine `json:"backups"`
@@ -183,4 +194,32 @@ func (a *app) applyFor(
 		return applied, fmt.Errorf("prune: %w", err)
 	}
 	return applied, nil
+}
+
+// refreshReplica rewrites the catalog copy in every destination a pruned source
+// writes to.
+//
+// A warning rather than an error: the deletions already happened and are
+// correct. A stale replica is a rebuild that resurrects rows, which is
+// annoying and visible, not a backup that is gone.
+func (a *app) refreshReplica(ctx context.Context, cfg config.Config, cat catalog.MetadataStore) string {
+	snap, err := cat.Export(ctx)
+	if err != nil {
+		return "the catalog copy in the repository was not refreshed: " + err.Error()
+	}
+	sealer, err := sealerFor(cfg)
+	if err != nil {
+		return "the catalog copy in the repository was not refreshed: " + err.Error()
+	}
+
+	for _, name := range sortedKeys(cfg.Destinations) {
+		st, err := openStorage(ctx, cfg.Destinations[name])
+		if err != nil {
+			return fmt.Sprintf("the catalog copy in %s was not refreshed: %v", name, err)
+		}
+		if err := replica.Write(ctx, st, sealer, snap); err != nil {
+			return fmt.Sprintf("the catalog copy in %s was not refreshed: %v", name, err)
+		}
+	}
+	return ""
 }
