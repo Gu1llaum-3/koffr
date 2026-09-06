@@ -64,21 +64,29 @@ func TestMain(m *testing.M) {
 // the same as knowing which criterion did.
 
 type report struct {
-	rows []reportRow
+	expected []string
+	rows     map[string]reportRow
 }
 
 type reportRow struct {
-	name, value, why string
-	ok               bool
+	value, why string
+	ok         bool
 }
 
-func newReport(t *testing.T) *report {
+// newReport declares every criterion up front.
+//
+// Declaring them matters more than filling them in. The first run of this gate
+// lost a whole leg to a subtest that aborted, and the summary said "6 of 6" --
+// the criteria it never reached simply were not there to be missed. A line that
+// was expected and never measured is now a failure, which is the only reading
+// that means anything.
+func newReport(t *testing.T, expected ...string) *report {
 	t.Helper()
-	return &report{}
+	return &report{expected: expected, rows: map[string]reportRow{}}
 }
 
 func (r *report) add(name, value string, ok bool, why string) {
-	r.rows = append(r.rows, reportRow{name: name, value: value, why: why, ok: ok})
+	r.rows[name] = reportRow{value: value, why: why, ok: ok}
 }
 
 func (r *report) print(t *testing.T) {
@@ -86,14 +94,20 @@ func (r *report) print(t *testing.T) {
 	var failed int
 	var b strings.Builder
 	b.WriteString("\n=== M1 exit criteria ===\n")
-	for _, row := range r.rows {
-		mark := "PASS"
-		if !row.ok {
-			mark, failed = "FAIL", failed+1
+	for _, name := range r.expected {
+		row, measured := r.rows[name]
+		switch {
+		case !measured:
+			failed++
+			fmt.Fprintf(&b, "  %-12s %-34s %s\n", "NOT MEASURED", name, "the run did not get this far")
+		case !row.ok:
+			failed++
+			fmt.Fprintf(&b, "  %-12s %-34s %-18s %s\n", "FAIL", name, row.value, row.why)
+		default:
+			fmt.Fprintf(&b, "  %-12s %-34s %-18s %s\n", "PASS", name, row.value, row.why)
 		}
-		fmt.Fprintf(&b, "  %-4s %-34s %-18s %s\n", mark, row.name, row.value, row.why)
 	}
-	fmt.Fprintf(&b, "  %d of %d\n", len(r.rows)-failed, len(r.rows))
+	fmt.Fprintf(&b, "  %d of %d\n", len(r.expected)-failed, len(r.expected))
 	t.Log(b.String())
 
 	if failed > 0 {
@@ -453,4 +467,10 @@ func latestBackup(t *testing.T, configPath string) string {
 	require.NoError(t, json.Unmarshal([]byte(out), &listed))
 	require.NotEmpty(t, listed.Result.Backups)
 	return listed.Result.Backups[0].ID
+}
+
+// dropDatabase reclaims the space a verified restore is holding.
+func dropDatabase(t *testing.T, ctx context.Context, c *tcpostgres.PostgresContainer, name string) {
+	t.Helper()
+	psql(t, ctx, c, "postgres", "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
 }

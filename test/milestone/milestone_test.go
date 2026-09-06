@@ -49,7 +49,10 @@ func targetSizeGB(t *testing.T) int {
 // whole target out of reach of anyone's afternoon.
 func TestM1ExitCriteria(t *testing.T) {
 	sizeGB := targetSizeGB(t)
-	report := newReport(t)
+	report := newReport(t,
+		"fs: peak heap", "fs: rows restored", "fs: checksum",
+		"s3: peak heap", "s3: rows restored", "s3: checksum",
+		"temporary files", "database size")
 
 	ctx := context.Background()
 
@@ -79,6 +82,9 @@ func TestM1ExitCriteria(t *testing.T) {
 
 	for _, dest := range []destination{fsDestination(t, dataRoot), s3Destination(t, ctx, dataRoot)} {
 		t.Run(dest.name, func(t *testing.T) {
+			// Not t.Fatal on the way out: a leg that fails must still let the
+			// other one run, or one broken backend hides whatever the other
+			// would have said.
 			// Criterion 3 is measured around the backup only. A restore is
 			// pg_restore's memory, not ours, and folding it in would report a
 			// number that says nothing about ENF-001.
@@ -94,6 +100,12 @@ func TestM1ExitCriteria(t *testing.T) {
 				"--into", restored, "--create", "--with-globals", "--yes")
 
 			got := fingerprint(t, ctx, pg, restored)
+
+			// Dropped as soon as it has been read. Ten gibibytes restored twice
+			// alongside the source is thirty, and the first run of this gate
+			// died on "No space left on device" with nothing wrong with Koffr.
+			dropDatabase(t, ctx, pg, restored)
+
 			report.add(dest.name+": rows restored", strconv.Itoa(got.rows),
 				got.rows == source.rows, fmt.Sprintf("criterion 1: %d expected", source.rows))
 			report.add(dest.name+": checksum", got.checksum,
