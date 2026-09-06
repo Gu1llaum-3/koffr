@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -24,7 +26,9 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/executor"
 	"github.com/Gu1llaum-3/koffr/internal/executor/local"
 	"github.com/Gu1llaum-3/koffr/internal/manifest"
+	"github.com/Gu1llaum-3/koffr/internal/pipeline"
 	"github.com/Gu1llaum-3/koffr/internal/restore"
+	"github.com/Gu1llaum-3/koffr/internal/scheduler"
 	"github.com/Gu1llaum-3/koffr/internal/source"
 	"github.com/Gu1llaum-3/koffr/internal/source/postgres"
 	"github.com/Gu1llaum-3/koffr/internal/storage"
@@ -359,18 +363,25 @@ type backupOptions struct {
 	request     source.Request
 }
 
-func (a *app) runBackup(ctx context.Context, sourceID string, opt backupOptions) error {
+// backupOnce runs one backup and returns its result, classified.
+//
+// Separate from runBackup because the scheduler needs the work without the
+// reporting: a command's rendered answer belongs to the command, and a
+// scheduler that inherited one would report the last backup as its own.
+func (a *app) backupOnce(
+	ctx context.Context, sourceID string, opt backupOptions,
+) (backup.Result, error) {
 	cfg, err := a.loadConfig()
 	if err != nil {
-		return err
+		return backup.Result{}, err
 	}
 	src, err := a.source(cfg, sourceID)
 	if err != nil {
-		return err
+		return backup.Result{}, err
 	}
 	destName, dest, err := a.destinationFor(cfg, src, opt.destination)
 	if err != nil {
-		return err
+		return backup.Result{}, err
 	}
 
 	// Everything from here on is the attempt itself, so every failure is a
@@ -379,9 +390,17 @@ func (a *app) runBackup(ctx context.Context, sourceID string, opt backupOptions)
 	if err != nil {
 		var f *Fault
 		if errorsAs(err, &f) {
-			return err
+			return backup.Result{}, err
 		}
-		return &Fault{Code: ExitBackup, Err: err}
+		return backup.Result{}, &Fault{Code: ExitBackup, Err: err}
+	}
+	return res, nil
+}
+
+func (a *app) runBackup(ctx context.Context, sourceID string, opt backupOptions) error {
+	res, err := a.backupOnce(ctx, sourceID, opt)
+	if err != nil {
+		return err
 	}
 
 	out := struct {
@@ -396,7 +415,7 @@ func (a *app) runBackup(ctx context.Context, sourceID string, opt backupOptions)
 		BackupID: string(res.BackupID),
 		Source:   sourceID,
 		Kind:     res.Manifest.Kind,
-		Dest:     destName,
+		Dest:     res.Destination,
 		Prefix:   res.Prefix,
 		Bytes:    totalBytes(res.Manifest),
 		Seconds:  res.Manifest.FinishedAt.Sub(res.Manifest.StartedAt).Seconds(),
@@ -1426,4 +1445,203 @@ func soleObject(m manifest.Manifest, only string) (manifest.Object, error) {
 	}
 	return manifest.Object{}, fault(ExitUsage,
 		"backup %s has no single main artifact; name one with --object", m.BackupID)
+}
+
+// ---------------------------------------------------------------- schedule
+
+func (a *app) scheduleCmd() *cobra.Command {
+	var once bool
+	c := &cobra.Command{
+		Use:   "schedule",
+		Short: "Run the built-in scheduler until stopped",
+		Long: "Run every source that has a schedule, on that schedule, until stopped.\n\n" +
+			"One job at a time per source: a run that overruns its next window is skipped\n" +
+			"and said so, never queued behind itself. Failures are retried by class --\n" +
+			"a storage timeout is worth another go, a configuration mistake is not, and\n" +
+			"retrying one every minute is how alerts become noise.\n\n" +
+			"SIGHUP rereads the configuration without disturbing a running backup.\n" +
+			"SIGINT and SIGTERM stop scheduling and cancel what is running, which is what\n" +
+			"kills pg_dump rather than leaving it holding a connection.\n\n" +
+			"Delegating to cron or systemd instead is a supported choice: every job here\n" +
+			"is `koffr backup <source>` (EF-091).",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := a.begin(cmd); err != nil {
+				return err
+			}
+			return a.runSchedule(cmd.Context(), once)
+		},
+	}
+	c.Flags().BoolVar(&once, "dry-run", false,
+		"print the timetable and the next run of each job, then exit")
+	return c
+}
+
+func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
+	cfg, err := a.loadConfig()
+	if err != nil {
+		return err
+	}
+	jobs, err := scheduledJobs(cfg)
+	if err != nil {
+		return err
+	}
+	if len(jobs) == 0 {
+		return fault(ExitConfig,
+			"no source in %s has a schedule; add `schedule: \"@daily\"` to one, "+
+				"or drive `koffr backup` from cron instead", cfg.Path())
+	}
+
+	sched := &scheduler.Scheduler{
+		Location:      cfg.Scheduler.Location(),
+		MaxConcurrent: cfg.Scheduler.MaxConcurrent,
+		// Without this the class never reaches the policy and a configuration
+		// mistake is retried every minute until someone mutes the alerts.
+		Classify: pipeline.ClassOf,
+		Retry: scheduler.RetryPolicy{
+			Attempts:     cfg.Scheduler.Retry.Attempts,
+			InitialDelay: cfg.Scheduler.Retry.InitialDelay,
+			MaxDelay:     cfg.Scheduler.Retry.MaxDelay,
+		},
+		// backupOnce rather than runBackup: the latter records a result for
+		// the command to render, and `koffr schedule` would then report the
+		// last backup as its own answer -- in JSON, a backup envelope labelled
+		// "schedule".
+		Execute: func(ctx context.Context, job scheduler.Job) error {
+			res, err := a.backupOnce(ctx, job.SourceID, backupOptions{
+				destination: job.Destination,
+				request:     source.Request{Kind: job.Kind},
+			})
+			if err == nil {
+				a.printf("%s: %s in %s to %s", job.SourceID, res.BackupID,
+					humanBytes(totalBytes(res.Manifest)), job.Destination)
+			}
+			return err
+		},
+		// Both hooks report rather than decide. A skipped window and a failed
+		// attempt are exactly what an operator needs told, and in M4 they are
+		// what the notifier will listen to.
+		OnSkip: func(job scheduler.Job, why string) {
+			a.printf("skipped %s: %s", job.SourceID, why)
+		},
+		OnResult: func(job scheduler.Job, attempt int, err error) {
+			if err != nil {
+				a.warnf("koffr: %s attempt %d failed (%s): %v",
+					job.SourceID, attempt, pipeline.ClassOf(err), err)
+			}
+		},
+	}
+	if err := sched.SetJobs(jobs); err != nil {
+		return &Fault{Code: ExitConfig, Err: err}
+	}
+
+	if dryRun {
+		return a.printTimetable(cfg, jobs)
+	}
+
+	a.printf("scheduling %d source(s) in %s; SIGHUP rereads %s",
+		len(jobs), cfg.Scheduler.Location(), cfg.Path())
+
+	// EF-104. A reload replaces the timetable and says nothing about what is
+	// running: a backup halfway through is work already paid for.
+	hangup := make(chan os.Signal, 1)
+	signal.Notify(hangup, syscall.SIGHUP)
+	defer signal.Stop(hangup)
+
+	done := make(chan error, 1)
+	go func() { done <- sched.Run(ctx) }()
+
+	for {
+		select {
+		case err := <-done:
+			if errors.Is(err, context.Canceled) {
+				a.printf("stopped")
+				return nil
+			}
+			return err
+		case <-hangup:
+			a.reload(sched)
+		}
+	}
+}
+
+// reload rereads the configuration on SIGHUP.
+//
+// A configuration that no longer loads leaves the old timetable in place and
+// says so. Stopping would turn a typo into a night with no backups, which is a
+// worse outcome than running yesterday's schedule.
+func (a *app) reload(sched *scheduler.Scheduler) {
+	cfg, err := a.loadConfig()
+	if err != nil {
+		a.warnf("koffr: SIGHUP: the configuration did not load, keeping the previous schedule: %v", err)
+		return
+	}
+	jobs, err := scheduledJobs(cfg)
+	if err != nil {
+		a.warnf("koffr: SIGHUP: %v; keeping the previous schedule", err)
+		return
+	}
+	if err := sched.SetJobs(jobs); err != nil {
+		a.warnf("koffr: SIGHUP: %v; keeping the previous schedule", err)
+		return
+	}
+	a.printf("reloaded %s: %d scheduled source(s)", cfg.Path(), len(jobs))
+}
+
+// scheduledJobs turns the configuration into a timetable.
+func scheduledJobs(cfg config.Config) ([]scheduler.Job, error) {
+	var jobs []scheduler.Job
+	for _, id := range cfg.SourceIDs() {
+		src, _ := cfg.Source(id)
+		if src.Schedule == "" {
+			continue
+		}
+		if len(src.Destinations) != 1 {
+			return nil, fmt.Errorf(
+				"source %s is scheduled but writes to %d destinations; a scheduled job needs one",
+				id, len(src.Destinations))
+		}
+		jobs = append(jobs, scheduler.Job{
+			SourceID:    id,
+			Destination: src.Destinations[0],
+			Kind:        source.KindLogical,
+			Spec:        src.Schedule,
+		})
+	}
+	return jobs, nil
+}
+
+func (a *app) printTimetable(cfg config.Config, jobs []scheduler.Job) error {
+	type line struct {
+		Source      string `json:"source"`
+		Schedule    string `json:"schedule"`
+		Destination string `json:"destination"`
+		Next        string `json:"next_run"`
+	}
+	now := time.Now().In(cfg.Scheduler.Location())
+
+	out := make([]line, 0, len(jobs))
+	for _, j := range jobs {
+		next, err := scheduler.NextRun(j.Spec, now)
+		if err != nil {
+			return &Fault{Code: ExitConfig, Err: err}
+		}
+		out = append(out, line{
+			Source: j.SourceID, Schedule: j.Spec, Destination: j.Destination,
+			Next: next.Format(time.RFC3339),
+		})
+	}
+
+	a.emit(struct {
+		Timezone string `json:"timezone"`
+		Jobs     []line `json:"jobs"`
+	}{cfg.Scheduler.Location().String(), out}, func(p *printer) {
+		p.table(func(p *printer) {
+			p.printf("SOURCE\tSCHEDULE\tDESTINATION\tNEXT RUN\n")
+			for _, l := range out {
+				p.printf("%s\t%s\t%s\t%s\n", l.Source, l.Schedule, l.Destination, l.Next)
+			}
+		})
+	})
+	return nil
 }

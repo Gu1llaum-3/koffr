@@ -81,6 +81,11 @@ type Result struct {
 	Prefix   string
 	Manifest manifest.Manifest
 
+	// Destination is the name the configuration gives the repository. The
+	// manifest does not carry it: the same bucket is "main" in one file and
+	// "offsite" in another, so it belongs to the run rather than to the backup.
+	Destination string
+
 	// Warnings are things that went wrong after the point of no return, which
 	// by definition cannot fail the job: the backup is already written and
 	// restorable.
@@ -177,7 +182,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (res Result, err error) {
 				"run `koffr catalog sync` to pick it up", backupID, b.Prefix(), err)
 	}
 
-	return Result{BackupID: backupID, Prefix: b.Prefix(), Manifest: result}, nil
+	return Result{
+		BackupID: backupID, Prefix: b.Prefix(), Manifest: result,
+		Destination: req.Destination,
+	}, nil
 }
 
 // openJob records the attempt as it starts.

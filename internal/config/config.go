@@ -19,8 +19,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/Gu1llaum-3/koffr/internal/scheduler"
 )
 
 // Version is the configuration layout this build understands.
@@ -31,6 +34,7 @@ type Config struct {
 	Version      int                    `yaml:"version"`
 	Crypto       Crypto                 `yaml:"crypto"`
 	Catalog      Catalog                `yaml:"catalog"`
+	Scheduler    Scheduler              `yaml:"scheduler,omitempty"`
 	Destinations map[string]Destination `yaml:"destinations"`
 	Sources      map[string]Source      `yaml:"sources"`
 
@@ -48,6 +52,42 @@ type Crypto struct {
 // Catalog is the local cache of the repository (DEC-004).
 type Catalog struct {
 	Path string `yaml:"path"`
+}
+
+// Scheduler is how the built-in timetable behaves (EF-090, EF-093, EF-094).
+//
+// Every field has a working default. A source with a schedule and nothing else
+// configured runs nightly with sane retries, because the common case should not
+// require reading this section.
+type Scheduler struct {
+	// Timezone the schedules are read in. Empty means UTC, which is the only
+	// choice that does not move twice a year -- a 02:00 job in a DST zone runs
+	// twice on one night and not at all on another.
+	Timezone string `yaml:"timezone,omitempty"`
+
+	// MaxConcurrent caps jobs running at once, so a nightly window does not
+	// saturate the link or the destination (EF-093). Zero means one.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
+
+	Retry Retry `yaml:"retry,omitempty"`
+
+	location *time.Location
+}
+
+// Retry is EF-094.
+type Retry struct {
+	// Attempts counts the first try, so 1 means no retry. Zero means 3.
+	Attempts     int           `yaml:"attempts,omitempty"`
+	InitialDelay time.Duration `yaml:"initial_delay,omitempty"`
+	MaxDelay     time.Duration `yaml:"max_delay,omitempty"`
+}
+
+// Location is the timezone schedules are read in.
+func (s Scheduler) Location() *time.Location {
+	if s.location == nil {
+		return time.UTC
+	}
+	return s.location
 }
 
 // Destination is one place backups are written.
@@ -74,6 +114,10 @@ type Source struct {
 	User     string `yaml:"user"`
 	Password Secret `yaml:"password"`
 	Database string `yaml:"database"`
+
+	// Schedule is cron, or a shortcut like @daily. Empty means this source is
+	// only ever backed up by hand or by the operator's own cron (EF-091).
+	Schedule string `yaml:"schedule,omitempty"`
 
 	SSLMode     string `yaml:"sslmode,omitempty"`
 	SSLRootCert string `yaml:"sslrootcert,omitempty"`
@@ -221,6 +265,8 @@ func (c *Config) validate(v *validator) {
 		checkCatalogFilesystem(v, c.Catalog.Path)
 	}
 
+	c.Scheduler.validate(v)
+
 	if len(c.Destinations) == 0 {
 		v.add("destinations", "no destinations", "a backup needs somewhere to go")
 	}
@@ -322,6 +368,14 @@ func (s *Source) validate(v *validator, path string, destinations map[string]Des
 	if s.SSH != nil {
 		s.SSH.validate(v, path+".ssh")
 	}
+	// A schedule that does not parse is a source that silently never runs.
+	// Finding out at load time is the whole of PD-006 (EF-090).
+	if s.Schedule != "" {
+		if err := scheduler.ValidateSpec(s.Schedule); err != nil {
+			v.add(path+".schedule", fmt.Sprintf("%q is not a schedule: %v", s.Schedule, err),
+				"cron, or a shortcut: @hourly, @daily, @weekly, or @every 6h")
+		}
+	}
 }
 
 func (s *SSH) validate(v *validator, path string) {
@@ -401,5 +455,49 @@ func keys[V any](m map[string]V) func(func(string) bool) {
 				return
 			}
 		}
+	}
+}
+
+// validate resolves the timezone and applies the defaults.
+//
+// The timezone is resolved here rather than when the scheduler starts, because
+// a name the machine cannot find is a configuration mistake and PD-006 says
+// those are found at load time -- not at 2 AM, by a job that did not run.
+func (s *Scheduler) validate(v *validator) {
+	if s.Timezone == "" {
+		s.location = time.UTC
+	} else {
+		loc, err := time.LoadLocation(s.Timezone)
+		if err != nil {
+			v.add("scheduler.timezone",
+				fmt.Sprintf("%q is not a timezone this machine knows: %v", s.Timezone, err),
+				"use an IANA name such as Europe/Paris, or leave it out for UTC")
+		} else {
+			s.location = loc
+		}
+	}
+
+	if s.MaxConcurrent < 0 {
+		v.add("scheduler.max_concurrent", "cannot be negative", "leave it out for one at a time")
+	}
+	if s.MaxConcurrent == 0 {
+		s.MaxConcurrent = 1
+	}
+
+	switch {
+	case s.Retry.Attempts < 0:
+		v.add("scheduler.retry.attempts", "cannot be negative", "1 means no retry")
+	case s.Retry.Attempts == 0:
+		s.Retry.Attempts = 3
+	}
+	if s.Retry.InitialDelay == 0 {
+		s.Retry.InitialDelay = time.Minute
+	}
+	if s.Retry.MaxDelay == 0 {
+		s.Retry.MaxDelay = 30 * time.Minute
+	}
+	if s.Retry.MaxDelay < s.Retry.InitialDelay {
+		v.add("scheduler.retry.max_delay", "is shorter than the initial delay",
+			"the delay doubles up to this ceiling, so the ceiling has to be the larger one")
 	}
 }

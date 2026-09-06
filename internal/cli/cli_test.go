@@ -221,6 +221,7 @@ func TestNoSecretInAnyCommandOutput(t *testing.T) {
 		"koffr config validate": {},
 		"koffr config show":     {},
 		"koffr catalog sync":    {},
+		"koffr schedule":        {"--dry-run"},
 		"koffr check":           {},
 		"koffr ls":              {},
 		"koffr show":            {"01JQ0000000000000000000000"},
@@ -525,4 +526,64 @@ func putBackup(t *testing.T, cfgPath, backupID string) {
 		`"tool":{"name":"postgresql","version":"17.0","args_digest":""},"koffr_version":"test"}`
 	require.NoError(t, os.WriteFile(filepath.Join(prefix, "manifest.json"), []byte(m), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(prefix, "dump.pgdump.zst.age"), []byte("not a dump"), 0o600))
+}
+
+// EF-090 and EF-091 in one place: the timetable is readable before it runs, and
+// a source with no schedule is not scheduled -- delegating to cron or systemd
+// stays a supported choice rather than something to work around.
+func TestSchedule_DryRunShowsTheTimetable(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath,
+		[]byte(strings.Replace(string(body), "    database: shop",
+			"    database: shop\n    schedule: \"0 2 * * *\"", 1)), 0o600))
+
+	code, out, errOut := run(t, "--config", cfgPath, "--output", "json", "schedule", "--dry-run")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+
+	var got struct {
+		Result struct {
+			Timezone string `json:"timezone"`
+			Jobs     []struct {
+				Source   string `json:"source"`
+				Schedule string `json:"schedule"`
+				Next     string `json:"next_run"`
+			} `json:"jobs"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &got))
+	assert.Equal(t, "UTC", got.Result.Timezone,
+		"the default has to be the one that does not move twice a year")
+	require.Len(t, got.Result.Jobs, 1)
+	assert.Equal(t, "prod-pg-main", got.Result.Jobs[0].Source)
+
+	next, err := time.Parse(time.RFC3339, got.Result.Jobs[0].Next)
+	require.NoError(t, err)
+	assert.Equal(t, 2, next.Hour(), "0 2 * * * is two in the morning, and an operator has to be able to check that")
+	assert.True(t, next.After(time.Now()), "the next run is in the future")
+}
+
+// A configuration where nothing is scheduled is a mistake worth naming: the
+// operator ran `koffr schedule` expecting something to happen.
+func TestSchedule_NothingScheduled(t *testing.T) {
+	code, _, errOut := run(t, "--config", configFile(t), "schedule", "--dry-run")
+	assert.Equal(t, cli.ExitConfig, code)
+	assert.Contains(t, errOut, "schedule")
+}
+
+// PD-006 again: a schedule that does not parse is a source that silently never
+// runs, so it is refused when the file loads rather than at two in the morning.
+func TestConfig_RefusesABadSchedule(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(cfgPath,
+		[]byte(strings.Replace(string(body), "    database: shop",
+			"    database: shop\n    schedule: \"every night\"", 1)), 0o600))
+
+	code, _, errOut := run(t, "--config", cfgPath, "config", "validate")
+	assert.Equal(t, cli.ExitConfig, code)
+	assert.Contains(t, errOut, "sources.prod-pg-main.schedule")
+	assert.Contains(t, errOut, "@daily", "the message has to say what would have worked")
 }
