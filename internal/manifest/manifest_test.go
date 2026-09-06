@@ -159,7 +159,7 @@ func TestToolFrom_DigestIsStable(t *testing.T) {
 
 // EF-055 splits metadata: manifest.json stays plaintext so a write-only node can
 // list and prune without any key, and anything describing the contents goes into
-// details.json.age.
+// details.json.zst.age.
 //
 // This test fails whenever a field is added to the manifest. That is the
 // intent: adding a plaintext field should be a decision, not an accident.

@@ -54,14 +54,24 @@ age -d -i koffr-identity.txt globals.sql.zst.age > globals.sql.zst
 
 `DBNAME` below is the database to restore *into*, which is your choice and
 not something the backup can name: the source's own database name lives in the
-encrypted `details.json.age`, not in the plaintext manifest.
+encrypted `details.json.zst.age`, not in the plaintext manifest.
 
 ### Recreate the roles and tablespaces
 
 Roles live in the cluster, not in a database, so a dump of one database does not carry them. Restoring without this step produces a database whose owners and grants do not exist.
 
+psql will report an error for every role the cluster already has, including the superuser, and exit non-zero because of it. That is expected and not a failure: the roles that were missing have been created. Read the errors rather than trusting the exit status here.
+
 ```sh
 zstd -d globals.sql.zst --stdout | psql --dbname=postgres
+```
+
+### Create the database to restore into
+
+pg_restore writes into a database that already exists; it does not create one. Restoring into an existing, populated database silently merges two datasets, so this should be a database nothing else is using.
+
+```sh
+createdb DBNAME
 ```
 
 ### Restore the database

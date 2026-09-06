@@ -87,7 +87,7 @@ func (f Fetcher) Details(ctx context.Context, b storage.Backup, m manifest.Manif
 }
 
 // DetailsObject is the sidecar's filename inside a backup.
-const DetailsObject = "details.json.age"
+const DetailsObject = "details.json.zst.age"
 
 // objectNamed finds an object by filename.
 func objectNamed(m manifest.Manifest, name string) (manifest.Object, bool) {

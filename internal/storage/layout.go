@@ -26,13 +26,13 @@ import (
 //	    ├── source.json                     engine, version, non-sensitive settings
 //	    ├── physical/<backup-id>/
 //	    │   ├── manifest.json               PLAINTEXT: structure and digests (EF-055)
-//	    │   ├── details.json.age            ENCRYPTED: database and table names
+//	    │   ├── details.json.zst.age            ENCRYPTED: database and table names
 //	    │   ├── base.tar.zst.age            the stream
 //	    │   ├── backup_manifest.json.age    reconstructed PG manifest (EF-013)
 //	    │   └── RESTORE.md                  exact commands for THIS backup (EF-084)
 //	    ├── logical/<backup-id>/
 //	    │   ├── manifest.json
-//	    │   ├── details.json.age
+//	    │   ├── details.json.zst.age
 //	    │   ├── globals.sql.zst.age         roles and tablespaces (pg_dumpall)
 //	    │   ├── dump.pgdump.zst.age
 //	    │   └── RESTORE.md
@@ -58,8 +58,11 @@ const (
 
 // Per-backup entries.
 const (
-	ManifestFile   = "manifest.json"
-	DetailsFile    = "details.json.age"
+	ManifestFile = "manifest.json"
+	// DetailsFile carries .zst because putSealed compresses it. A name that
+	// did not say so would have RESTORE.md tell a reader to decrypt it into
+	// "details.json" and hand them a file that is not JSON.
+	DetailsFile    = "details.json.zst.age"
 	RestoreDocFile = "RESTORE.md"
 	SourceInfoFile = "source.json"
 )

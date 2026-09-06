@@ -168,10 +168,25 @@ func postgresLogical(objects []objectView) procedure {
 			Title: "Recreate the roles and tablespaces",
 			Body: "Roles live in the cluster, not in a database, so a dump of one database " +
 				"does not carry them. Restoring without this step produces a database whose " +
-				"owners and grants do not exist.",
+				"owners and grants do not exist.\n\n" +
+				"psql will report an error for every role the cluster already has, including " +
+				"the superuser, and exit non-zero because of it. That is expected and not a " +
+				"failure: the roles that were missing have been created. Read the errors " +
+				"rather than trusting the exit status here.",
 			Command: pipeThrough(globals, "psql --dbname=postgres"),
 		})
 	}
+	// Without this step the procedure does not work. pg_restore --dbname does
+	// not create the database, and a reader following the document literally
+	// gets "database DBNAME does not exist" -- which the end-to-end test found
+	// on the first run, having been invisible to every unit test.
+	steps = append(steps, step{
+		Title: "Create the database to restore into",
+		Body: "pg_restore writes into a database that already exists; it does not create " +
+			"one. Restoring into an existing, populated database silently merges two " +
+			"datasets, so this should be a database nothing else is using.",
+		Command: "createdb DBNAME",
+	})
 	dump, ok := find(objects, ".pgdump")
 	if !ok {
 		dump = primary(objects)
@@ -342,7 +357,7 @@ age -d -i koffr-identity.txt {{.Key}} > {{.Unsealed}}
 
 {{if .NamesTargetDB}}` + "`DBNAME`" + ` below is the database to restore *into*, which is your choice and
 not something the backup can name: the source's own database name lives in the
-encrypted ` + "`details.json.age`" + `, not in the plaintext manifest.
+encrypted ` + "`details.json.zst.age`" + `, not in the plaintext manifest.
 {{end}}{{range $i, $s := .Procedure.Steps}}
 ### {{$s.Title}}
 

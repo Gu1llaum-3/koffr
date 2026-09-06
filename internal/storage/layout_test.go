@@ -89,7 +89,7 @@ func TestBackupKeys(t *testing.T) {
 	for _, tc := range []struct{ name, got, want string }{
 		{"prefix", b.Prefix(), dir},
 		{"manifest", b.ManifestKey(), dir + "manifest.json"},
-		{"details", b.DetailsKey(), dir + "details.json.age"},
+		{"details", b.DetailsKey(), dir + "details.json.zst.age"},
 		{"restore doc", b.RestoreDocKey(), dir + "RESTORE.md"},
 		{"object", b.ObjectKey("dump.pgdump.zst.age"), dir + "dump.pgdump.zst.age"},
 	} {
@@ -295,7 +295,7 @@ func TestLayoutMatchesDocumentedTree(t *testing.T) {
 		"RECOVERY.md",
 		"sources/prod-pg-main/binlog/mariadb-bin.000123.zst.age",
 		"sources/prod-pg-main/logical/B1/RESTORE.md",
-		"sources/prod-pg-main/logical/B1/details.json.age",
+		"sources/prod-pg-main/logical/B1/details.json.zst.age",
 		"sources/prod-pg-main/logical/B1/dump.pgdump.zst.age",
 		"sources/prod-pg-main/logical/B1/globals.sql.zst.age",
 		"sources/prod-pg-main/logical/B1/manifest.json",

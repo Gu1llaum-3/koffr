@@ -118,7 +118,7 @@ func TestRun_StoresEverythingABackupNeeds(t *testing.T) {
 
 	assert.Equal(t, []string{
 		prefix + "RESTORE.md",
-		prefix + "details.json.age",
+		prefix + "details.json.zst.age",
 		prefix + "dump.pgdump.zst.age",
 		prefix + "globals.sql.zst.age",
 		prefix + "manifest.json",
@@ -146,7 +146,7 @@ func TestRun_ManifestIsPlaintextAndDetailsAreNot(t *testing.T) {
 	assert.Equal(t, "postgresql", m.Engine)
 	assert.Len(t, m.Objects, 3, "the dump, the globals sidecar and the details")
 
-	sealed := r.read(t, prefix+"details.json.age")
+	sealed := r.read(t, prefix+"details.json.zst.age")
 	assert.NotContains(t, string(sealed), "probe_database",
 		"the details must not be readable without a key")
 	details, err := manifest.DecodeDetails(bytes.NewReader(r.unwrapRaw(t, sealed)))
@@ -226,7 +226,7 @@ func TestRun_ReplicationFailureIsAWarningNotAFailure(t *testing.T) {
 // litter that looks like a backup is worse than none.
 func TestRun_FailureBeforeTheManifestLeavesNothing(t *testing.T) {
 	r := newRig(t)
-	r.runner.Storage = &failingStorage{Storage: r.store, failOn: "details.json.age"}
+	r.runner.Storage = &failingStorage{Storage: r.store, failOn: "details.json.zst.age"}
 
 	_, err := r.runner.Run(t.Context(), r.request(&fakeSource{payload: []byte("body")}))
 	require.Error(t, err)

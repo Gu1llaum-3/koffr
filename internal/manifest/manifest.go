@@ -6,7 +6,7 @@
 //	                   Enough to list, chain and prune without holding any key,
 //	                   which is what lets a write-only node apply retention and
 //	                   what lets a lost catalog be rebuilt (EF-143).
-//	details.json.age   encrypted: database and relation names, i.e. everything
+//	details.json.zst.age   encrypted: database and relation names, i.e. everything
 //	                   that says something about the content.
 package manifest
 

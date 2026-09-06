@@ -63,13 +63,20 @@ func EnsureDockerHost() string {
 // Locally it is a skip: not having Docker running is a normal state for a
 // laptop. Under CI, where RequireDockerEnv is set, it is a failure, because a
 // silently skipped integration suite is indistinguishable from a passing one.
-func SkipOrFailWithoutDocker(reason string) (skip bool, fatal string) {
-	if reason == "" {
+//
+// The argument is what EnsureDockerHost returned: empty when a runtime is
+// there, and otherwise the reason it is not. Passing a description of why the
+// test needs Docker would skip every run, so the call reads:
+//
+//	unavailable := testutil.EnsureDockerHost()
+//	skip, fatal := testutil.SkipOrFailWithoutDocker(unavailable)
+func SkipOrFailWithoutDocker(unavailable string) (skip bool, fatal string) {
+	if unavailable == "" {
 		return false, ""
 	}
 	if os.Getenv(RequireDockerEnv) != "" {
 		return false, fmt.Sprintf(
-			"%s is set, so a container runtime is required: %s", RequireDockerEnv, reason)
+			"%s is set, so a container runtime is required: %s", RequireDockerEnv, unavailable)
 	}
 	return true, ""
 }
