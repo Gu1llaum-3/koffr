@@ -26,6 +26,7 @@ import (
 
 	"github.com/Gu1llaum-3/koffr/internal/logging"
 	"github.com/Gu1llaum-3/koffr/internal/notify"
+	"github.com/Gu1llaum-3/koffr/internal/pipeline"
 	"github.com/Gu1llaum-3/koffr/internal/retention"
 	"github.com/Gu1llaum-3/koffr/internal/scheduler"
 )
@@ -260,7 +261,83 @@ type Destination struct {
 	Endpoint        string `yaml:"endpoint,omitempty"`
 	AccessKeyID     Secret `yaml:"access_key_id,omitempty"`
 	SecretAccessKey Secret `yaml:"secret_access_key,omitempty"`
+
+	// RetryWindow is how long an interruption a transfer rides out.
+	//
+	// It exists because a backup cannot be resumed. The stream comes from
+	// pg_dump, and running pg_dump again produces different bytes, so parts
+	// already uploaded can never be matched to a second attempt: whatever the
+	// transfer does not survive, it restarts from nothing. Measured against the
+	// SDK's own settings, a five-second outage was enough to end a backup.
+	//
+	// Zero means do not retry, which is a legitimate thing to ask for: an
+	// endpoint failing for a reason retrying cannot fix is better failed fast.
+	// A pointer, so that "0" and "not mentioned" stay different things -- a
+	// zero that silently meant two minutes would be a lie in a configuration
+	// file, which is the one place this project treats as the truth (ADR-0005).
+	// Always non-nil once Load has returned.
+	RetryWindow *time.Duration `yaml:"retry_window,omitempty"`
+
+	// PartSizeMiB is the size of each multipart chunk.
+	//
+	// It is a ceiling as much as a tuning knob. S3 allows ten thousand parts,
+	// and the upload manager only picks a part size for itself when it knows
+	// the total length -- which it cannot, reading a pipe. So the part size
+	// fixes the largest object that can ever be written: 16 MiB parts cap an
+	// artifact at 156 GiB, and the failure arrives after hours of uploading.
+	//
+	// Expressed in MiB rather than as a size string because there is exactly
+	// one unit anyone means here, and "16" cannot be read two ways.
+	PartSizeMiB int `yaml:"part_size_mib,omitempty"`
+
+	// MaxParts is how many parts one multipart upload may have.
+	//
+	// The provider decides this and offers no way to ask. AWS allows ten
+	// thousand; Scaleway and several other S3-compatible services allow one
+	// thousand. Together with PartSizeMiB it is the whole of the size ceiling,
+	// so guessing high means failing at the provider's limit with the
+	// provider's own error -- unrecognisable, and at the last part, after
+	// everything before it has been uploaded.
+	//
+	// Left unset it follows the only signal there is: a destination with no
+	// endpoint is AWS, and one with an endpoint is a service whose limit
+	// cannot be known. Raise it when yours allows more.
+	MaxParts int `yaml:"max_parts,omitempty"`
 }
+
+// Transfer defaults, and the reasoning that fixes them.
+//
+// DefaultRetryWindow has to fit inside the pipeline's stall budget twice over.
+// A retry is silence on the storage branch, and silence past that budget is
+// what the stall watcher ends a job for -- so a window too close to it means
+// the watcher kills the transfer the retry was about to rescue, and attributes
+// the failure to the wrong actor while doing it. Twice, because giving up costs
+// the window a second time: the cleanup that abandons the half-finished upload
+// goes through the same retryer, measured at 1m24s for a 30s window. Two
+// minutes is therefore near the top of what the 5m budget allows.
+//
+// MaxPartSizeMiB comes from ENF-001. The upload manager keeps about six parts
+// in memory at once, so part size is a memory setting: measured, 64 MiB parts
+// put the storage layer alone at 452 MiB, which fits inside the 512 MiB the
+// requirement allows only if nothing else in the process needs memory -- and
+// the source, zstd and age all do. 32 MiB leaves the margin that number was
+// missing, and still caps an artifact at 312 GiB.
+const (
+	DefaultRetryWindow = 2 * time.Minute
+	DefaultPartSizeMiB = 16
+	MinPartSizeMiB     = 5 // the S3 minimum for every part but the last
+	MaxPartSizeMiB     = 32
+
+	// DefaultMaxParts is what S3 itself allows, and what a destination with no
+	// endpoint gets. ConservativeMaxParts is what a destination with an
+	// endpoint gets: it is the lowest limit in common use, so a ceiling
+	// computed from it is one the provider will honour rather than one it will
+	// refuse. Being wrong in this direction costs an artificial failure with
+	// an actionable message; being wrong in the other costs a provider error
+	// nobody can act on, hours in.
+	DefaultMaxParts      = 10000
+	ConservativeMaxParts = 1000
+)
 
 // Source is one database to back up.
 type Source struct {
@@ -479,10 +556,26 @@ func (d *Destination) validate(v *validator, path string) {
 		if d.Path == "" {
 			v.add(path+".path", "no path", "a filesystem destination needs a directory")
 		}
+		// Refused rather than ignored. Nothing reads either value for a
+		// directory, and silently accepting them tells an operator their
+		// transfers are tuned when they are not (PD-006).
+		if d.PartSizeMiB != 0 {
+			v.add(path+".part_size_mib", "set on a filesystem destination",
+				"multipart uploads are an object-store idea; remove it")
+		}
+		if d.MaxParts != 0 {
+			v.add(path+".max_parts", "set on a filesystem destination",
+				"multipart uploads are an object-store idea; remove it")
+		}
+		if d.RetryWindow != nil {
+			v.add(path+".retry_window", "set on a filesystem destination",
+				"there is no network to ride out; remove it")
+		}
 	case "s3":
 		if d.Bucket == "" {
 			v.add(path+".bucket", "no bucket", "name the bucket backups go to")
 		}
+		d.validateTransfer(v, path)
 		// Optional, and deliberately so: left unset, the SDK finds instance
 		// credentials, which is what running in EKS or on EC2 wants. Set, they
 		// are secrets like any other and have to be resolved here -- nothing
@@ -500,6 +593,58 @@ func (d *Destination) validate(v *validator, path string) {
 	default:
 		v.add(path+".type", fmt.Sprintf("%q is not a destination type", d.Type),
 			`one of "fs" or "s3"`)
+	}
+}
+
+// validateTransfer checks the two settings that decide what an interruption
+// costs and how large an artifact can be.
+func (d *Destination) validateTransfer(v *validator, path string) {
+	if d.RetryWindow == nil {
+		window := DefaultRetryWindow
+		d.RetryWindow = &window
+	}
+	switch w := *d.RetryWindow; {
+	case w < 0:
+		v.add(path+".retry_window", "negative",
+			"a duration such as 2m, or 0 to fail on the first interruption")
+	case 2*w >= pipeline.DefaultStallTimeout:
+		v.add(path+".retry_window",
+			fmt.Sprintf("%s leaves no room inside the %s stall budget",
+				w, pipeline.DefaultStallTimeout),
+			fmt.Sprintf("at most %s: giving up costs twice the window, because "+
+				"the cleanup that abandons the half-finished upload is retried "+
+				"on the same terms -- measured at 1m24s for a 30s window -- and "+
+				"a retry sends no bytes to storage, which is what the stall "+
+				"watcher ends a job for",
+				(pipeline.DefaultStallTimeout/2-time.Second).Round(time.Second)))
+	}
+
+	switch {
+	case d.MaxParts == 0:
+		d.MaxParts = DefaultMaxParts
+		if d.Endpoint != "" {
+			d.MaxParts = ConservativeMaxParts
+		}
+	case d.MaxParts < 1:
+		v.add(path+".max_parts", fmt.Sprintf("%d is not a number of parts", d.MaxParts),
+			fmt.Sprintf("between 1 and %d", DefaultMaxParts))
+	case d.MaxParts > DefaultMaxParts:
+		v.add(path+".max_parts",
+			fmt.Sprintf("%d is beyond the %d S3 allows", d.MaxParts, DefaultMaxParts),
+			fmt.Sprintf("at most %d", DefaultMaxParts))
+	}
+
+	switch {
+	case d.PartSizeMiB == 0:
+		d.PartSizeMiB = DefaultPartSizeMiB
+	case d.PartSizeMiB < MinPartSizeMiB:
+		v.add(path+".part_size_mib", fmt.Sprintf("%d is below the S3 minimum", d.PartSizeMiB),
+			fmt.Sprintf("at least %d", MinPartSizeMiB))
+	case d.PartSizeMiB > MaxPartSizeMiB:
+		v.add(path+".part_size_mib",
+			fmt.Sprintf("%d would put the process over the %d MiB memory budget", d.PartSizeMiB, 512),
+			fmt.Sprintf("at most %d, which caps one artifact at %d GiB",
+				MaxPartSizeMiB, MaxPartSizeMiB*10000/1024))
 	}
 }
 

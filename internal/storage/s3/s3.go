@@ -25,9 +25,20 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/storage"
 )
 
-// defaultPartSize is the S3 minimum for every part but the last. Going below it
-// is rejected by the service, so it is also the floor for PutOptions.PartSize.
-const defaultPartSize = 8 << 20
+// defaultPartSize matches config.DefaultPartSizeMiB, which is where the choice
+// is explained. Repeated here so a store built without going through the
+// configuration -- a test, another caller -- behaves the same way.
+const defaultPartSize = 16 << 20
+
+// defaultMaxParts matches config.DefaultMaxParts, and is what S3 itself allows.
+//
+// It is only half the ceiling. The upload manager sizes parts for itself only
+// when it knows the total length, which it cannot when reading a pipe, so part
+// size times part count fixes the largest artifact that can ever be written --
+// and the refusal arrives at the last part, after everything before it has been
+// uploaded. The count is provider-set and cannot be asked for: several
+// S3-compatible services allow a tenth of this, which is why Config carries it.
+const defaultMaxParts = 10000
 
 // On the deprecated upload manager.
 //
@@ -50,6 +61,12 @@ type Config struct {
 	Prefix string
 	// PartSize is the default for uploads that do not override it.
 	PartSize int64
+
+	// MaxParts is how many parts one upload may have, enforced here rather
+	// than left to the service. A provider that refuses part 1001 does so in
+	// its own words, which no translation of ours would recognise; refusing it
+	// ourselves keeps the failure legible on every backend.
+	MaxParts int
 }
 
 // Storage is an S3-backed object store.
@@ -78,12 +95,25 @@ func New(ctx context.Context, client *awss3.Client, cfg Config) (*Storage, error
 	if cfg.PartSize == 0 {
 		cfg.PartSize = defaultPartSize
 	}
+	if cfg.MaxParts == 0 {
+		cfg.MaxParts = defaultMaxParts
+	}
+	// Bounded here and not only in the configuration, because a store can be
+	// built without going through it, and because the number crosses into an
+	// int32 two lines below.
+	if cfg.MaxParts < 1 || cfg.MaxParts > defaultMaxParts {
+		return nil, fmt.Errorf(
+			"storage/s3: max parts is %d; S3 allows 1 to %d", cfg.MaxParts, defaultMaxParts)
+	}
 
 	s := &Storage{
 		client: client,
 		cfg:    cfg,
 		uploader: manager.NewUploader(client, func(u *manager.Uploader) { //nolint:staticcheck // see above
 			u.PartSize = cfg.PartSize
+			// Bounded to [1, defaultMaxParts] a few lines above, which is well
+			// inside an int32; the linter cannot see across the closure.
+			u.MaxUploadParts = int32(cfg.MaxParts) //nolint:gosec // bounded above
 		}),
 	}
 	s.immutable = bucketHasObjectLock(ctx, client, cfg.Bucket)
@@ -183,7 +213,7 @@ func (s *Storage) Put(ctx context.Context, key string, r io.Reader, opts storage
 		}
 	}
 	if _, err := s.uploader.Upload(ctx, input, upload); err != nil { //nolint:staticcheck // see above
-		return storage.ObjectInfo{}, fmt.Errorf("upload %q: %w", key, err)
+		return storage.ObjectInfo{}, s.uploadError(key, opts, err)
 	}
 
 	info, err := s.Stat(ctx, key)
@@ -194,6 +224,45 @@ func (s *Storage) Put(ctx context.Context, key string, r io.Reader, opts storage
 	// two agreeing is exactly what the manifest digest is there to prove.
 	info.Size = counted.total.Load()
 	return info, nil
+}
+
+// uploadError names the setting an operator can actually change.
+//
+// The upload manager's own message ends with "Adjust PartSize to fit in this
+// limit". PartSize is not a name that appears in a Koffr configuration file, so
+// an operator reading it goes looking for a knob that does not exist -- at the
+// end of an upload that has already run for hours, which is the worst moment to
+// be sent hunting. Everything else is passed through untouched.
+func (s *Storage) uploadError(key string, opts storage.PutOptions, err error) error {
+	part := s.cfg.PartSize
+	if opts.PartSize > 0 {
+		part = max(opts.PartSize, manager.MinUploadPartSize) //nolint:staticcheck // see above
+	}
+	// Matched on the identifier rather than the sentence: the SDK builds this
+	// message inline, with no constant to compare against, and a name is far
+	// likelier to survive a rewording than the prose around it.
+	if !strings.Contains(err.Error(), "MaxUploadParts") {
+		return fmt.Errorf("upload %q: %w", key, err)
+	}
+	ceiling := part * int64(s.cfg.MaxParts)
+	return fmt.Errorf(
+		"upload %q: this artifact is larger than %s, which is all %d parts of %d MiB can carry "+
+			"(the size cannot change once an upload has started): raise part_size_mib on this "+
+			"destination, and max_parts too if your provider allows more than %d -- AWS allows "+
+			"10000, several S3-compatible services only 1000: %w",
+		key, humanBytes(ceiling), s.cfg.MaxParts, part>>20, s.cfg.MaxParts, err)
+}
+
+// humanBytes renders a ceiling the way an operator would write it.
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%d GiB", n>>30)
+	case n >= 1<<20:
+		return fmt.Sprintf("%d MiB", n>>20)
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 // PutIfAbsent writes only if the key is free.

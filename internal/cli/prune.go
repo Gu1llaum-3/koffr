@@ -50,7 +50,8 @@ func (a *app) pruneCmd() *cobra.Command {
 	}
 	c.Flags().BoolVar(&confirm, "confirm", false, "actually delete; without it nothing is touched")
 	c.Flags().BoolVar(&orphans, "orphans", false,
-		"also sweep objects left by a job that died before writing its manifest")
+		"also sweep what a job that died before writing its manifest left behind:\n"+
+			"objects no manifest points at, and unfinished uploads the store still bills for")
 	return c
 }
 
@@ -142,13 +143,16 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 		}
 	}
 
-	var orphanLines []orphanLine
+	var (
+		orphanLines []orphanLine
+		uploadLines []uploadLine
+	)
 	if sweepOrphans {
-		found, err := a.sweepOrphans(ctx, cfg, confirm)
+		found, stale, err := a.sweepOrphans(ctx, cfg, confirm)
 		if err != nil {
 			return err
 		}
-		orphanLines = found
+		orphanLines, uploadLines = found, stale
 		if confirm {
 			for _, o := range found {
 				freed += o.Bytes
@@ -160,13 +164,16 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 		DryRun  bool         `json:"dry_run"`
 		Backups []pruneLine  `json:"backups"`
 		Orphans []orphanLine `json:"orphans,omitempty"`
-		Deleted int          `json:"deleted"`
-		Freed   int64        `json:"freed_bytes"`
+		// IncompleteUploads are billed and invisible to every listing, so a
+		// script watching this repository has no other way to learn of them.
+		IncompleteUploads []uploadLine `json:"incomplete_uploads,omitempty"`
+		Deleted           int          `json:"deleted"`
+		Freed             int64        `json:"freed_bytes"`
 		// SpaceReclaimed is false when the destination keeps what it deletes.
 		// A script watching freed_bytes needs to know the number is zero
 		// because nothing was freed, not because nothing was deleted.
 		SpaceReclaimed bool `json:"space_reclaimed"`
-	}{!confirm, lines, orphanLines, len(deleted), freed, len(keepsData) == 0}
+	}{!confirm, lines, orphanLines, uploadLines, len(deleted), freed, len(keepsData) == 0}
 
 	a.emit(out, func(p *printer) {
 		p.table(func(p *printer) {
@@ -184,6 +191,14 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 			p.printf("\norphan objects (a job died before writing its manifest):\n")
 			for _, o := range orphanLines {
 				p.printf("  %s  %s\n", o.Prefix, humanBytes(o.Bytes))
+			}
+		}
+		if len(uploadLines) > 0 {
+			p.printf("\nunfinished uploads (a job was killed mid-transfer; " +
+				"stored and billed, and no listing shows them):\n")
+			for _, u := range uploadLines {
+				p.printf("  %s  %s  %s  begun %s\n",
+					u.Destination, u.Key, humanBytes(u.Bytes), u.Begun)
 			}
 		}
 		if out.DryRun {
@@ -338,30 +353,72 @@ type orphanLine struct {
 // 10 GiB backup takes minutes; this allows for one taking hours.
 const orphanGrace = 24 * time.Hour
 
-// sweepOrphans finds, and with confirm removes, objects no manifest points at.
+// uploadLine is one multipart upload begun by a job that never came back.
+type uploadLine struct {
+	Destination string `json:"destination"`
+	Key         string `json:"key"`
+	Begun       string `json:"begun"`
+	// Bytes is what its parts hold, which is what the store is charging for.
+	Bytes int64 `json:"bytes"`
+}
+
+// sweepOrphans finds, and with confirm removes, what no manifest points at.
+//
+// Two kinds of litter, one accident. A job killed partway leaves objects with
+// no manifest, which a listing shows, and on an object store it also leaves an
+// unfinished multipart upload, which no listing shows and which the service
+// charges for regardless. Reporting only the visible half would let an operator
+// tidy a repository and keep paying for the rest.
 //
 // Off unless asked. Sweeping is the one deletion Koffr can make that is not
 // described by any policy, so it stays a thing an operator does deliberately.
-func (a *app) sweepOrphans(ctx context.Context, cfg config.Config, confirm bool) ([]orphanLine, error) {
-	var out []orphanLine
+func (a *app) sweepOrphans(
+	ctx context.Context, cfg config.Config, confirm bool,
+) ([]orphanLine, []uploadLine, error) {
+	var (
+		out     []orphanLine
+		uploads []uploadLine
+	)
 	for _, name := range sortedKeys(cfg.Destinations) {
 		st, err := openStorage(ctx, cfg.Destinations[name])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		found, err := retention.FindOrphansOlderThan(ctx, st, orphanGrace)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, o := range found {
 			out = append(out, orphanLine{Prefix: o.Prefix, Bytes: o.Bytes})
 		}
-		if !confirm || len(found) == 0 {
+
+		// The same grace period, for the same reason: from outside, an upload
+		// in flight and one abandoned last month look identical, and aborting
+		// the wrong one kills a running backup.
+		stale, err := retention.FindIncompleteUploadsOlderThan(ctx, st, orphanGrace)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, u := range stale {
+			uploads = append(uploads, uploadLine{
+				Destination: name,
+				Key:         u.Key,
+				Begun:       u.Initiated.UTC().Format(time.RFC3339),
+				Bytes:       u.Bytes,
+			})
+		}
+
+		if !confirm {
 			continue
 		}
-		if _, err := retention.RemoveOrphans(ctx, st, found); err != nil {
-			return nil, fmt.Errorf("prune: sweeping orphans in %s: %w", name, err)
+		if len(found) > 0 {
+			if _, err := retention.RemoveOrphans(ctx, st, found); err != nil {
+				return nil, nil, fmt.Errorf("prune: sweeping orphans in %s: %w", name, err)
+			}
+		}
+		if err := retention.AbortIncompleteUploads(ctx, st, stale); err != nil {
+			return nil, nil, fmt.Errorf("prune: abandoning unfinished uploads in %s: %w", name, err)
 		}
 	}
-	return out, nil
+	return out, uploads, nil
 }

@@ -11,4 +11,5 @@ Amendments to the specification are dated and carry the reference of the probe
 that motivated them. A specification that changes without a trace becomes a
 specification nobody trusts.
 
-- `M0-report.md` — pending
+- `M0-report.md` — seven probes on the architecture; the specification held, with one amendment
+- `M1-report.md` — four probes on interruption and multipart uploads; EF-041 amended

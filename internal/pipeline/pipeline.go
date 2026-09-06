@@ -74,7 +74,6 @@ type Request struct {
 	// for nothing.
 	SourceCodec source.Codec
 
-	PartSize         int64
 	FirstByteTimeout time.Duration
 	StallTimeout     time.Duration
 
@@ -184,9 +183,7 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	stopTeardown := teardownOnCancel(runCtx, closer, pr)
 	defer stopTeardown()
 
-	info, putErr := req.Storage.Put(runCtx, req.Key, pr, storage.PutOptions{
-		PartSize: req.PartSize,
-	})
+	info, putErr := req.Storage.Put(runCtx, req.Key, pr, storage.PutOptions{})
 	if putErr != nil {
 		// Unblock the writer, which is otherwise waiting for a reader that has
 		// gone. Without this the goroutine outlives the job.

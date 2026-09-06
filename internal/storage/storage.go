@@ -118,3 +118,43 @@ type Capabilities struct {
 	// again still has one honest answer to give.
 	DeleteReclaimsSpace bool
 }
+
+// IncompleteUpload is a multipart upload that was begun and never finished.
+//
+// It exists because interruption is not symmetric. A job that fails cleanly
+// aborts its upload on the way out; a job that is killed -- SIGKILL, a rebooted
+// host, a severed link -- never gets to. What it leaves behind is stored and
+// billed, and no listing shows it: measured against MinIO, ListObjectsV2
+// reported the same objects as before while the parts sat on disk. It is
+// therefore invisible to `koffr ls`, and invisible to FindOrphans too, which
+// reads a listing and so cannot see something a listing omits.
+//
+// That is the whole reason this type is separate from Orphan: the two describe
+// the same accident, and only one of them can be found by looking.
+type IncompleteUpload struct {
+	Key      string
+	UploadID string
+	// Initiated is when the upload was created, and is the only thing that
+	// tells litter from a job uploading right now.
+	Initiated time.Time
+
+	// Bytes is what the parts already sent hold, which is what the service is
+	// charging for.
+	Bytes int64
+}
+
+// MultipartMaintainer is implemented by stores that can leak an unfinished
+// upload, and can be asked to list and abandon them.
+//
+// Optional on purpose: a filesystem has nothing to leak, and a store that
+// cannot answer honestly should not be made to pretend. Callers type-assert.
+type MultipartMaintainer interface {
+	// ListIncompleteUploads reports unfinished uploads under prefix, with
+	// repository keys rather than service keys.
+	ListIncompleteUploads(ctx context.Context, prefix string) ([]IncompleteUpload, error)
+
+	// AbortIncompleteUpload discards one, releasing its parts. Aborting an
+	// upload that is already gone is not an error: two operators pruning at
+	// once must not turn a tidy repository into a failed command.
+	AbortIncompleteUpload(ctx context.Context, u IncompleteUpload) error
+}

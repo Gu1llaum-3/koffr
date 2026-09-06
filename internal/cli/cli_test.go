@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -1452,4 +1453,28 @@ func TestConfigValidate_ReportsEachProblemOnce(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
 	assert.NotEmpty(t, got.Error.Problems)
+}
+
+// The size ceiling is the one setting an operator cannot discover by being
+// careful: it is part size times a part count the provider chooses and does not
+// publish through the API, and hitting it costs a whole upload. Saying it at
+// validate time is the only moment it can be said before it matters (PD-006).
+func TestConfigValidate_SaysTheSizeCeilingOfEachObjectStore(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+
+	// A destination with an endpoint: a service whose part limit cannot be
+	// known, so the conservative thousand applies and the ceiling is a tenth
+	// of what the same settings give on AWS.
+	updated := strings.Replace(string(body), "    type: fs",
+		"    type: s3\n    bucket: backups\n    region: eu-west-3\n"+
+			"    endpoint: https://s3.fr-par.scw.cloud", 1)
+	updated = regexp.MustCompile(`(?m)^    path: .*\n`).ReplaceAllString(updated, "")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(updated), 0o600))
+
+	code, out, errOut := run(t, "--config", cfgPath, "config", "validate")
+	require.Equal(t, cli.ExitOK, code, "stderr: %s", errOut)
+	assert.Contains(t, out, "15.6 GiB", "16 MiB parts, a thousand of them")
+	assert.Contains(t, out, "max_parts")
 }

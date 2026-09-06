@@ -86,6 +86,36 @@ that reads the catalog, and paid for every month.
 backup being written has objects and no manifest too, and deleting a running job
 is a far worse outcome than paying for a stale prefix another day.
 
+### The half that no listing shows
+
+On an object store the same accident leaves a second kind of litter, and this
+one you cannot see. A job killed mid-transfer — SIGKILL, a rebooted host, a
+severed link — never gets to abandon the multipart upload it had started. The
+parts it had sent stay on the service, and stay billed, and `ListObjects` does
+not mention them. Neither does `koffr ls`. Neither does the orphan sweep above,
+which works by listing.
+
+Measured against MinIO: after a job was killed, the bucket listing was byte for
+byte what it had been before, while the parts sat on disk.
+
+`--orphans` sweeps these too, under the same 24-hour grace period and for a
+sharper version of the same reason: from outside, an upload in flight and one
+abandoned last month are indistinguishable, and aborting the wrong one kills a
+running backup.
+
+```
+$ koffr prune --orphans
+unfinished uploads (a job was killed mid-transfer; stored and billed, and no
+listing shows them):
+  main  sources/prod-pg-main/logical/01J.../dump.pgdump.zst.age  4.1 GiB  begun 2026-08-14T02:11:07Z
+```
+
+A filesystem destination has nothing to leak, and reports nothing.
+
+There is a second line of defence worth having regardless: a bucket lifecycle
+rule with `AbortIncompleteMultipartUpload` after a few days. Koffr cleans up
+when it is run; a lifecycle rule cleans up when it is not.
+
 ## Versioned and Object Lock buckets: read this one
 
 **On a versioned or Object-Locked bucket, deleting a backup frees no space.**

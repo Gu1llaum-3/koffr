@@ -98,16 +98,48 @@ func (a *app) configValidateCmd() *cobra.Command {
 				File         string   `json:"file"`
 				Sources      []string `json:"sources"`
 				Destinations []string `json:"destinations"`
-			}{cfg.Path(), cfg.SourceIDs(), sortedKeys(cfg.Destinations)}
+				// Ceilings is the largest artifact each object store can hold,
+				// which is the one limit an operator cannot discover by being
+				// careful: it is part size times a part count the provider
+				// chooses and does not publish. Said here because this is the
+				// last moment it can be said before it costs an upload.
+				Ceilings map[string]string `json:"size_ceilings,omitempty"`
+			}{cfg.Path(), cfg.SourceIDs(), sortedKeys(cfg.Destinations), sizeCeilings(cfg)}
 
 			a.emit(out, func(p *printer) {
 				p.printf("%s is valid.\n", out.File)
 				p.printf("  sources:      %s\n", strings.Join(out.Sources, ", "))
 				p.printf("  destinations: %s\n", strings.Join(out.Destinations, ", "))
+				for _, name := range sortedKeys(out.Ceilings) {
+					p.printf("  %s: one artifact can hold up to %s (part_size_mib x max_parts)\n",
+						name, out.Ceilings[name])
+				}
 			})
 			return nil
 		},
 	}
+}
+
+// sizeCeilings reports, per object store, the largest artifact it can hold.
+//
+// Nothing else will say it in time. The number is part size times a part count
+// the provider sets and offers no way to query, so Koffr assumes a thousand
+// wherever it cannot know -- and on a service that really does cap there, the
+// default 16 MiB parts leave 15.6 GiB, an ordinary database rather than an
+// exotic one. Discovering that at the last part of an upload is exactly the
+// failure PD-006 exists to prevent.
+func sizeCeilings(cfg config.Config) map[string]string {
+	out := map[string]string{}
+	for name, d := range cfg.Destinations {
+		if d.Type != "s3" {
+			continue
+		}
+		out[name] = humanBytes(int64(d.PartSizeMiB) << 20 * int64(d.MaxParts))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (a *app) configShowCmd() *cobra.Command {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -64,7 +66,12 @@ func openStorage(ctx context.Context, dest config.Destination) (storage.Storage,
 		if err != nil {
 			return nil, err
 		}
-		return s3store.New(ctx, client, s3store.Config{Bucket: dest.Bucket, Prefix: dest.Prefix})
+		return s3store.New(ctx, client, s3store.Config{
+			Bucket:   dest.Bucket,
+			Prefix:   dest.Prefix,
+			PartSize: int64(dest.PartSizeMiB) << 20,
+			MaxParts: dest.MaxParts,
+		})
 	default:
 		// Unreachable through Load, which rejects unknown types. Kept because
 		// "unreachable" and "cannot happen" are different claims.
@@ -84,6 +91,9 @@ func s3Client(ctx context.Context, dest config.Destination) (*awss3.Client, erro
 			credentials.NewStaticCredentialsProvider(
 				dest.AccessKeyID.Value(), dest.SecretAccessKey.Value(), "")))
 	}
+	opts = append(opts, awsconfig.WithRetryer(func() aws.Retryer {
+		return retryerFor(dest)
+	}))
 	base, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("s3 credentials: %w", err)
@@ -96,6 +106,43 @@ func s3Client(ctx context.Context, dest config.Destination) (*awss3.Client, erro
 			o.UsePathStyle = true
 		}
 	}), nil
+}
+
+// retryerFor turns a retry window into attempts and backoff.
+//
+// The SDK's own defaults are three attempts over a few seconds, which measured
+// against a proxy that severed the connection was not enough to survive a
+// five-second outage: the backup ended. Nothing resumes it -- the stream comes
+// from pg_dump, and a second pg_dump produces different bytes -- so a transfer
+// either rides the interruption out or starts again from nothing.
+//
+// The delay between attempts is fixed rather than exponential with jitter,
+// which is what the SDK does by default. Jitter draws each delay from zero to
+// the cap, so a count of attempts does not convert into a span of time: a
+// window derived that way was measured surviving a thirty-second outage and
+// failing a ninety-second one, while claiming two minutes. A setting that names
+// a duration has to mean it, so the arithmetic is made exact -- attempts times
+// interval -- at the cost of a spreading behaviour that matters when many
+// clients retry together and not at all when one upload retries alone.
+func retryerFor(dest config.Destination) aws.Retryer {
+	window := config.DefaultRetryWindow
+	if dest.RetryWindow != nil {
+		window = *dest.RetryWindow
+	}
+	if window <= 0 {
+		// Asked for explicitly: fail on the first interruption.
+		return aws.NopRetryer{}
+	}
+	const interval = 10 * time.Second
+	// One attempt fails as the outage starts and one lands after it ends, so
+	// the delays in between are what has to span the window.
+	attempts := int(window/interval) + 2
+	return retry.NewStandard(func(o *retry.StandardOptions) {
+		o.MaxAttempts = attempts
+		o.MaxBackoff = interval
+		o.Backoff = retry.BackoffDelayerFunc(
+			func(int, error) (time.Duration, error) { return interval, nil })
+	})
 }
 
 func openCatalog(ctx context.Context, cfg config.Config) (catalog.MetadataStore, error) {
