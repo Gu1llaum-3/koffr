@@ -1552,3 +1552,47 @@ func TestCheck_TheWriteProbeCleansUpAfterItself(t *testing.T) {
 			"a check that litters is a check people stop running")
 	}
 }
+
+// The guard that refuses a populated target spoke only PostgreSQL. Pointed at
+// MariaDB it could not connect, and the connection failure was read as "nothing
+// to overwrite" -- so every MariaDB restore passed it, whatever the target
+// held. A control that fails open is worse than no control: it produces
+// confidence instead of protection.
+//
+// And what it was protecting against is worse here than the message says. A
+// mariadb-dump emits DROP TABLE IF EXISTS before each table, so restoring onto
+// a populated database does not merge two datasets, it replaces one.
+func TestRestore_RefusesToGuessWhetherTheTargetHoldsData(t *testing.T) {
+	cfgPath := configFile(t)
+	body, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	// A MariaDB source pointed at a host that is not there: the question
+	// "does the target hold data?" cannot be answered.
+	updated := strings.Replace(string(body), "engine: postgresql", "engine: mariadb", 1)
+	updated = regexp.MustCompile(`(?m)^    host: .*$`).
+		ReplaceAllString(updated, "    host: 127.0.0.1")
+	// Port 1: nothing listens there, so the probe cannot answer.
+	if regexp.MustCompile(`(?m)^    port: .*$`).MatchString(updated) {
+		updated = regexp.MustCompile(`(?m)^    port: .*$`).ReplaceAllString(updated, "    port: 1")
+	} else {
+		updated = strings.Replace(updated, "    host: 127.0.0.1",
+			"    host: 127.0.0.1\n    port: 1", 1)
+	}
+	require.NoError(t, os.WriteFile(cfgPath, []byte(updated), 0o600))
+
+	const id = "01UNANSWERABLE00000000000A"
+	putBackup(t, cfgPath, id)
+
+	// The fixture writes a PostgreSQL manifest; this backup has to claim the
+	// same engine as the source, or the engine-mismatch guard answers first.
+	mpath := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main",
+		"logical", id, "manifest.json")
+	mbody, err := os.ReadFile(mpath) //nolint:gosec // a path this test just created
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(mpath,
+		[]byte(strings.ReplaceAll(string(mbody), `"engine":"postgresql"`, `"engine":"mariadb"`)), 0o600))
+
+	_, out, errOut := run(t, "--config", cfgPath, "restore", id, "--into", "somewhere", "--yes")
+	assert.Contains(t, out+errOut, "could not check whether",
+		"a guard that could not answer must say so rather than sound like one that answered yes")
+}

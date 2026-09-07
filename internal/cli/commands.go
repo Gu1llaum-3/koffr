@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/oklog/ulid/v2"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -1602,7 +1604,7 @@ func (a *app) confirmRestore(
 	opt restoreOptions, ex executor.Executor,
 ) error {
 	if !opt.force {
-		populated, err := targetHoldsData(ctx, src, opt.into, ex)
+		populated, err := a.targetHoldsData(ctx, src, opt.into, ex)
 		if err != nil {
 			return err
 		}
@@ -1680,15 +1682,68 @@ func (a *app) interactive() bool {
 //
 // A database that does not exist holds nothing, and --create is how it comes
 // into being: failing here would refuse the ordinary case.
-func targetHoldsData(ctx context.Context, src config.Source, database string, ex executor.Executor) (bool, error) {
+func (a *app) targetHoldsData(
+	ctx context.Context, src config.Source, database string, ex executor.Executor,
+) (bool, error) {
+	switch src.Engine {
+	case "mariadb":
+		return a.mariadbHoldsData(ctx, src, database, ex)
+	default:
+		return a.postgresHoldsData(ctx, src, database, ex)
+	}
+}
+
+// unchecked is what to do when the emptiness of the target could not be
+// established.
+//
+// Not a refusal, and not silence either. A server that cannot be reached to
+// answer the question cannot be reached to restore into, and the restore's own
+// error a moment later says so in better words -- that was the original
+// reasoning here and it holds. What did not hold was staying quiet about it:
+// the check used to speak only PostgreSQL, so pointed at MariaDB it failed to
+// connect every time and read that as "nothing to overwrite". Every MariaDB
+// restore passed the guard, whatever the target held.
+//
+// So the guard now says when it did not run. A control that cannot answer must
+// not sound like one that answered yes.
+func (a *app) unchecked(database string, err error) (bool, error) {
+	a.warnf("koffr: could not check whether %s already holds data (%v); "+
+		"if the restore proceeds it may replace what is there", database, err)
+	return false, nil
+}
+
+// missingDatabase reports whether the server refused because the database is
+// not there.
+//
+// The distinction is the whole point. A database that does not exist holds
+// nothing, so the restore may go ahead. Anything else -- a refused password, an
+// unreachable host, a driver that cannot speak this server's protocol -- means
+// the question was never answered, and answering "empty" to a question nobody
+// asked is how a guard reassures instead of protecting.
+func missingDatabase(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "3D000" {
+		return true
+	}
+	var myErr *mysql.MySQLError
+	if errors.As(err, &myErr) && myErr.Number == 1049 {
+		return true
+	}
+	return false
+}
+
+func (a *app) postgresHoldsData(
+	ctx context.Context, src config.Source, database string, ex executor.Executor,
+) (bool, error) {
 	probe := postgresConfig(src, localToolRunner())
 	probe.Database = database
 
 	conn, err := probe.Connect(ctx, ex)
 	if err != nil {
-		// Cannot connect, so there is nothing to overwrite yet. The restore
-		// itself will report the real problem in a moment, with better words.
-		return false, nil //nolint:nilerr // an unreachable database holds no data to lose
+		if missingDatabase(err) {
+			return false, nil
+		}
+		return a.unchecked(database, err)
 	}
 	defer func() { _ = conn.Close(ctx) }()
 
@@ -1696,6 +1751,37 @@ func targetHoldsData(ctx context.Context, src config.Source, database string, ex
 	const q = `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 	           WHERE c.relkind IN ('r','p','m') AND n.nspname NOT IN ('pg_catalog','information_schema')`
 	if err := conn.QueryRow(ctx, q).Scan(&n); err != nil {
+		return false, fmt.Errorf("restore: check whether %s is empty: %w", database, err)
+	}
+	return n > 0, nil
+}
+
+// mariadbHoldsData asks a MariaDB server the same question.
+//
+// It exists because the check above was the only one, and it speaks the
+// PostgreSQL wire protocol: pointed at MariaDB it could not connect, and the
+// connection failure was read as "nothing to overwrite". Every MariaDB restore
+// therefore passed the guard, whatever the target held -- and a mariadb-dump
+// emits DROP TABLE IF EXISTS before each table, so what it does to a populated
+// database is not the merge the message warns about but a replacement.
+func (a *app) mariadbHoldsData(
+	ctx context.Context, src config.Source, database string, ex executor.Executor,
+) (bool, error) {
+	probe := mariadbConfig(src, localToolRunner())
+	probe.Database = database
+
+	db, err := probe.Connect(ctx, ex)
+	if err != nil {
+		if missingDatabase(err) {
+			return false, nil
+		}
+		return a.unchecked(database, err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var n int
+	const q = `SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?`
+	if err := db.QueryRowContext(ctx, q, database).Scan(&n); err != nil {
 		return false, fmt.Errorf("restore: check whether %s is empty: %w", database, err)
 	}
 	return n > 0, nil
