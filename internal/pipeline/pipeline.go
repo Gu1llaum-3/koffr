@@ -110,15 +110,20 @@ type Error struct {
 func (e *Error) Error() string { return e.Op + ": " + e.Err.Error() }
 func (e *Error) Unwrap() error { return e.Err }
 
-// ClassOf reports how an error should be treated. An error from outside this
-// package is a source failure: unclassified means "unknown", and retrying an
-// unknown failure is safer than declaring it permanent.
+// ClassOf reports how an error should be treated.
+//
+// An error from outside this package is reported as unknown rather than as a
+// source failure. Both are retried, so the behaviour is the same -- but the
+// class is also what an operator reads, and calling a repository that turned
+// out to be read-only a "source" failure sends them to look at the database.
+// Measured on a real deployment: a write refused by systemd's ProtectSystem
+// was logged as class "source".
 func ClassOf(err error) catalog.ErrorClass {
 	var e *Error
 	if errors.As(err, &e) {
 		return e.Class
 	}
-	return catalog.ErrClassSource
+	return catalog.ErrClassUnknown
 }
 
 func classify(class catalog.ErrorClass, op string, err error) error {

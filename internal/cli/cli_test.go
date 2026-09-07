@@ -849,11 +849,16 @@ func TestSchedule_FailureLineCarriesFields(t *testing.T) {
 	}
 	require.NotNil(t, found, "the failure was never logged:\n%s", errBuf.String())
 	assert.Equal(t, "prod-pg-main", found["source"])
-	// source, not config: an unreachable database could be a server that is
+	// unknown, not config: an unreachable database could be a server that is
 	// down or a port that is wrong, and Koffr cannot tell. Retrying an
 	// unclassifiable failure is safer than declaring it permanent, and the
 	// class is what carries that decision into the line an operator greps.
-	assert.Equal(t, "source", found["class"])
+	//
+	// And unknown rather than source, which this asserted until a real
+	// deployment showed what that costs: a repository write refused by
+	// systemd's ProtectSystem was logged as class "source", which sends an
+	// operator to the database. Both classes retry; only one of them is true.
+	assert.Equal(t, "unknown", found["class"])
 	assert.Contains(t, found, "will_retry")
 }
 
@@ -1506,4 +1511,44 @@ func TestShow_WarnsWhenTheSnapshotIsNotConsistent(t *testing.T) {
 	code, out, _ = run(t, "--config", cfgPath, "show", clean)
 	require.Equal(t, cli.ExitOK, code)
 	assert.NotContains(t, out, "not a consistent snapshot")
+}
+
+// PD-006, and a finding from a real systemd deployment: `koffr check` used to
+// prove only that a destination could be listed, so one that was readable and
+// not writable passed, exited 0, and failed at the first byte of the next
+// scheduled backup. Listing is not the question a backup asks.
+func TestCheck_RefusesADestinationItCannotWriteTo(t *testing.T) {
+	cfgPath := configFile(t)
+	repo := filepath.Join(filepath.Dir(cfgPath), "repo")
+	require.NoError(t, os.MkdirAll(repo, 0o700))
+
+	// Readable, listable, and not writable -- what ProtectSystem=strict does to
+	// a path outside ReadWritePaths.
+	require.NoError(t, os.Chmod(repo, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(repo, 0o700) })
+
+	code, out, errOut := run(t, "--config", cfgPath, "check")
+	assert.NotEqual(t, cli.ExitOK, code, "a check that passes here is worse than no check")
+	assert.Contains(t, out+errOut, "cannot write to this destination")
+}
+
+// And the probe leaves nothing behind when it succeeds.
+func TestCheck_TheWriteProbeCleansUpAfterItself(t *testing.T) {
+	cfgPath := configFile(t)
+	repo := filepath.Join(filepath.Dir(cfgPath), "repo")
+
+	// The exit code is not the subject: this fixture has no reachable database,
+	// so the source check fails and the command exits non-zero. The destination
+	// check runs regardless, and what it leaves behind is what is being tested.
+	_, _, _ = run(t, "--config", cfgPath, "check")
+
+	entries, err := os.ReadDir(repo)
+	if os.IsNotExist(err) {
+		return
+	}
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), "write-probe",
+			"a check that litters is a check people stop running")
+	}
 }

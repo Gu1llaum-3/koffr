@@ -47,6 +47,12 @@ const (
 	ErrClassStalled ErrorClass = "stalled"
 	// ErrClassCanceled is not retried.
 	ErrClassCanceled ErrorClass = "canceled"
+	// ErrClassUnknown is what an unclassified error gets. It is retried like a
+	// source failure -- retrying something unknown is safer than declaring it
+	// permanent -- but it is not *called* a source failure, because the class
+	// is what an operator reads first and a wrong one sends them to the wrong
+	// machine.
+	ErrClassUnknown ErrorClass = "unknown"
 )
 
 // MetadataStore is the catalog backend.

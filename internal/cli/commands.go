@@ -264,8 +264,7 @@ func checkDestination(ctx context.Context, name string, dest config.Destination)
 		r.Problem = err.Error()
 		return r
 	}
-	// Listing proves credentials and reachability without writing anything into
-	// someone's repository as a side effect of a check.
+	// Listing proves credentials and reachability.
 	for _, err := range st.List(ctx, "sources/") {
 		if err != nil {
 			r.Problem = err.Error()
@@ -273,10 +272,56 @@ func checkDestination(ctx context.Context, name string, dest config.Destination)
 		}
 		break
 	}
+	// And then a write, because listing does not prove the one thing a backup
+	// needs. This check used to stop above, deliberately, so as not to write
+	// into someone's repository as a side effect -- and a destination that was
+	// perfectly readable and not writable passed it. Measured on a real
+	// systemd unit: ProtectSystem=strict makes every path outside
+	// ReadWritePaths read-only, `koffr check` reported ok, and the first
+	// scheduled backup failed at the first byte. That is precisely the
+	// discovery PD-006 exists to prevent.
+	//
+	// The probe is written under a reserved name and removed again, so nothing
+	// of it survives a successful check.
+	if problem := probeWritable(ctx, st); problem != "" {
+		r.Problem = problem
+		return r
+	}
 	caps := st.Capabilities()
 	r.OK = true
 	r.Detail = fmt.Sprintf("%s, multipart=%t immutable=%t", dest.Type, caps.Multipart, caps.Immutable)
 	return r
+}
+
+// writeProbeKey is the object a destination check writes and removes.
+//
+// Dot-prefixed and named for what it is, so an operator who finds one left
+// behind by an interrupted check knows immediately that it is Koffr's and that
+// deleting it is safe.
+const writeProbeKey = ".koffr-write-probe"
+
+// probeWritable reports why a destination cannot be written to, or "" when it
+// can.
+func probeWritable(ctx context.Context, st storage.Storage) string {
+	// PutIfAbsent rather than Put: two operators checking at once must not have
+	// one of them fail on the other's probe, and a leftover probe from an
+	// interrupted run must not make every later check fail.
+	err := st.PutIfAbsent(ctx, writeProbeKey, []byte("koffr write probe\n"))
+	switch {
+	case errors.Is(err, storage.ErrAlreadyExists):
+		// Someone else is checking, or a probe was left behind. Either way the
+		// destination took a write at some point, which is what was asked.
+		return ""
+	case err != nil:
+		return "cannot write to this destination: " + err.Error()
+	}
+	if err := st.Delete(ctx, writeProbeKey); err != nil {
+		// Not a failure: the destination is writable, which is the question.
+		// Object Lock makes deletion impossible on purpose, and that is a
+		// configuration to be proud of rather than a problem to report.
+		return ""
+	}
+	return ""
 }
 
 func checkSource(ctx context.Context, id string, src config.Source) checkResult {

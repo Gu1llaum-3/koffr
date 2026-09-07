@@ -75,8 +75,20 @@ writes to has to be named in `ReadWritePaths`:
 - the log file (`log.path`)
 - a filesystem destination, if you use one
 
-Add the destination to `ReadWritePaths` yourself. A backup that cannot write
-where it was told to is the failure you will discover on the first night.
+Add the destination to `ReadWritePaths` yourself.
+
+`koffr check` catches it if you forget. It writes a probe object to every
+destination and removes it again, so a path that is readable and not writable
+fails the check instead of failing the first backup:
+
+```
+FAIL  destination  main  cannot write to this destination: create
+".koffr-write-probe": open /srv/backups/.koffr-write-probe: read-only file system
+```
+
+That sentence used to read "the failure you will discover on the first night",
+and it was accurate: the check proved only that a destination could be listed.
+Running the unit on a real machine is what showed it.
 
 `ProtectHome=yes` makes `/home` and `/root` unreachable, and `HOME` points
 nowhere useful. That matters in one place: an SSH source with no
