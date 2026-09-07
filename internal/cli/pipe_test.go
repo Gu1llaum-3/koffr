@@ -90,3 +90,21 @@ func TestPipeObject_ReportsAMissingObject(t *testing.T) {
 
 	require.ErrorIs(t, stop(), storage.ErrNotFound)
 }
+
+// The guard's warning has to describe what the engine's own tool actually does,
+// because the operator's next move is deciding whether --force is acceptable.
+//
+// pg_restore adds to what it finds. mariadb-dump emits DROP TABLE IF EXISTS
+// before each table, so a MariaDB restore replaces every table it shares a name
+// with -- measured against a real server: a target table of one row came back
+// with five thousand, while a table the backup did not have was left alone.
+// Telling that operator they are about to "merge" understates it.
+func TestWhatRestoringOverDataDoes(t *testing.T) {
+	maria := whatRestoringOverDataDoes("mariadb")
+	assert.Contains(t, maria, "DROP")
+	assert.Contains(t, maria, "leave the rest untouched")
+	assert.NotContains(t, maria, "merges",
+		"a replacement described as a merge is an understated destruction")
+
+	assert.Contains(t, whatRestoringOverDataDoes("postgresql"), "merges two datasets")
+}

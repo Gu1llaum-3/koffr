@@ -1610,9 +1610,9 @@ func (a *app) confirmRestore(
 		}
 		if populated {
 			return fault(ExitUsage,
-				"database %q on %s already holds tables; restoring into it merges two datasets. "+
-					"Restore into an empty database, or pass --force if merging is what you meant",
-				opt.into, targetID)
+				"database %q on %s already holds tables; %s. "+
+					"Restore into an empty database, or pass --force if that is what you meant",
+				opt.into, targetID, whatRestoringOverDataDoes(src.Engine))
 		}
 	}
 	if opt.yes {
@@ -1691,6 +1691,23 @@ func (a *app) targetHoldsData(
 	default:
 		return a.postgresHoldsData(ctx, src, database, ex)
 	}
+}
+
+// whatRestoringOverDataDoes says what the engine's own tool will do to what is
+// already there.
+//
+// The two are not the same, and the difference is the whole reason to read the
+// warning. pg_restore adds to what it finds, which is the merge this guard was
+// written for. mariadb-dump emits DROP TABLE IF EXISTS before each table, so a
+// MariaDB restore replaces every table it shares a name with -- measured, not
+// assumed. Telling a MariaDB operator they are about to merge understates it,
+// and understating a destructive operation is how --force gets passed lightly.
+func whatRestoringOverDataDoes(engine string) string {
+	if engine == "mariadb" {
+		return "restoring into it will DROP and replace every table the backup " +
+			"also has, and leave the rest untouched"
+	}
+	return "restoring into it merges two datasets"
 }
 
 // unchecked is what to do when the emptiness of the target could not be
