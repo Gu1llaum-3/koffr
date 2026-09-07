@@ -81,11 +81,14 @@ func (m MariaDB) Restore(ctx context.Context, ex executor.Executor, req MariaDBR
 		return res, err
 	}
 
+	// The dump names its own database, and that name wins over anything given
+	// to the client. Rewriting it is the only thing that makes Database mean
+	// what it says.
 	if err := run(ctx, m.Config.ToolRunner, executor.Command{
 		Path: bin,
 		Args: m.clientArgs(session, req.Database, true),
 		Env:  session.Env(bin),
-	}, req.Dump, "mariadb"); err != nil {
+	}, retarget(req.Dump, req.Database), "mariadb"); err != nil {
 		return res, err
 	}
 
