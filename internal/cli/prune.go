@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,10 +89,11 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 	defer func() { _ = cat.Close() }()
 
 	var (
-		lines     []pruneLine
-		deleted   []catalog.ID
-		freed     int64
-		keepsData []string
+		lines       []pruneLine
+		binlogLines []binlogLine
+		deleted     []catalog.ID
+		freed       int64
+		keepsData   []string
 	)
 	for _, id := range ids {
 		src, _ := cfg.Source(id)
@@ -117,8 +119,27 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 					Keep:    d.Keep, Reason: d.Reason,
 				})
 			}
+			// The binary log archive follows the backups it serves (EF-063):
+			// its floor is the oldest backup this pass keeps, so it is decided
+			// here, on the destination that holds it, and never on its own.
+			var bp *retention.BinlogPlan
+			if archivesTo(src, destName) {
+				var bl []binlogLine
+				bp, bl, err = a.planBinlogFor(ctx, cfg, id, src, plan)
+				if err != nil {
+					return err
+				}
+				binlogLines = append(binlogLines, bl...)
+			}
 			if !confirm {
 				continue
+			}
+			if bp != nil {
+				n, err := a.applyBinlog(ctx, cfg, id, src, bp)
+				if err != nil {
+					return err
+				}
+				freed += n
 			}
 
 			applied, err := a.applyFor(ctx, cat, cfg, destName, plan)
@@ -160,20 +181,31 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 		}
 	}
 
+	// The archive's files are deleted too, and a summary that counted only
+	// backups said "deleted 0" over eight of them on the first real run.
+	binlogDeletes := 0
+	for _, b := range binlogLines {
+		if !b.Keep {
+			binlogDeletes++
+		}
+	}
+
 	out := struct {
 		DryRun  bool         `json:"dry_run"`
 		Backups []pruneLine  `json:"backups"`
+		Binlogs []binlogLine `json:"binlogs,omitempty"`
 		Orphans []orphanLine `json:"orphans,omitempty"`
 		// IncompleteUploads are billed and invisible to every listing, so a
 		// script watching this repository has no other way to learn of them.
-		IncompleteUploads []uploadLine `json:"incomplete_uploads,omitempty"`
-		Deleted           int          `json:"deleted"`
-		Freed             int64        `json:"freed_bytes"`
+		IncompleteUploads  []uploadLine `json:"incomplete_uploads,omitempty"`
+		Deleted            int          `json:"deleted"`
+		BinlogFilesDeleted int          `json:"binlog_files_deleted,omitempty"`
+		Freed              int64        `json:"freed_bytes"`
 		// SpaceReclaimed is false when the destination keeps what it deletes.
 		// A script watching freed_bytes needs to know the number is zero
 		// because nothing was freed, not because nothing was deleted.
 		SpaceReclaimed bool `json:"space_reclaimed"`
-	}{!confirm, lines, orphanLines, uploadLines, len(deleted), freed, len(keepsData) == 0}
+	}{!confirm, lines, binlogLines, orphanLines, uploadLines, len(deleted), binlogDeletes, freed, len(keepsData) == 0}
 
 	a.emit(out, func(p *printer) {
 		p.table(func(p *printer) {
@@ -187,6 +219,16 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 					l.BackupID, l.Source, l.Destination, l.TakenAt, verdict, l.Reason)
 			}
 		})
+		if len(binlogLines) > 0 {
+			p.printf("\nbinary log archive:\n")
+			for _, b := range binlogLines {
+				verdict := "delete"
+				if b.Keep {
+					verdict = "keep"
+				}
+				p.printf("  %s  %s  %s  %s\n", b.Source, b.File, verdict, b.Reason)
+			}
+		}
 		if len(orphanLines) > 0 {
 			p.printf("\norphan objects (a job died before writing its manifest):\n")
 			for _, o := range orphanLines {
@@ -208,19 +250,19 @@ func (a *app) runPrune(ctx context.Context, sourceID string, confirm, sweepOrpha
 					wouldGo++
 				}
 			}
-			p.printf("\n%d would be deleted. Nothing was: pass --confirm.\n", wouldGo)
+			p.printf("\n%s would be deleted. Nothing was: pass --confirm.\n", countOf(wouldGo, binlogDeletes))
 			return
 		}
 		if len(keepsData) > 0 {
 			// Said in full rather than as a footnote. An operator reading
 			// "deleted 3" on a versioned bucket will assume the bill moved,
 			// and it did not.
-			p.printf("\ndeleted %d. No space was reclaimed: %s keeps previous versions "+
+			p.printf("\ndeleted %s. No space was reclaimed: %s keeps previous versions "+
 				"of what it deletes, so the bytes stay until a bucket lifecycle rule "+
-				"expires them.\n", out.Deleted, strings.Join(keepsData, ", "))
+				"expires them.\n", countOf(out.Deleted, binlogDeletes), strings.Join(keepsData, ", "))
 			return
 		}
-		p.printf("\ndeleted %d, freed %s\n", out.Deleted, humanBytes(out.Freed))
+		p.printf("\ndeleted %s, freed %s\n", countOf(out.Deleted, binlogDeletes), humanBytes(out.Freed))
 	})
 	return nil
 }
@@ -336,6 +378,93 @@ func (a *app) restorableCheck(
 		_, err = st.Stat(ctx, backup.ManifestKey())
 		return err == nil
 	}, nil
+}
+
+// countOf words a prune's tally. Backups are always counted, even at zero;
+// binary log files only when some go, so a repository without an archive reads
+// as it always did.
+func countOf(backups, binlogFiles int) string {
+	if binlogFiles == 0 {
+		return strconv.Itoa(backups)
+	}
+	return fmt.Sprintf("%d backup(s) and %d binary log file(s)", backups, binlogFiles)
+}
+
+// binlogLine is one archived binary log file and what retention decided.
+type binlogLine struct {
+	Source string `json:"source"`
+	File   string `json:"file"`
+	Keep   bool   `json:"keep"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// archivesTo says whether a source's binary log archive lives on this destination.
+func archivesTo(src config.Source, destName string) bool {
+	if src.Binlog == nil || !src.Binlog.Enabled {
+		return false
+	}
+	dest := src.Binlog.Destination
+	if dest == "" && len(src.Destinations) > 0 {
+		dest = src.Destinations[0]
+	}
+	return dest == destName
+}
+
+// planBinlogFor decides the archive's fate from what retention keeps.
+func (a *app) planBinlogFor(
+	ctx context.Context, cfg config.Config, id string, src config.Source, plan []retention.Decision,
+) (*retention.BinlogPlan, []binlogLine, error) {
+	archive, err := a.binlogArchive(ctx, cfg, id, src)
+	if err != nil {
+		return nil, nil, err
+	}
+	archived, err := archive.Archived(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	bp, err := retention.PlanBinlog(archived, retention.KeptBackups(plan))
+	if err != nil {
+		return nil, nil, fmt.Errorf("prune: %s: %w", id, err)
+	}
+	var lines []binlogLine
+	for _, n := range bp.Delete {
+		lines = append(lines, binlogLine{Source: id, File: n.String(), Keep: false,
+			Reason: "before the oldest kept backup's position"})
+	}
+	if len(bp.Keep) > 0 {
+		reason := bp.Reason
+		if reason == "" && bp.Floor != nil {
+			reason = fmt.Sprintf("needed from %s onwards by the oldest kept backup", bp.Floor)
+		}
+		// One line for the kept range rather than one per file: an archive
+		// holds thousands, and a purge report nobody can read is a purge
+		// report nobody reads.
+		lines = append(lines, binlogLine{Source: id,
+			File: bp.Keep[0].String() + " .. " + bp.Keep[len(bp.Keep)-1].String(), Keep: true, Reason: reason})
+	}
+	return &bp, lines, nil
+}
+
+// applyBinlog deletes what the plan allows and reports the bytes.
+func (a *app) applyBinlog(
+	ctx context.Context, cfg config.Config, id string, src config.Source, bp *retention.BinlogPlan,
+) (int64, error) {
+	if len(bp.Delete) == 0 {
+		return 0, nil
+	}
+	archive, err := a.binlogArchive(ctx, cfg, id, src)
+	if err != nil {
+		return 0, err
+	}
+	var freed int64
+	for _, n := range bp.Delete {
+		size, err := archive.Delete(ctx, n)
+		if err != nil {
+			return freed, fmt.Errorf("prune: %s: %w", id, err)
+		}
+		freed += size
+	}
+	return freed, nil
 }
 
 // orphanLine is one prefix with objects and no manifest.

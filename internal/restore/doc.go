@@ -44,6 +44,9 @@ func WriteDoc(w io.Writer, in DocInput) error {
 
 	objects := viewObjects(m)
 	proc := procedureFor(m.Engine, m.Kind, objects)
+	if m.Engine == "mariadb" && m.MariaDB != nil {
+		proc.Steps = append(proc.Steps, pointInTimeStep(*m.MariaDB, in.Prefix)...)
+	}
 	data := docData{
 		DocInput:      in,
 		Objects:       viewObjects(m),
@@ -275,6 +278,51 @@ func mariadbLogical(objects []objectView) procedure {
 		})
 	}
 	return procedure{Title: "Restore a MariaDB logical backup", Steps: steps}
+}
+
+// pointInTimeStep is the optional last mile: from the restored backup to any
+// later second, by replaying the archived binary log (EF-082).
+//
+// It is written only when the backup carries an anchor, because without one
+// there is nothing to replay from. Its commands take placeholders the reader
+// fills in -- the files, the target -- exactly as DBNAME is filled in above;
+// the end-to-end test substitutes them the same way, so the commands here are
+// the ones that run.
+func pointInTimeStep(anchor manifest.MariaDBDetails, prefix string) []step {
+	binlogDir := strings.TrimSuffix(strings.TrimSuffix(prefix, "/"), "/"+anchor.BinlogFile)
+	// The archive lives beside the backups, one level up from this backup's
+	// own prefix: sources/<id>/binlog/.
+	if i := strings.Index(prefix, "/logical/"); i > 0 {
+		binlogDir = prefix[:i] + "/binlog/"
+	} else if i := strings.Index(prefix, "/physical/"); i > 0 {
+		binlogDir = prefix[:i] + "/binlog/"
+	}
+	return []step{
+		{
+			Title: "Optional: recover to a point in time",
+			Body: fmt.Sprintf("This backup sits at position **%d** of binary log **`%s`**. "+
+				"Every change made after it is in the archived binary logs under `%s`, one file "+
+				"each, encrypted like everything else. To reach a later moment -- just before a "+
+				"mistake, say -- download every file from `%s` onwards from that directory, "+
+				"decrypt them, and replay them up to the moment you want.\n\n"+
+				"Replace BINLOG_FILES with the downloaded `.zst.age` files in order, and TARGET with "+
+				"the moment to stop at, as `YYYY-MM-DD HH:MM:SS` **in UTC**. The `TZ=UTC` matters: "+
+				"mariadb-binlog reads the target in the client's local zone, and a client two hours "+
+				"from UTC would otherwise stop two hours early and say nothing.\n\n"+
+				"Never skip a file. A replay with a file missing rebuilds a database that never "+
+				"existed; if one is not in the archive, stop here.",
+				anchor.BinlogPos, anchor.BinlogFile, binlogDir, anchor.BinlogFile),
+			Command: "for f in BINLOG_FILES; do age -d -i koffr-identity.txt \"$f\" | zstd -d > \"${f%.zst.age}\"; done",
+		},
+		{
+			Title: "Optional: replay the binary log",
+			Body: fmt.Sprintf("The start position applies to the first file only, `%s`; the following files "+
+				"are replayed whole, up to TARGET. Replace BINLOG_PLAIN with the decrypted files, in order.",
+				anchor.BinlogFile),
+			Command: fmt.Sprintf("TZ=UTC mariadb-binlog --start-position=%d --stop-datetime=\"TARGET\" BINLOG_PLAIN "+
+				"| mariadb --defaults-file=restore.cnf --protocol=TCP", anchor.BinlogPos),
+		},
+	}
 }
 
 func mariadbPhysical(objects []objectView) procedure {

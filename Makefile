@@ -111,5 +111,7 @@ verify-mariadb-matrix:
 	@for v in 10.6 11.4 12.0; do \
 		echo "== MariaDB $$v =="; \
 		KOFFR_REQUIRE_DOCKER=1 KOFFR_MARIADB_IMAGE=mariadb:$$v \
-			go test -count=1 ./internal/source/mariadb/... || exit 1; \
+			go test -count=1 ./internal/source/mariadb/... ./internal/binlog/... || exit 1; \
+		KOFFR_REQUIRE_DOCKER=1 KOFFR_MARIADB_IMAGE=mariadb:$$v \
+			go test -count=1 -run 'MariaDB|PointInTime' ./test/e2e/... || exit 1; \
 	done

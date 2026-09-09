@@ -156,6 +156,38 @@ func (s Source) BinlogKey(name string) (string, error) {
 	return s.Prefix() + binlogDir + "/" + name + ".zst.age", nil
 }
 
+// BinlogIndexKey is the plaintext index beside an archived binlog file: its
+// digest, its sizes and when its first event happened. It carries no content,
+// so it may stay in the clear (EF-055), and it is what lets a point-in-time
+// recovery pick files without opening any of them.
+func (s Source) BinlogIndexKey(name string) (string, error) {
+	if err := validSegment(name, "binlog name"); err != nil {
+		return "", err
+	}
+	return s.Prefix() + binlogDir + "/" + name + ".json", nil
+}
+
+// BinlogPrefix lists every archived binlog file and index of a source.
+func (s Source) BinlogPrefix() string { return s.Prefix() + binlogDir + "/" }
+
+// ParseBinlogKey recovers the binlog file name from a key under BinlogPrefix,
+// and says whether the key is the object (true) or its index (false). A key
+// that is neither -- someone else's file under binlog/ -- returns "" and false.
+func ParseBinlogKey(key string) (name string, isObject bool) {
+	i := strings.LastIndex(key, "/"+binlogDir+"/")
+	if i < 0 {
+		return "", false
+	}
+	base := key[i+len(binlogDir)+2:]
+	switch {
+	case strings.HasSuffix(base, ".zst.age"):
+		return strings.TrimSuffix(base, ".zst.age"), true
+	case strings.HasSuffix(base, ".json"):
+		return strings.TrimSuffix(base, ".json"), false
+	}
+	return "", false
+}
+
 // Backup builds the keys of one backup's artifacts.
 type Backup struct {
 	src Source
@@ -203,6 +235,8 @@ const (
 	RefBackupObject RefKind = "backup-object"
 	RefWAL          RefKind = "wal"
 	RefBinlog       RefKind = "binlog"
+	// RefBinlogIndex is the plaintext index beside an archived binlog file.
+	RefBinlogIndex RefKind = "binlog-index"
 )
 
 // Ref is a key decomposed into its parts, so a listing can be interpreted
@@ -288,14 +322,19 @@ func parseSourceKey(key string, parts []string) (Ref, error) {
 		return Ref{Kind: RefWAL, SourceID: id, Object: name}, nil
 
 	case len(parts) == 4 && parts[2] == binlogDir:
+		kind := RefBinlog
 		name := strings.TrimSuffix(parts[3], ".zst.age")
+		if name == parts[3] {
+			kind = RefBinlogIndex
+			name = strings.TrimSuffix(parts[3], ".json")
+		}
 		if name == parts[3] {
 			return Ref{}, fmt.Errorf("layout: %q is not a binlog key", key)
 		}
 		if err := validSegment(name, "binlog name"); err != nil {
 			return Ref{}, err
 		}
-		return Ref{Kind: RefBinlog, SourceID: id, Object: name}, nil
+		return Ref{Kind: kind, SourceID: id, Object: name}, nil
 	}
 	return Ref{}, fmt.Errorf("layout: %q is not a source key", key)
 }

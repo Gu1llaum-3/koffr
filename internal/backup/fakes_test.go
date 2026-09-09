@@ -22,6 +22,10 @@ type fakeSource struct {
 	sidecars map[string][]byte
 	kinds    []source.Kind
 	probeErr error
+	// engine and result let a test stand in for MariaDB and report a binary-log
+	// anchor; zero values keep every existing test on PostgreSQL with no anchor.
+	engine source.Engine
+	result source.Result
 
 	// blockUntil holds Open open, so a second job can be attempted while the
 	// first still holds the lock.
@@ -38,8 +42,12 @@ func (f *fakeSource) Probe(context.Context, executor.Executor) (source.Info, err
 	if kinds == nil {
 		kinds = []source.Kind{source.KindLogical}
 	}
+	engine := f.engine
+	if engine == "" {
+		engine = source.EnginePostgreSQL
+	}
 	return source.Info{
-		Engine:        source.EnginePostgreSQL,
+		Engine:        engine,
 		ServerVersion: "17.11",
 		Kinds:         kinds,
 		Databases:     []string{"probe_database"},
@@ -56,7 +64,7 @@ func (f *fakeSource) Open(context.Context, executor.Executor, source.Request) (*
 		Reader:   bytes.NewReader(f.payload),
 		Codec:    source.CodecNone,
 		Sidecars: func() (map[string][]byte, error) { return f.sidecars, nil },
-		Result:   func() source.Result { return source.Result{} },
+		Result:   func() source.Result { return f.result },
 		Closer:   closerFunc(func() error { return nil }),
 	}, nil
 }

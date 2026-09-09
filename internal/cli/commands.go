@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/Gu1llaum-3/koffr/internal/backup"
+	"github.com/Gu1llaum-3/koffr/internal/binlog"
 	"github.com/Gu1llaum-3/koffr/internal/catalog"
 	"github.com/Gu1llaum-3/koffr/internal/catalog/replica"
 	"github.com/Gu1llaum-3/koffr/internal/config"
@@ -227,6 +230,9 @@ func (a *app) runCheck(ctx context.Context, args []string) error {
 	for _, id := range ids {
 		src, _ := cfg.Source(id)
 		results = append(results, checkSource(ctx, id, src))
+		if src.Binlog != nil && src.Binlog.Enabled {
+			results = append(results, a.checkBinlog(ctx, cfg, id, src))
+		}
 	}
 
 	failed := 0
@@ -292,6 +298,68 @@ func checkDestination(ctx context.Context, name string, dest config.Destination)
 	caps := st.Capabilities()
 	r.OK = true
 	r.Detail = fmt.Sprintf("%s, multipart=%t immutable=%t", dest.Type, caps.Multipart, caps.Immutable)
+	return r
+}
+
+// checkBinlog says what a point-in-time recovery could reach today.
+//
+// The number that matters is how far behind the archive is: the changes in the
+// server's open file and in any closed file not yet archived are exactly what a
+// recovery cannot yet reach. On a quiet database with rotation off that is
+// "everything since the file opened", which can be days -- and is the reason the
+// figure is shown rather than assumed (decided 2026-09-08).
+func (a *app) checkBinlog(ctx context.Context, cfg config.Config, id string, src config.Source) checkResult {
+	r := checkResult{What: "binlog", Target: id}
+	ex, err := executorFor(ctx, src)
+	if err != nil {
+		r.Problem = err.Error()
+		return r
+	}
+	defer func() { _ = ex.Close() }()
+
+	st, err := mariadbConfig(src, localToolRunner()).Binlog(ctx, ex)
+	if err != nil {
+		r.Problem = err.Error()
+		return r
+	}
+	if !st.Enabled {
+		r.Problem = "the server keeps no binary log: set log_bin and restart it, or nothing can be archived"
+		return r
+	}
+	archive, err := a.binlogArchive(ctx, cfg, id, src)
+	if err != nil {
+		r.Problem = err.Error()
+		return r
+	}
+	archived, err := archive.Archived(ctx)
+	if err != nil {
+		r.Problem = err.Error()
+		return r
+	}
+
+	behind := 0
+	var behindBytes uint64
+	highest, ok := binlog.ResumeFrom(archived)
+	for _, f := range st.Files {
+		n, err := binlog.Parse(f.Name)
+		if err != nil {
+			continue
+		}
+		if !ok || n.Seq >= highest.Seq {
+			behind++
+			behindBytes += f.Size
+		}
+	}
+	r.OK = true
+	last := "nothing archived yet"
+	if ok {
+		last = "archived through " + highest.Prev().String()
+	}
+	r.Detail = fmt.Sprintf("on, writing %s @ %d; %s; %d file(s) / %s not yet recoverable",
+		st.File, st.Position, last, behind, humanBytes(int64(behindBytes)))
+	if src.Binlog.RotateEvery == 0 {
+		r.Detail += "; rotation off, so a quiet database's newest changes stay unrecoverable until its file fills"
+	}
 	return r
 }
 
@@ -737,6 +805,16 @@ func (a *app) runShow(ctx context.Context, backupID, sourceID, from string) erro
 			m.StartedAt.UTC().Format(time.RFC3339), m.FinishedAt.UTC().Format(time.RFC3339))
 		p.printf("prefix  %s\n", found.backup.Prefix())
 		p.printf("tool    %s %s\n", m.Tool.Name, m.Tool.Version)
+		if m.MariaDB != nil {
+			// The anchor a point-in-time recovery starts from. Shown because an
+			// operator deciding which backup to replay from needs it, and
+			// because its absence on a MariaDB backup is worth noticing.
+			anchor := fmt.Sprintf("%s @ %d", m.MariaDB.BinlogFile, m.MariaDB.BinlogPos)
+			if m.MariaDB.GTID != "" {
+				anchor += "  gtid " + m.MariaDB.GTID
+			}
+			p.printf("binlog  %s\n", anchor)
+		}
 		// Said here rather than left in the manifest, because the manifest is
 		// not what anyone reads before a restore. A backup that is not a
 		// snapshot looks exactly like one that is, right up until the data
@@ -900,6 +978,7 @@ func (a *app) restoreCmd() *cobra.Command {
 		globals  bool
 		force    bool
 		yes      bool
+		until    string
 		jobs     int
 	)
 	c := &cobra.Command{
@@ -919,7 +998,7 @@ func (a *app) restoreCmd() *cobra.Command {
 				return fault(ExitUsage, "--into is required: name the database to restore into")
 			}
 			return a.runRestore(cmd.Context(), args[0], restoreOptions{
-				sourceID: sourceID, from: from, into: into, target: target, create: create,
+				sourceID: sourceID, from: from, into: into, target: target, create: create, until: until,
 				noOwner: noOwner, globals: globals, jobs: jobs,
 				force: force, yes: yes,
 			})
@@ -934,6 +1013,9 @@ func (a *app) restoreCmd() *cobra.Command {
 		"also replay the accounts and privileges that go with the data\n"+
 			"(PostgreSQL roles and tablespaces, MariaDB users and grants)")
 	c.Flags().IntVar(&jobs, "jobs", 0, "parallel restore workers; needs an archive on disk, see `koffr fetch`")
+	c.Flags().StringVar(&until, "until", "",
+		"MariaDB: after restoring, replay the archived binary log up to this point --\n"+
+			"an RFC 3339 time (2026-09-08T15:41:00Z) or <file>:<position> (EF-082)")
 	c.Flags().StringVar(&target, "target", "",
 		"restore into this configured source's server instead of the backup's own (EF-080)")
 	c.Flags().BoolVar(&force, "force", false,
@@ -955,9 +1037,12 @@ type restoreOptions struct {
 	create  bool
 	noOwner bool
 	globals bool
-	force   bool
-	yes     bool
-	jobs    int
+	// until, when set, turns a MariaDB restore into a point-in-time recovery:
+	// the backup is restored, then the archived binary log is replayed up to it.
+	until string
+	force bool
+	yes   bool
+	jobs  int
 }
 
 func (a *app) runRestore(ctx context.Context, backupID string, opt restoreOptions) error {
@@ -1093,6 +1178,20 @@ func (a *app) restoreMariaDB(
 		return zero, fmt.Errorf("backup %s holds no SQL dump", found.manifest.BackupID)
 	}
 
+	// A point-in-time recovery is planned and preflighted before the dump is
+	// touched: a replay the target cannot run must be refused with nothing
+	// restored, not discovered on top of a freshly loaded database.
+	var replay *replayPlan
+	if opt.until != "" {
+		var err error
+		if replay, err = a.planReplay(ctx, found, opt, src); err != nil {
+			return zero, err
+		}
+		if err := replay.pitr.Preflight(ctx, ex, replay.anchor, replay.files[0], opt.into); err != nil {
+			return zero, err
+		}
+	}
+
 	// Both streams are pipes, so nothing is written to disk: the bytes go
 	// storage -> age -> zstd -> mariadb and nowhere else (ENF-001).
 	prefix := found.backup.Prefix()
@@ -1120,7 +1219,111 @@ func (a *app) restoreMariaDB(
 	if fetchErr := fetchFailed(); fetchErr != nil {
 		return restoreOutcome{Warnings: res.Warnings}, classifyRepository(fetchErr)
 	}
-	return restoreOutcome{Warnings: res.Warnings}, err
+	if err != nil || replay == nil {
+		return restoreOutcome{Warnings: res.Warnings}, err
+	}
+	return restoreOutcome{Warnings: res.Warnings}, a.replay(ctx, replay, opt, ex)
+}
+
+// replayPlan is a point-in-time recovery decided before anything is restored.
+type replayPlan struct {
+	pitr   restore.PITR
+	anchor manifest.MariaDBDetails
+	target restore.Target
+	files  []binlog.Name
+	origin string
+}
+
+// planReplay is the first half of a point-in-time recovery: the archived binary
+// log, from the restored backup's own position to the requested point (EF-082).
+//
+// The plan is made and checked in full before a single event is replayed. A
+// hole in the archive is a refusal here, not a replay that stops short and
+// reports success: a database rebuilt from a log with a file missing is a
+// database that never existed.
+func (a *app) planReplay(
+	ctx context.Context, found *located, opt restoreOptions, src config.Source,
+) (*replayPlan, error) {
+	target, err := restore.ParseTarget(opt.until)
+	if err != nil {
+		return nil, fault(ExitUsage, "%v", err)
+	}
+	if found.manifest.MariaDB == nil {
+		return nil, fault(ExitUsage,
+			"backup %s carries no binary log position, so there is nothing to replay from; "+
+				"a point-in-time recovery needs a backup taken with the binary log on and RELOAD granted",
+			found.manifest.BackupID)
+	}
+	opener, err := openerFor(found.cfg)
+	if err != nil {
+		return nil, err
+	}
+	archive, err := a.binlogArchive(ctx, found.cfg, found.sourceID, src)
+	if err != nil {
+		return nil, err
+	}
+	// The events name the database the backup came from, which is the
+	// backup's own source -- not `src`, which under --target is the server
+	// being restored into. Rewriting from the wrong name rewrites nothing, and
+	// the first real run of this replayed into the target server's namesake.
+	origin, ok := found.cfg.Source(found.sourceID)
+	if !ok {
+		return nil, fault(ExitUsage, "backup %s belongs to source %s, which %s no longer configures; "+
+			"the replay needs its database name", found.manifest.BackupID, found.sourceID, found.cfg.Path())
+	}
+	pitr := restore.PITR{
+		Config:  mariadbConfig(src, localToolRunner()),
+		Archive: archive,
+		Opener:  opener,
+		Workdir: found.cfg.Binlog.Dir,
+	}
+	files, err := pitr.Plan(ctx, *found.manifest.MariaDB, target)
+	if err != nil {
+		return nil, err
+	}
+	return &replayPlan{pitr: pitr, anchor: *found.manifest.MariaDB, target: target, files: files, origin: origin.Database}, nil
+}
+
+// replay is the second half of a point-in-time recovery, after the dump.
+func (a *app) replay(ctx context.Context, plan *replayPlan, opt restoreOptions, ex executor.Executor) error {
+	a.printf("replaying %d binary log file(s) from %s:%d to %s...",
+		len(plan.files), plan.anchor.BinlogFile, plan.anchor.BinlogPos, opt.until)
+	if err := plan.pitr.Replay(ctx, ex, plan.anchor, plan.target, plan.files, plan.origin, opt.into); err != nil {
+		return err
+	}
+	a.printf("recovered %s to %s", opt.into, opt.until)
+	return nil
+}
+
+// binlogArchive opens the archive of a source, on the destination it archives to.
+func (a *app) binlogArchive(
+	ctx context.Context, cfg config.Config, sourceID string, src config.Source,
+) (*binlog.Archive, error) {
+	destName := ""
+	if src.Binlog != nil {
+		destName = src.Binlog.Destination
+	}
+	if destName == "" && len(src.Destinations) > 0 {
+		destName = src.Destinations[0]
+	}
+	dest, ok := cfg.Destinations[destName]
+	if !ok {
+		return nil, fmt.Errorf("source %s archives its binary log to %q, which is not a configured destination",
+			sourceID, destName)
+	}
+	st, err := openStorage(ctx, dest)
+	if err != nil {
+		return nil, err
+	}
+	layout, err := storage.ForSource(sourceID)
+	if err != nil {
+		return nil, err
+	}
+	sealer, err := sealerFor(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &binlog.Archive{Source: layout, Storage: st, Sealer: sealer}, nil
 }
 
 // pipeObject streams one object into a pipe the caller reads, and returns a
@@ -1890,9 +2093,12 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	if len(jobs) == 0 {
+	// A daemon with nothing to do is a configuration mistake (PD-006). A
+	// source that archives its binary log is something to do, even when every
+	// backup is driven from cron: the receiver has to run somewhere.
+	if len(jobs) == 0 && binlogSources(cfg) == 0 {
 		return fault(ExitConfig,
-			"no source in %s has a schedule; add `schedule: \"@daily\"` to one, "+
+			"no source in %s has a schedule or archives its binary log; add `schedule: \"@daily\"` to one, "+
 				"or drive `koffr backup` from cron instead", cfg.Path())
 	}
 
@@ -2045,6 +2251,14 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	done := make(chan error, 1)
 	go func() { done <- sched.Run(ctx) }()
 
+	// One receiver per source that archives its binary log, beside the
+	// scheduler and independent of it (EF-032). A supervisor that gives up --
+	// a crash loop, which it has already reported -- does not take the backups
+	// down with it: the nightly dump still runs, and the operator has been told
+	// the recovery point stopped moving.
+	streamers := a.startBinlogSupervisors(ctx, cfg, hub)
+	defer streamers.Wait()
+
 	for {
 		select {
 		case err := <-done:
@@ -2059,6 +2273,92 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 			a.reload(sched)
 		}
 	}
+}
+
+// startBinlogSupervisors launches the binary-log receivers and returns what to
+// wait on. Each runs until the context ends or it proves unrecoverable.
+// binlogSources counts the sources whose binary log the daemon archives.
+func binlogSources(cfg config.Config) int {
+	n := 0
+	for _, id := range cfg.SourceIDs() {
+		if src, _ := cfg.Source(id); src.Binlog != nil && src.Binlog.Enabled {
+			n++
+		}
+	}
+	return n
+}
+
+func (a *app) startBinlogSupervisors(ctx context.Context, cfg config.Config, hub *notify.Hub) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	for _, id := range cfg.SourceIDs() {
+		src, _ := cfg.Source(id)
+		if src.Binlog == nil || !src.Binlog.Enabled {
+			continue
+		}
+		sup, err := a.binlogSupervisor(ctx, cfg, id, src, hub)
+		if err != nil {
+			a.warnf("koffr: %s: binary log archiving not started: %v", id, err)
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := sup.Run(ctx)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				a.warnf("koffr: %s: binary log archiving stopped: %v", id, err)
+			}
+		}()
+		a.printf("archiving the binary log of %s to %s", id, sup.Spool)
+	}
+	return &wg
+}
+
+// binlogSupervisor assembles one source's receiver from the configuration.
+func (a *app) binlogSupervisor(
+	ctx context.Context, cfg config.Config, id string, src config.Source, hub *notify.Hub,
+) (*binlog.Supervisor, error) {
+	ex, err := executorFor(ctx, src)
+	if err != nil {
+		return nil, err
+	}
+	archive, err := a.binlogArchive(ctx, cfg, id, src)
+	if err != nil {
+		_ = ex.Close()
+		return nil, err
+	}
+	serverID := src.Binlog.ServerID
+	if serverID == 0 {
+		serverID = deriveServerID(id)
+	}
+	sup := &binlog.Supervisor{
+		SourceID: id,
+		Config:   mariadbConfig(src, localToolRunner()),
+		Tools:    localToolRunner(),
+		Reach:    ex,
+		Spool:    filepath.Join(cfg.Binlog.Dir, id),
+		Bounds:   binlog.Bounds{High: uint64(cfg.Binlog.High), Low: uint64(cfg.Binlog.Low)},
+		ServerID: serverID,
+		Rotate:   src.Binlog.RotateEvery,
+		Archive:  archive,
+		Logf:     func(format string, args ...any) { a.printf(format, args...) },
+	}
+	if hub != nil {
+		sup.Notify = func(ev notify.Event) { hub.Publish(ctx, ev) }
+	}
+	return sup, nil
+}
+
+// deriveServerID turns a source id into a replica server id that is stable
+// across restarts and unlikely to collide with a real replica's.
+//
+// The server disconnects two clients presenting the same id in turn, which
+// looks exactly like a link that keeps dropping; a hash of the source id keeps
+// two Koffr sources apart, and the high range keeps them clear of the small
+// numbers operators hand-assign to real replicas.
+func deriveServerID(sourceID string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(sourceID))
+	return 1<<31 + h.Sum32()%(1<<30)
 }
 
 // reload rereads the configuration on SIGHUP.

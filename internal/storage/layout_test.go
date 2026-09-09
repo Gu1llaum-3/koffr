@@ -226,6 +226,7 @@ func TestParse(t *testing.T) {
 	b, _ := src.Backup(storage.DirLogical, "B1")
 	walKey, _ := src.WALSegmentKey("000000010000000000000001")
 	binlogKey, _ := src.BinlogKey("mariadb-bin.000123")
+	binlogIndex, _ := src.BinlogIndexKey("mariadb-bin.000123")
 
 	for _, tc := range []struct {
 		key  string
@@ -246,6 +247,10 @@ func TestParse(t *testing.T) {
 		}},
 		{binlogKey, storage.Ref{
 			Kind: storage.RefBinlog, SourceID: "prod-pg-main",
+			Object: "mariadb-bin.000123",
+		}},
+		{binlogIndex, storage.Ref{
+			Kind: storage.RefBinlogIndex, SourceID: "prod-pg-main",
 			Object: "mariadb-bin.000123",
 		}},
 	} {
@@ -286,6 +291,7 @@ func TestLayoutMatchesDocumentedTree(t *testing.T) {
 	physical, _ := src.Backup(storage.DirPhysical, "B0")
 	wal, _ := src.WALSegmentKey("000000010000000000000001")
 	binlog, _ := src.BinlogKey("mariadb-bin.000123")
+	binlogIndex, _ := src.BinlogIndexKey("mariadb-bin.000123")
 
 	want := []string{
 		"catalog/2026-09-05T02-00-00Z.json.zst.age",
@@ -293,6 +299,7 @@ func TestLayoutMatchesDocumentedTree(t *testing.T) {
 		"koffr.json",
 		"locks/prod-pg-main.lock",
 		"RECOVERY.md",
+		"sources/prod-pg-main/binlog/mariadb-bin.000123.json",
 		"sources/prod-pg-main/binlog/mariadb-bin.000123.zst.age",
 		"sources/prod-pg-main/logical/B1/RESTORE.md",
 		"sources/prod-pg-main/logical/B1/details.json.zst.age",
@@ -312,6 +319,7 @@ func TestLayoutMatchesDocumentedTree(t *testing.T) {
 		storage.DescriptorFile,
 		src.LockKey(),
 		storage.RecoveryDoc,
+		binlogIndex,
 		binlog,
 		logical.RestoreDocKey(),
 		logical.DetailsKey(),
@@ -332,5 +340,29 @@ func TestLayoutMatchesDocumentedTree(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("key %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+// A listing under binlog/ has to be read back into names, and only the keys
+// this layout produces may count: a stray file someone else put there is
+// neither an archived log nor a hole in the sequence.
+func TestParseBinlogKey(t *testing.T) {
+	src, _ := storage.ForSource("s1")
+	obj, _ := src.BinlogKey("mariadb-bin.000042")
+	idx, _ := src.BinlogIndexKey("mariadb-bin.000042")
+
+	name, isObject := storage.ParseBinlogKey(obj)
+	if name != "mariadb-bin.000042" || !isObject {
+		t.Errorf("object key parsed as %q, %v", name, isObject)
+	}
+	name, isObject = storage.ParseBinlogKey(idx)
+	if name != "mariadb-bin.000042" || isObject {
+		t.Errorf("index key parsed as %q, %v", name, isObject)
+	}
+	if name, _ := storage.ParseBinlogKey(src.BinlogPrefix() + "notes.txt"); name != "" {
+		t.Errorf("a stray file parsed as %q", name)
+	}
+	if name, _ := storage.ParseBinlogKey("elsewhere/mariadb-bin.000042.zst.age"); name != "" {
+		t.Errorf("a key outside binlog/ parsed as %q", name)
 	}
 }

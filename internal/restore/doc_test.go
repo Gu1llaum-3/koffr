@@ -251,3 +251,46 @@ func TestWriteDoc_RejectsAnEmptyManifest(t *testing.T) {
 	err := restore.WriteDoc(&b, restore.DocInput{Manifest: manifest.Manifest{}})
 	require.Error(t, err)
 }
+
+func mariaFixture(anchor *manifest.MariaDBDetails) manifest.Manifest {
+	m := fixture()
+	m.Engine = "mariadb"
+	m.ServerVersion = "11.4.13-MariaDB"
+	m.Objects = []manifest.Object{
+		{Key: "dump.sql.zst.age", SizeBytes: 4096, SHA256: fixture().Objects[0].SHA256,
+			Codec: "zstd", Encryption: "age", Recipients: fixture().Objects[0].Recipients},
+		{Key: "grants.sql.zst.age", SizeBytes: 512, SHA256: fixture().Objects[1].SHA256,
+			Codec: "zstd", Encryption: "age", Recipients: fixture().Objects[1].Recipients},
+	}
+	m.Tool = manifest.ToolFrom("mariadb", "11.4.13-MariaDB", nil)
+	m.MariaDB = anchor
+	return m
+}
+
+// A backup that carries a binary log position can be carried forward to any
+// later second; the document has to say how, with commands that run. Without an
+// anchor there is nothing to replay from, and the steps must not appear -- a
+// procedure that mentions a recovery it cannot perform is a procedure that gets
+// tried at 3 AM.
+func TestWriteDoc_PointInTimeStepsFollowTheAnchor(t *testing.T) {
+	with := render(t, mariaFixture(&manifest.MariaDBDetails{
+		BinlogFile: "mariadb-bin.000042", BinlogPos: 1234, GTID: "0-1-99",
+	}))
+	assert.Contains(t, with, "recover to a point in time")
+	assert.Contains(t, with, "--start-position=1234")
+	assert.Contains(t, with, "mariadb-bin.000042")
+	assert.Contains(t, with, "sources/prod-pg-main/binlog/", "the reader is told where the archive lives")
+	assert.Contains(t, with, "TZ=UTC", "the time zone trap is in the document, not only in the code")
+	for _, placeholder := range []string{"BINLOG_FILES", "BINLOG_PLAIN", "TARGET"} {
+		assert.Contains(t, with, placeholder)
+	}
+	// P-006 holds for any decompressor at the head of a pipe.
+	for _, block := range regexp.MustCompile("(?s)```sh\n(.*?)```").FindAllStringSubmatch(with, -1) {
+		assert.NotContains(t, block[1], "pipefail")
+	}
+	assert.Contains(t, with, "Never skip a file")
+
+	without := render(t, mariaFixture(nil))
+	assert.NotContains(t, without, "recover to a point in time")
+	assert.NotContains(t, without, "mariadb-binlog")
+}

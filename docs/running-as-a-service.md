@@ -77,6 +77,13 @@ writes to has to be named in `ReadWritePaths`:
 
 Add the destination to `ReadWritePaths` yourself.
 
+The same goes for the binary log spool. `binlog.spool_dir` is where
+`koffr schedule` keeps the files the server's client is still writing, before
+they are archived; the default `/var/lib/koffr` is already writable, and a
+spool anywhere else has to be added too. The spool is bounded by `spool_high`
+(2 GiB by default) and is checked at start: a spool the service cannot write
+to fails the start rather than the first rotation at three in the morning.
+
 `koffr check` catches it if you forget. It writes a probe object to every
 destination and removes it again, so a path that is readable and not writable
 fails the check instead of failing the first backup:

@@ -616,3 +616,55 @@ func TestStore_RecordsWhenTheSnapshotIsNotConsistent(t *testing.T) {
 		}))
 	})
 }
+
+// EF-031 was declared done in M3a and was half done: the source captured the
+// binary-log position and nothing wrote it anywhere. The catalog already had
+// the columns, waiting. Without this a point-in-time recovery has no anchor to
+// start from, and every backup looks the same as one taken with the log off.
+func TestRun_RecordsTheBinlogAnchorInManifestAndCatalog(t *testing.T) {
+	r := newRig(t)
+	src := &fakeSource{
+		payload: []byte("-- MariaDB dump"),
+		engine:  source.EngineMariaDB,
+		result:  source.Result{BinlogFile: "binlog.000042", BinlogPos: 1234, GTID: "0-1-99"},
+	}
+	res, err := r.runner.Run(t.Context(), r.request(src))
+	require.NoError(t, err)
+
+	mprefix := "sources/" + sourceID + "/logical/" + string(res.BackupID) + "/"
+	m, err := manifest.Decode(bytes.NewReader(r.read(t, mprefix+"manifest.json")))
+	require.NoError(t, err)
+	require.NotNil(t, m.MariaDB, "the anchor must reach the manifest")
+	assert.Equal(t, "binlog.000042", m.MariaDB.BinlogFile)
+	assert.Equal(t, uint64(1234), m.MariaDB.BinlogPos)
+	assert.Equal(t, "0-1-99", m.MariaDB.GTID)
+
+	// Denormalised into the catalog so retention can hold the binlog floor
+	// without opening a manifest (EF-063).
+	rows, err := r.catalog.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "binlog.000042", rows[0].BinlogFile)
+	assert.Equal(t, uint64(1234), rows[0].BinlogPos)
+}
+
+// No anchor is recorded as no anchor. A position of zero in a file called ""
+// looks, to a replay, like the start of nothing in particular, and a manifest
+// that carried it would send a restore somewhere it should never go.
+func TestRun_NoBinlogAnchorWhenTheSourceHadNone(t *testing.T) {
+	r := newRig(t)
+	res, err := r.runner.Run(t.Context(), r.request(&fakeSource{
+		payload: []byte("-- MariaDB dump"), engine: source.EngineMariaDB,
+	}))
+	require.NoError(t, err)
+
+	mprefix := "sources/" + sourceID + "/logical/" + string(res.BackupID) + "/"
+	m, err := manifest.Decode(bytes.NewReader(r.read(t, mprefix+"manifest.json")))
+	require.NoError(t, err)
+	assert.Nil(t, m.MariaDB)
+
+	rows, err := r.catalog.ListBackups(t.Context(), catalog.BackupFilter{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Empty(t, rows[0].BinlogFile)
+}

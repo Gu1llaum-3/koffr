@@ -13,3 +13,4 @@ specification nobody trusts.
 
 - `M0-report.md` — seven probes on the architecture; the specification held, with one amendment
 - `M1-report.md` — four probes on interruption and multipart uploads; EF-041 amended
+- `M3c-report.md` — eight findings on archiving and replaying the MariaDB binary log; PD-003 amended, EF-082 delivered with limits

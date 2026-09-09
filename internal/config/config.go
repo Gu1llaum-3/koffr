@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,7 @@ type Config struct {
 	Notify       Notify                 `yaml:"notify,omitempty"`
 	HTTP         HTTP                   `yaml:"http,omitempty"`
 	Log          Log                    `yaml:"log,omitempty"`
+	Binlog       BinlogSpool            `yaml:"binlog,omitempty"`
 	Destinations map[string]Destination `yaml:"destinations"`
 	Sources      map[string]Source      `yaml:"sources"`
 
@@ -379,7 +381,101 @@ type Source struct {
 
 	Destinations []string `yaml:"destinations"`
 	SSH          *SSH     `yaml:"ssh,omitempty"`
+
+	// Binlog archives this MariaDB source's binary log continuously, which is
+	// what makes a point-in-time recovery possible (EF-032). Nil means off.
+	Binlog *SourceBinlog `yaml:"binlog,omitempty"`
 }
+
+// SourceBinlog is one source's binary-log archiving.
+type SourceBinlog struct {
+	Enabled bool `yaml:"enabled"`
+
+	// Destination is where the files go. Empty means the source's first.
+	Destination string `yaml:"destination,omitempty"`
+
+	// ServerID is what the receiver presents to the server. It has to be
+	// stable and unique per source: two receivers sharing one are
+	// disconnected in turn by the server, which looks exactly like a link
+	// that keeps dropping. Zero derives one from the source id.
+	ServerID uint32 `yaml:"server_id,omitempty"`
+
+	// RotateEvery asks the server to close its current file this often, so a
+	// quiet database's newest changes do not sit in an open file for hours.
+	// Off by default (decided 2026-09-08): it touches the server and needs
+	// RELOAD. Without it the recovery point of a quiet database is "whenever
+	// the current file fills", and `koffr check` says how far back that is.
+	RotateEvery time.Duration `yaml:"rotate_every,omitempty"`
+}
+
+// BinlogSpool is where closed binary log files wait to be archived, and how
+// much of them may wait.
+//
+// mariadb-binlog --raw writes files; it has no kernel pipe to push back on, so
+// the spool is the buffer. Above High the receiver is stopped; it resumes only
+// once the archiver has drained the spool below Low. This is the one place
+// Koffr keeps a complete artifact on its own disk, bounded, checked at load
+// time and emptied as it goes -- the exception PD-003 admits for continuous
+// and detached processes, and the same one M3b uses on the database host.
+type BinlogSpool struct {
+	Dir  string `yaml:"spool_dir,omitempty"`
+	High Size   `yaml:"spool_high,omitempty"`
+	Low  Size   `yaml:"spool_low,omitempty"`
+}
+
+// Size is a byte count written the way an operator writes one: 2G, 400M, 64K.
+type Size uint64
+
+// UnmarshalYAML accepts "2G", "400M", "64K", "1024" and their lowercase forms.
+func (z *Size) UnmarshalYAML(value *yaml.Node) error {
+	var raw string
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	n, err := ParseSize(raw)
+	if err != nil {
+		return err
+	}
+	*z = Size(n)
+	return nil
+}
+
+// ParseSize reads a size with an optional K, M, G or T suffix (binary units).
+func ParseSize(raw string) (uint64, error) {
+	s := strings.TrimSpace(strings.ToUpper(raw))
+	if s == "" {
+		return 0, fmt.Errorf("empty size")
+	}
+	// "2GiB", "2GB" and "2G" all mean the same thing to the person writing
+	// them, so the byte marker goes first and the unit letter is read after.
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "IB"), "B")
+	mult := uint64(1)
+	if s != "" {
+		switch s[len(s)-1] {
+		case 'K':
+			mult, s = 1<<10, s[:len(s)-1]
+		case 'M':
+			mult, s = 1<<20, s[:len(s)-1]
+		case 'G':
+			mult, s = 1<<30, s[:len(s)-1]
+		case 'T':
+			mult, s = 1<<40, s[:len(s)-1]
+		}
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is not a size (want a number with an optional K, M, G or T)", raw)
+	}
+	return n * mult, nil
+}
+
+// Binlog defaults and bounds.
+const (
+	DefaultSpoolHigh = Size(2 << 30)
+	// MinRotateEvery keeps the option from turning the binary log into a
+	// stream of near-empty files.
+	MinRotateEvery = time.Minute
+)
 
 // SSH reaches a database that publishes no port (EF-002).
 type SSH struct {
@@ -533,6 +629,14 @@ func (c *Config) validate(v *validator) {
 		c.Destinations[id] = d
 	}
 
+	archives := false
+	for _, src := range c.Sources {
+		if src.Binlog != nil && src.Binlog.Enabled {
+			archives = true
+		}
+	}
+	c.Binlog.validate(v, "binlog", archives)
+
 	if len(c.Sources) == 0 {
 		v.add("sources", "no sources", "a backup needs a database to read")
 	}
@@ -659,11 +763,60 @@ func (d *Destination) validateTransfer(v *validator, path string) {
 	}
 }
 
+func (b *SourceBinlog) validate(v *validator, path string, src *Source) {
+	if !b.Enabled {
+		return
+	}
+	if src.Engine != "mariadb" {
+		// Refused rather than ignored: an operator who turned it on believes
+		// they can recover to a point in time, and they cannot (PD-006).
+		v.add(path+".enabled", fmt.Sprintf("set on a %s source", src.Engine),
+			"binary log archiving is MariaDB's; PostgreSQL has WAL archiving, which is EF-016")
+	}
+	if b.Destination != "" && !slices.Contains(src.Destinations, b.Destination) {
+		v.add(path+".destination", fmt.Sprintf("%q is not one of this source's destinations", b.Destination),
+			"name one of: "+strings.Join(src.Destinations, ", "))
+	}
+	if b.RotateEvery < 0 {
+		v.add(path+".rotate_every", "negative", "a duration such as 5m, or leave it out to never rotate")
+	}
+	if b.RotateEvery > 0 && b.RotateEvery < MinRotateEvery {
+		v.add(path+".rotate_every", fmt.Sprintf("%s is under %s", b.RotateEvery, MinRotateEvery),
+			"rotating that often turns the log into a stream of near-empty files; at least "+MinRotateEvery.String())
+	}
+}
+
+func (b *BinlogSpool) validate(v *validator, path string, anySourceArchives bool) {
+	if !anySourceArchives {
+		return
+	}
+	if b.Dir == "" {
+		v.add(path+".spool_dir", "no spool directory",
+			"where closed binary log files wait to be archived; it must be writable by Koffr")
+	} else if !filepath.IsAbs(b.Dir) {
+		v.add(path+".spool_dir", fmt.Sprintf("%q is not absolute", b.Dir),
+			"a relative spool moves with the working directory, and a service has no useful one")
+	}
+	if b.High == 0 {
+		b.High = DefaultSpoolHigh
+	}
+	if b.Low == 0 {
+		b.Low = b.High / 5
+	}
+	if b.Low >= b.High {
+		v.add(path+".spool_low", fmt.Sprintf("%d is not below spool_high (%d)", b.Low, b.High),
+			"the receiver stops at spool_high and resumes at spool_low; equal bounds make it flap")
+	}
+}
+
 // engines are what is actually implemented. Naming one that is not would
 // accept a configuration that cannot run (PD-006).
 var engines = []string{"postgresql", "mariadb"}
 
 func (s *Source) validate(v *validator, path string, destinations map[string]Destination) {
+	if s.Binlog != nil {
+		s.Binlog.validate(v, path+".binlog", s)
+	}
 	if !slices.Contains(engines, s.Engine) {
 		v.add(path+".engine", fmt.Sprintf("%q is not a supported engine", s.Engine),
 			"supported: "+strings.Join(engines, ", "))

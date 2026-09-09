@@ -428,6 +428,7 @@ func (r *Runner) store(
 		// not have the configuration that allowed it, nor the conversation
 		// where someone decided the risk was acceptable.
 		SnapshotConsistent: snapshotConsistent(info),
+		MariaDB:            mariaDetails(info.Engine, run.SourceResult),
 	}
 	if err := m.Validate(); err != nil {
 		return manifest.Manifest{}, fmt.Errorf("backup: %w", err)
@@ -519,7 +520,43 @@ func (r *Runner) record(ctx context.Context, req Request, b storage.Backup, m ma
 		FinishedAt:  m.FinishedAt,
 		SizeBytes:   total,
 		ManifestKey: b.ManifestKey(),
+		// Denormalised so retention can hold the binlog floor without opening
+		// a manifest (EF-063). Empty when the manifest has no anchor: the
+		// column's zero is not a position.
+		BinlogFile: binlogFileOf(m),
+		BinlogPos:  binlogPosOf(m),
 	})
+}
+
+// mariaDetails turns what the source reported into the manifest's anchor.
+//
+// Nil unless there is a real position. The source leaves the file empty when
+// the server keeps no binary log or the user may not read it, and a details
+// block with an empty file and position zero would look, to a replay, like the
+// start of nothing in particular.
+func mariaDetails(engine source.Engine, res source.Result) *manifest.MariaDBDetails {
+	if engine != source.EngineMariaDB || res.BinlogFile == "" {
+		return nil
+	}
+	return &manifest.MariaDBDetails{
+		BinlogFile: res.BinlogFile,
+		BinlogPos:  res.BinlogPos,
+		GTID:       res.GTID,
+	}
+}
+
+func binlogFileOf(m manifest.Manifest) string {
+	if m.MariaDB == nil {
+		return ""
+	}
+	return m.MariaDB.BinlogFile
+}
+
+func binlogPosOf(m manifest.Manifest) uint64 {
+	if m.MariaDB == nil {
+		return 0
+	}
+	return m.MariaDB.BinlogPos
 }
 
 // discard removes everything a failed job wrote.

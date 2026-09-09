@@ -95,10 +95,15 @@ func (c *Config) validate() error {
 const (
 	binDump   = "mariadb-dump"
 	binClient = "mariadb"
+	binBinlog = "mariadb-binlog"
 
 	legacyDump   = "mysqldump"
 	legacyClient = "mysql"
+	legacyBinlog = "mysqlbinlog"
 )
+
+// BinBinlog is the binary-log client, exported for the archiver.
+const BinBinlog = binBinlog
 
 func legacyName(name string) string {
 	switch name {
@@ -106,6 +111,8 @@ func legacyName(name string) string {
 		return legacyDump
 	case binClient:
 		return legacyClient
+	case binBinlog:
+		return legacyBinlog
 	}
 	return ""
 }
@@ -410,4 +417,11 @@ func (c Config) Connect(ctx context.Context, ex executor.Executor) (*sql.DB, err
 func isDatabaseAccessDenied(err error) bool {
 	var me *mysql.MySQLError
 	return errors.As(err, &me) && me.Number == 1044
+}
+
+// SessionForTest builds a Session around an existing credentials file, for
+// tests that render a command line without opening anything. Not for
+// production use: nothing here binds a tunnel or removes the file.
+func SessionForTest(defaultsFile string) *Session {
+	return &Session{cred: &credentials{path: defaultsFile}}
 }

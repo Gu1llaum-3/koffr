@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,11 +34,22 @@ func hasMariaDumpBinary() bool {
 
 func startMariaSource(t *testing.T, ctx context.Context) *tcmariadb.MariaDBContainer {
 	t.Helper()
-	c, err := tcmariadb.Run(ctx, "mariadb:11.4",
+	return startMariaSourceWith(t, ctx)
+}
+
+// startMariaSourceWith starts the source with extra server arguments -- the
+// binary log, for the point-in-time test.
+func startMariaSourceWith(t *testing.T, ctx context.Context, serverArgs ...string) *tcmariadb.MariaDBContainer {
+	t.Helper()
+	opts := []testcontainers.ContainerCustomizer{
 		tcmariadb.WithDatabase(mariaDatabase),
 		tcmariadb.WithUsername("app"),
 		tcmariadb.WithPassword(mariaPass),
-	)
+	}
+	if len(serverArgs) > 0 {
+		opts = append(opts, testcontainers.WithCmd(append([]string{"mariadbd"}, serverArgs...)...))
+	}
+	c, err := tcmariadb.Run(ctx, mariadbImage(), opts...)
 	require.NoError(t, err)
 	//nolint:contextcheck // teardown outlives the test context by design
 	t.Cleanup(func() { _ = testcontainers.TerminateContainer(c) })
@@ -73,6 +86,12 @@ func seedMaria(t *testing.T, ctx context.Context, c *tcmariadb.MariaDBContainer)
 
 func writeMariaConfig(t *testing.T, dir, repo string, port int) (identity, cfgPath string) {
 	t.Helper()
+	return writeMariaConfigWith(t, dir, repo, port, "", "")
+}
+
+// writeMariaConfigWith takes extra YAML for the source and for the top level.
+func writeMariaConfigWith(t *testing.T, dir, repo string, port int, sourceExtra, topExtra string) (identity, cfgPath string) {
+	t.Helper()
 	identity, recipient := testutil.AgeIdentity(t)
 	_, recovery := testutil.AgeIdentity(t)
 
@@ -88,7 +107,7 @@ crypto:
   identity: env:KOFFR_IDENTITY
 catalog:
   path: %s
-destinations:
+%sdestinations:
   main:
     type: fs
     path: %s
@@ -102,7 +121,7 @@ sources:
     database: %s
     sslmode: disable
     destinations: [main]
-`, recipient, recovery, filepath.Join(dir, "catalog.db"), repo, port, mariaUser, mariaDatabase)
+%s`, recipient, recovery, filepath.Join(dir, "catalog.db"), topExtra, repo, port, mariaUser, mariaDatabase, sourceExtra)
 	require.NoError(t, os.WriteFile(cfgPath, []byte(content), 0o600))
 	return identity, cfgPath
 }
@@ -211,4 +230,57 @@ func loadMariaBackup(
 	}
 	require.NoError(t, c.CopyToContainer(ctx,
 		[]byte(identity+"\n"), "/restore/koffr-identity.txt", 0o600))
+}
+
+// loadBinlogs copies the archived binary log objects from the backup's own
+// file onwards to the bare machine, in order, and returns their names -- what
+// the document calls BINLOG_FILES. Files before the anchor are left behind on
+// purpose: the document says "from <file> onwards", and this test follows it.
+func loadBinlogs(t *testing.T, ctx context.Context, c testcontainers.Container, binlogDir, anchorFile string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(binlogDir)
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".zst.age") {
+			continue
+		}
+		if strings.TrimSuffix(e.Name(), ".zst.age") < anchorFile {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(binlogDir, e.Name())) //nolint:gosec // a path this test just created
+		require.NoError(t, err)
+		require.NoError(t, c.CopyToContainer(ctx, body, "/restore/"+e.Name(), 0o644))
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	return names
+}
+
+// lockedBuffer is a strings.Builder that can be written by one goroutine and
+// read by another.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// mariadbImage is the server under test; make verify-mariadb-matrix walks the
+// supported majors through it, CI pins one.
+func mariadbImage() string {
+	if img := os.Getenv("KOFFR_MARIADB_IMAGE"); img != "" {
+		return img
+	}
+	return "mariadb:11.4"
 }

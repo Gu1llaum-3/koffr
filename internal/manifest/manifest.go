@@ -65,6 +65,13 @@ type Manifest struct {
 	// (EF-055).
 	SnapshotConsistent *bool `json:"snapshot_consistent,omitempty"`
 
+	// MariaDB carries the anchor a point-in-time recovery starts from: where in
+	// the binary log this backup's snapshot sits (EF-031). Absent when the
+	// source could not say -- no binary log, or no RELOAD privilege -- because a
+	// zero position that looks like a real one would send a replay to the
+	// beginning of a file it should have skipped.
+	MariaDB *MariaDBDetails `json:"mariadb,omitempty"`
+
 	Objects []Object `json:"objects"`
 	Tool    Tool     `json:"tool"`
 
@@ -81,6 +88,19 @@ type PostgreSQLDetails struct {
 	EndLSN    string `json:"end_lsn"`
 	Timeline  int32  `json:"timeline"`
 	WALMethod string `json:"wal_method"`
+}
+
+// MariaDBDetails is the binary-log position of a MariaDB backup.
+//
+// File and position are what mariadb-binlog replays from; they are exact, and
+// they are what a restore onto a fresh server needs. GTID is recorded alongside
+// for the operator and for a future replica setup, but is not what the replay
+// keys on: reconciling GTID state is where wal-g gave up on MariaDB, and a fresh
+// server has no such state to reconcile.
+type MariaDBDetails struct {
+	BinlogFile string `json:"binlog_file"`
+	BinlogPos  uint64 `json:"binlog_pos"`
+	GTID       string `json:"gtid,omitempty"`
 }
 
 // Object is one stored artifact.
