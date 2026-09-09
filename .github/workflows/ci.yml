@@ -48,11 +48,31 @@ jobs:
           # read a newer archive format.
           echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
 
+      # CT-002 / M3: the MariaDB tests drive mariadb-dump and mariadb-binlog on
+      # this host against MariaDB servers in containers. The runner ships MySQL's
+      # client, which is not compatible with a MariaDB server over the
+      # replication protocol -- mysqlbinlog against a MariaDB server exits -1 and
+      # every binary-log test times out. A matching MariaDB client is installed,
+      # pinned to the version of the test containers.
+      - name: Install MariaDB 11.4 client
+        run: |
+          sudo install -d /etc/apt/keyrings
+          sudo curl -fsSL -o /etc/apt/keyrings/mariadb.asc \
+            https://mariadb.org/mariadb_release_signing_key.asc
+          echo "deb [signed-by=/etc/apt/keyrings/mariadb.asc] \
+            https://mirror.mariadb.org/repo/11.4/ubuntu $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/mariadb.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mariadb-client
+
       - name: Confirm the client toolchain
         run: |
           pg_dump --version
           pg_restore --version
           pg_dumpall --version
+          mariadb --version
+          mariadb-dump --version
+          mariadb-binlog --version
 
       - name: Test
         env:
