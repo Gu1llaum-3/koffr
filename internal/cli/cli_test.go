@@ -1225,7 +1225,12 @@ func TestSchedule_RunsRetentionOnItsOwnTimetable(t *testing.T) {
 }
 
 // Without a prune schedule, nothing is purged however long the daemon runs.
-func TestSchedule_NoPruneScheduleMeansNoPurge(t *testing.T) {
+// Retention rides with each backup by default (EF-067), so it does not run
+// spontaneously: with no fixed prune cadence and no backup completing in the
+// window, nothing is purged. The disable switch (scheduler.prune: off) and the
+// after-backup behaviour itself are covered by the config tests and the real
+// run.
+func TestSchedule_NoBackupInWindowMeansNoPurge(t *testing.T) {
 	cfgPath := configFile(t)
 	withRetention(t, cfgPath, "      keep_last: 1")
 
@@ -1249,7 +1254,7 @@ func TestSchedule_NoPruneScheduleMeansNoPurge(t *testing.T) {
 	prefix := filepath.Join(filepath.Dir(cfgPath), "repo", "sources", "prod-pg-main", "logical")
 	entries, err := os.ReadDir(prefix)
 	require.NoError(t, err)
-	assert.Len(t, entries, 2, "a purge nobody scheduled must not happen")
+	assert.Len(t, entries, 2, "no backup completed in the window, so retention had nothing to ride with")
 }
 
 // A purge on a versioned or Object-Locked bucket removes the backup from view

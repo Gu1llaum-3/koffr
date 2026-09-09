@@ -61,17 +61,34 @@ koffr prune --confirm             # do it
 koffr prune --orphans --confirm   # and sweep what a dead job left behind
 ```
 
-On a timetable, alongside the backups:
+### Automatically (the default)
+
+Retention is applied **automatically after every successful backup**, on by
+default — the way Veeam and Proxmox Backup Server do it. A retention that needs
+a human to run it is a retention that silently stops being applied. The safety
+is in the logic, not in a human gate: it computes what to keep and deletes only
+the rest, checks each backup is really in the repository before deleting, keeps
+the last restorable one whatever the policy, and when it cannot be sure it keeps
+everything.
+
+Running after each backup means it works whatever triggers the backup, including
+`koffr backup` from an external cron, where a separately scheduled purge would
+not.
+
+`scheduler.prune` chooses how it runs:
 
 ```yaml
 scheduler:
-  prune: "@daily"
+  prune: ""          # (default) after each successful backup
+  # prune: "@daily"  # a fixed cadence instead, like PBS
+  # prune: "off"     # disabled: retention only when you run koffr prune
 ```
 
-Off unless written. A repository that grows for ever is the alternative, and it
-is still better than a purge that ran because nobody said it should not.
+The cadence changes only how promptly expired backups leave, never which set is
+kept — so it is not a safety lever. A single `koffr backup` skips this pass with
+`--no-prune`.
 
-The scheduled purge does not catch up a missed run. A missed backup is a gap in
+A fixed-cadence purge does not catch up a missed run. A missed backup is a gap in
 history worth making good; a missed purge is a day of extra storage, and
 hurrying to delete things after an outage is the wrong instinct.
 
@@ -85,6 +102,20 @@ that reads the catalog, and paid for every month.
 `--orphans` finds them. Anything touched in the last 24 hours is left alone — a
 backup being written has objects and no manifest too, and deleting a running job
 is a far worse outcome than paying for a stale prefix another day.
+
+This sweep, unlike retention, never deletes a backup, so it runs on its own
+timetable and is **on by default**:
+
+```yaml
+scheduler:
+  maintenance: ""          # (default) daily
+  # maintenance: "@hourly" # a different cadence
+  # maintenance: "off"     # disabled
+```
+
+`scheduler.maintenance` sweeps orphans and the incomplete multipart uploads a
+killed job leaves on an object store; it is separate from `scheduler.prune` so
+the safe cleanup and the sensitive deletion never share a switch.
 
 ### The half that no listing shows
 

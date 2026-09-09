@@ -45,6 +45,7 @@ type Config struct {
 	HTTP         HTTP                   `yaml:"http,omitempty"`
 	Log          Log                    `yaml:"log,omitempty"`
 	Binlog       BinlogSpool            `yaml:"binlog,omitempty"`
+	Watch        Watch                  `yaml:"watch,omitempty"`
 	Destinations map[string]Destination `yaml:"destinations"`
 	Sources      map[string]Source      `yaml:"sources"`
 
@@ -81,13 +82,34 @@ type Scheduler struct {
 
 	Retry Retry `yaml:"retry,omitempty"`
 
-	// Prune is when the scheduler applies retention policies, as a cron spec.
-	// Empty means never: a purge that ran without anyone deciding it should is
-	// the one automation whose mistakes cannot be undone.
+	// Prune governs when retention is applied (EF-067). It is automatic and on
+	// by default, because that is what Veeam, Proxmox Backup Server and the
+	// rest do: a retention that needs a human to run it is a retention that
+	// silently stops being applied. The safety is in the logic (keep-set
+	// first, reconcile with the repository, floors, refuse when unsure), not
+	// in a human gate -- a wrong policy deletes the wrong thing by hand too.
+	//
+	//   ""            after each successful backup (the default); runs whatever
+	//                 triggered the backup, koffr backup from cron included.
+	//   a cron spec   on that fixed cadence instead, like PBS. Cadence changes
+	//                 only how promptly expired backups leave, never which set
+	//                 is kept.
+	//   "off"/"never" disabled; retention only when someone runs koffr prune.
 	//
 	// It runs at most one source at a time and skips a source whose backup is
 	// in flight, like everything else the scheduler drives.
 	Prune string `yaml:"prune,omitempty"`
+
+	// Maintenance is when the safe housekeeping runs (EF-066): sweeping the
+	// objects a dead job left and the multipart uploads it abandoned, which no
+	// listing shows and which the store bills for. It never deletes a backup,
+	// so unlike Prune it is on by default.
+	//
+	//   ""            daily (the default): housekeeping that never runs is how
+	//                 an object store fills with litter nobody can see.
+	//   a cron spec   on that cadence instead.
+	//   "off"/"never" disabled.
+	Maintenance string `yaml:"maintenance,omitempty"`
 
 	// CatchUp picks up a scheduled window that went by while Koffr was not
 	// running. A pointer so that leaving it out means yes: a machine rebooting
@@ -102,6 +124,55 @@ type Scheduler struct {
 
 	location *time.Location
 	window   scheduler.Window
+}
+
+// Watch is the veille (EF-138, EF-139): supervision of the backups and the
+// path to them -- a source that stops answering, a backup that did not run, one
+// that shrank, one that vanished from its destination. On by default. It never
+// watches the health of the database itself (disk, connections, replication):
+// that is a dedicated monitor's job.
+type Watch struct {
+	// Disabled turns the veille off. On by default, because a backup nobody is
+	// told failed is a backup nobody has.
+	Disabled bool `yaml:"disabled,omitempty"`
+
+	// Interval is how often reachability and freshness are checked.
+	Interval time.Duration `yaml:"interval,omitempty"`
+
+	// StaleAfter is how long without a successful backup before a source is
+	// reported stale.
+	StaleAfter time.Duration `yaml:"stale_after,omitempty"`
+
+	// MaxShrink is the fraction a backup may shrink versus the previous one
+	// before it is flagged. 0.4 means a 40 %% drop alarms.
+	MaxShrink float64 `yaml:"max_shrink,omitempty"`
+}
+
+// Enabled reports whether the veille runs.
+func (w Watch) Enabled() bool { return !w.Disabled }
+
+// IntervalOr is the check cadence, one minute by default.
+func (w Watch) IntervalOr() time.Duration {
+	if w.Interval > 0 {
+		return w.Interval
+	}
+	return time.Minute
+}
+
+// StaleAfterOr is the freshness threshold, a day by default.
+func (w Watch) StaleAfterOr() time.Duration {
+	if w.StaleAfter > 0 {
+		return w.StaleAfter
+	}
+	return 24 * time.Hour
+}
+
+// MaxShrinkOr is the shrink fraction that alarms, 0.4 by default.
+func (w Watch) MaxShrinkOr() float64 {
+	if w.MaxShrink > 0 {
+		return w.MaxShrink
+	}
+	return 0.4
 }
 
 // Window is the daily span during which backups may start.
@@ -122,6 +193,51 @@ func (s Scheduler) ExecutionWindow() scheduler.Window { return s.window }
 
 // CatchUpEnabled reports whether a missed window should be picked up.
 func (s Scheduler) CatchUpEnabled() bool { return s.CatchUp == nil || *s.CatchUp }
+
+// PruneDisabled reports whether automatic retention is switched off entirely.
+func (s Scheduler) PruneDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(s.Prune)) {
+	case "off", "never", "none", "disabled":
+		return true
+	}
+	return false
+}
+
+// PruneCadence is the fixed cron schedule for retention, or "" when retention
+// runs after each backup (the default) or is disabled (EF-067).
+func (s Scheduler) PruneCadence() string {
+	if s.PruneDisabled() || strings.TrimSpace(s.Prune) == "" {
+		return ""
+	}
+	return s.Prune
+}
+
+// PruneAfterBackup reports whether retention runs after each successful backup:
+// the default, when no fixed cadence is configured and it is not disabled.
+func (s Scheduler) PruneAfterBackup() bool {
+	return !s.PruneDisabled() && strings.TrimSpace(s.Prune) == ""
+}
+
+// MaintenanceDisabled reports whether the housekeeping pass is switched off.
+func (s Scheduler) MaintenanceDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(s.Maintenance)) {
+	case "off", "never", "none", "disabled":
+		return true
+	}
+	return false
+}
+
+// MaintenanceCadence is the cron the housekeeping runs on: the configured one,
+// daily when unset (on by default, EF-066), or "" when disabled.
+func (s Scheduler) MaintenanceCadence() string {
+	if s.MaintenanceDisabled() {
+		return ""
+	}
+	if strings.TrimSpace(s.Maintenance) == "" {
+		return "@daily"
+	}
+	return s.Maintenance
+}
 
 // Retention is EF-060. Rules are a union: a backup any rule wants is kept.
 type Retention struct {
@@ -616,6 +732,10 @@ func (c *Config) validate(v *validator) {
 	}
 
 	c.Scheduler.validate(v)
+	if c.Watch.MaxShrink < 0 || c.Watch.MaxShrink > 1 {
+		v.add("watch.max_shrink", "must be a fraction between 0 and 1",
+			"0.4 means a backup that shrinks by 40 %% is flagged")
+	}
 	c.Notify.validate(v, c)
 	c.HTTP.validate(v)
 	c.Log.validate(v)
@@ -992,10 +1112,17 @@ func (s *Scheduler) validate(v *validator) {
 	if s.Retry.MaxDelay == 0 {
 		s.Retry.MaxDelay = 30 * time.Minute
 	}
-	if s.Prune != "" {
-		if err := scheduler.ValidateSpec(s.Prune); err != nil {
-			v.add("scheduler.prune", fmt.Sprintf("%q is not a schedule: %v", s.Prune, err),
-				"cron, or a shortcut: @daily is the usual answer")
+	if cad := s.PruneCadence(); cad != "" {
+		if err := scheduler.ValidateSpec(cad); err != nil {
+			v.add("scheduler.prune", fmt.Sprintf("%q is not a schedule: %v", cad, err),
+				"a cron or shortcut like @daily for a fixed cadence, "+
+					"empty to prune after each backup, or off to disable")
+		}
+	}
+	if !s.MaintenanceDisabled() && strings.TrimSpace(s.Maintenance) != "" {
+		if err := scheduler.ValidateSpec(s.Maintenance); err != nil {
+			v.add("scheduler.maintenance", fmt.Sprintf("%q is not a schedule: %v", s.Maintenance, err),
+				"a cron or shortcut like @daily, empty for daily, or off to disable")
 		}
 	}
 

@@ -77,6 +77,12 @@ writes to has to be named in `ReadWritePaths`:
 
 Add the destination to `ReadWritePaths` yourself.
 
+Koffr also watches the sources it backs up (`watch:`), on by default: it alerts
+through the configured channels when a source stops answering, when a backup has
+not run in too long, when one shrinks sharply, or when the latest backup is no
+longer on its destination. It never watches the database's own health -- disk,
+connections, replication, slow queries -- which belongs to a dedicated monitor.
+
 The same goes for the binary log spool. `binlog.spool_dir` is where
 `koffr schedule` keeps the files the server's client is still writing, before
 they are archived; the default `/var/lib/koffr` is already writable, and a

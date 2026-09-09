@@ -43,6 +43,7 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/source/postgres"
 	"github.com/Gu1llaum-3/koffr/internal/storage"
 	"github.com/Gu1llaum-3/koffr/internal/version"
+	"github.com/Gu1llaum-3/koffr/internal/watch"
 )
 
 // ---------------------------------------------------------------- version
@@ -474,6 +475,7 @@ func (a *app) backupCmd() *cobra.Command {
 		excludeS    []string
 		includeT    []string
 		excludeT    []string
+		noPrune     bool
 	)
 	c := &cobra.Command{
 		Use:   "backup <source>",
@@ -491,6 +493,7 @@ func (a *app) backupCmd() *cobra.Command {
 			}
 			return a.runBackup(cmd.Context(), args[0], backupOptions{
 				destination: destination,
+				noPrune:     noPrune,
 				request: source.Request{
 					Kind:           source.Kind(kind),
 					Label:          label,
@@ -509,12 +512,14 @@ func (a *app) backupCmd() *cobra.Command {
 	c.Flags().StringSliceVar(&excludeS, "exclude-schema", nil, "skip these schemas")
 	c.Flags().StringSliceVar(&includeT, "include-table", nil, "restrict to these tables")
 	c.Flags().StringSliceVar(&excludeT, "exclude-table", nil, "skip these tables")
+	c.Flags().BoolVar(&noPrune, "no-prune", false, "do not apply retention after this backup")
 	return c
 }
 
 type backupOptions struct {
 	destination string
 	request     source.Request
+	noPrune     bool
 }
 
 // backupOnce runs one backup and returns its result, classified.
@@ -578,7 +583,59 @@ func (a *app) runBackup(ctx context.Context, sourceID string, opt backupOptions)
 		p.printf("%s  %s  %s  %s in %.1fs\n",
 			out.BackupID, out.Source, out.Kind, humanBytes(out.Bytes), out.Seconds)
 	})
+
+	// Retention rides with the backup by default (EF-067): it runs whatever
+	// triggered the backup, koffr backup from an external cron included, where
+	// a separately scheduled prune would not. A fixed cadence (scheduler.prune)
+	// takes over instead, and --no-prune or "off" skips it.
+	if !opt.noPrune {
+		if cfg, err := a.loadConfig(); err == nil && cfg.Scheduler.PruneAfterBackup() {
+			a.retainAfterBackup(ctx, cfg, sourceID)
+		}
+	}
 	return nil
+}
+
+// retainAfterBackup applies retention for one source right after it was backed
+// up. Concise on purpose: the detailed table belongs to koffr prune, this is a
+// line in a backup's output or a daemon's log. Safety is entirely in planFor
+// (keep-set, restorable floor, refuse-when-unsure); this only wires it in.
+func (a *app) retainAfterBackup(ctx context.Context, cfg config.Config, sourceID string) {
+	src, ok := cfg.Source(sourceID)
+	if !ok {
+		return
+	}
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		a.warnf("koffr: %s: retention skipped, catalog: %v", sourceID, err)
+		return
+	}
+	defer func() { _ = cat.Close() }()
+
+	var deleted int
+	var freed int64
+	for _, destName := range src.Destinations {
+		policy := src.RetentionFor(destName)
+		if policy.IsZero() {
+			continue
+		}
+		plan, err := a.planFor(ctx, cat, cfg, sourceID, src, destName, policy)
+		if err != nil {
+			a.warnf("koffr: %s on %s: retention skipped: %v", sourceID, destName, err)
+			continue
+		}
+		applied, err := a.applyFor(ctx, cat, cfg, destName, plan)
+		if err != nil {
+			a.warnf("koffr: %s on %s: retention failed: %v", sourceID, destName, err)
+			continue
+		}
+		deleted += len(applied.Deleted)
+		freed += applied.FreedBytes
+	}
+	if deleted > 0 {
+		a.refreshReplica(ctx, cfg, cat)
+		a.printf("retention: %s: deleted %d, freed %s", sourceID, deleted, humanBytes(freed))
+	}
 }
 
 func (a *app) doBackup(
@@ -2160,6 +2217,15 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 					"bytes", totalBytes(res.Manifest), "destination", job.Destination)
 				a.reportSuccess(ctx, hub, dms, job.SourceID, string(res.BackupID),
 					totalBytes(res.Manifest))
+				// Retention rides with the backup unless a fixed cadence is set
+				// (EF-067). The scheduler runs backupOnce, not runBackup, so
+				// the hook lives here too.
+				if cfg.Scheduler.PruneAfterBackup() {
+					a.retainAfterBackup(ctx, cfg, job.SourceID)
+				}
+				if cfg.Watch.Enabled() {
+					a.checkBackupShrink(ctx, cfg, hub, job.SourceID, totalBytes(res.Manifest))
+				}
 			}
 			return err
 		},
@@ -2207,6 +2273,14 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 		return &Fault{Code: ExitConfig, Err: err}
 	}
 
+	// Dry run shows the timetable and starts nothing: no purge, no maintenance,
+	// no receivers, no watchers. A preview that launched background loops would
+	// have to tear them down, and the first version of this hung doing exactly
+	// that.
+	if dryRun {
+		return a.printTimetable(cfg, jobs)
+	}
+
 	// Retention on its own timetable, and only if one was written. A purge that
 	// ran because nobody said it should not is the one automation whose
 	// mistakes cannot be undone -- so this stays opt-in even though a
@@ -2217,9 +2291,11 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	}
 	defer stopPrune()
 
-	if dryRun {
-		return a.printTimetable(cfg, jobs)
+	stopMaint, err := a.scheduleMaintenance(ctx, cfg)
+	if err != nil {
+		return err
 	}
+	defer stopMaint()
 
 	// Databasus does this and Koffr did not: a process that died left its job
 	// recorded as running for ever, so the catalog claimed a backup was in
@@ -2257,6 +2333,8 @@ func (a *app) runSchedule(ctx context.Context, dryRun bool) error {
 	// down with it: the nightly dump still runs, and the operator has been told
 	// the recovery point stopped moving.
 	streamers := a.startBinlogSupervisors(ctx, cfg, hub)
+	watchers := a.startWatcher(ctx, cfg, hub)
+	defer watchers.Wait()
 	defer streamers.Wait()
 
 	for {
@@ -2518,7 +2596,11 @@ func lastSuccessfulBackups(ctx context.Context, cfg config.Config) (map[string]t
 // not a backup, it must not consume a backup's concurrency slot, and a source
 // whose purge overran should not have its next backup skipped for it.
 func (a *app) schedulePrune(ctx context.Context, cfg config.Config) (stop func(), err error) {
-	if cfg.Scheduler.Prune == "" {
+	// Only a fixed cadence is scheduled here. Empty means retention rides with
+	// each backup instead (EF-067), and "off" disables it -- both handled
+	// elsewhere, neither a job for this scheduler.
+	cadence := cfg.Scheduler.PruneCadence()
+	if cadence == "" {
 		return func() {}, nil
 	}
 
@@ -2541,16 +2623,62 @@ func (a *app) schedulePrune(ctx context.Context, cfg config.Config) (stop func()
 			}
 		},
 	}
-	if err := pruner.SetJobs([]scheduler.Job{{SourceID: "retention", Spec: cfg.Scheduler.Prune}}); err != nil {
+	if err := pruner.SetJobs([]scheduler.Job{{SourceID: "retention", Spec: cadence}}); err != nil {
 		return nil, &Fault{Code: ExitConfig, Err: err}
 	}
 
-	a.printf("retention runs on %s", cfg.Scheduler.Prune)
+	a.printf("retention runs on %s", cadence)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		_ = pruner.Run(ctx)
+	}()
+	return func() { <-done }, nil
+}
+
+// scheduleMaintenance runs the safe housekeeping on its cron (EF-066): the
+// orphan and incomplete-upload sweep, which never deletes a backup and is on by
+// default. Separate from schedulePrune because the sensitive deletion and the
+// safe cleanup should not share a switch.
+func (a *app) scheduleMaintenance(ctx context.Context, cfg config.Config) (stop func(), err error) {
+	cadence := cfg.Scheduler.MaintenanceCadence()
+	if cadence == "" {
+		return func() {}, nil
+	}
+
+	m := &scheduler.Scheduler{
+		Location:       cfg.Scheduler.Location(),
+		MaxConcurrent:  1,
+		Window:         cfg.Scheduler.ExecutionWindow(),
+		DisableCatchUp: true,
+		Execute: func(ctx context.Context, _ scheduler.Job) error {
+			orphans, uploads, err := a.sweepOrphans(ctx, cfg, true)
+			if err != nil {
+				return err
+			}
+			if len(orphans) > 0 || len(uploads) > 0 {
+				a.logf(ctx, slog.LevelInfo, "maintenance swept litter",
+					"orphan_prefixes", len(orphans), "incomplete_uploads", len(uploads))
+			}
+			return nil
+		},
+		OnResult: func(res scheduler.Result) {
+			if res.Err != nil {
+				a.logf(ctx, slog.LevelError, "scheduled maintenance failed", "error", res.Err.Error())
+			}
+		},
+	}
+	if err := m.SetJobs([]scheduler.Job{{SourceID: "maintenance", Spec: cadence}}); err != nil {
+		return nil, &Fault{Code: ExitConfig, Err: err}
+	}
+
+	a.printf("maintenance runs on %s", cadence)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = m.Run(ctx)
 	}()
 	return func() { <-done }, nil
 }
@@ -2580,3 +2708,136 @@ func (a *app) openMirrors(
 // fromFlagHelp is shared because the flag means the same thing everywhere, and
 // three slightly different sentences would be three chances to disagree.
 const fromFlagHelp = "read from this destination; by default, wherever the backup is"
+
+// startWatcher runs the veille (EF-138, EF-139): one loop watching every source
+// for reachability, backup freshness, and the presence of the latest backup on
+// its destination. It never watches the database's own health -- that is a
+// dedicated monitor's job. Returns what to wait on, like the binlog supervisors.
+func (a *app) startWatcher(ctx context.Context, cfg config.Config, hub *notify.Hub) *sync.WaitGroup {
+	var wg sync.WaitGroup
+	if !cfg.Watch.Enabled() || len(cfg.SourceIDs()) == 0 {
+		return &wg
+	}
+	w := watch.New(watch.Deps{
+		Sources:       cfg.SourceIDs(),
+		Reachable:     func(ctx context.Context, id string) error { return a.sourceReachable(ctx, cfg, id) },
+		LastSuccess:   func(ctx context.Context, id string) (time.Time, bool) { return a.watchLastSuccess(ctx, cfg, id) },
+		LatestPresent: func(ctx context.Context, id string) (bool, bool, error) { return a.watchLatestPresent(ctx, cfg, id) },
+		StaleAfter:    cfg.Watch.StaleAfterOr(),
+		Interval:      cfg.Watch.IntervalOr(),
+		Publish:       func(ev notify.Event) { hub.Publish(ctx, ev) },
+		Logf:          func(format string, args ...any) { a.logf(ctx, slog.LevelInfo, fmt.Sprintf(format, args...)) },
+		Now:           func() time.Time { return time.Now().UTC() },
+	})
+	a.printf("watching %d source(s) every %s", len(cfg.SourceIDs()), cfg.Watch.IntervalOr())
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = w.Run(ctx)
+	}()
+	return &wg
+}
+
+// sourceReachable connects to a source and lets its driver prove the server
+// answers. The driver's error never carries a credential (ENF-021).
+func (a *app) sourceReachable(ctx context.Context, cfg config.Config, id string) error {
+	src, ok := cfg.Source(id)
+	if !ok {
+		return fmt.Errorf("no such source %s", id)
+	}
+	ex, err := executorFor(ctx, src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = ex.Close() }()
+	drv, err := sourceFor(src, ex)
+	if err != nil {
+		return err
+	}
+	_, err = drv.Probe(ctx, ex)
+	return err
+}
+
+// watchLastSuccess is when a source last backed up successfully.
+func (a *app) watchLastSuccess(ctx context.Context, cfg config.Config, id string) (time.Time, bool) {
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer func() { _ = cat.Close() }()
+	backups, err := cat.ListBackups(ctx, catalog.BackupFilter{SourceID: id})
+	if err != nil {
+		return time.Time{}, false
+	}
+	var best time.Time
+	found := false
+	for _, b := range backups {
+		if b.Status == catalog.StatusCompleted && b.FinishedAt.After(best) {
+			best, found = b.FinishedAt, true
+		}
+	}
+	return best, found
+}
+
+// watchLatestPresent reports whether a source's most recent completed backup is
+// still on its destination. ok is false when it cannot be told -- a fail-safe:
+// a destination Koffr cannot reach is not evidence a backup is gone.
+func (a *app) watchLatestPresent(ctx context.Context, cfg config.Config, id string) (bool, bool, error) {
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		return false, false, err
+	}
+	defer func() { _ = cat.Close() }()
+	backups, err := cat.ListBackups(ctx, catalog.BackupFilter{SourceID: id})
+	if err != nil {
+		return false, false, err
+	}
+	var latest catalog.Backup
+	found := false
+	for _, b := range backups {
+		if b.Status == catalog.StatusCompleted && b.FinishedAt.After(latest.FinishedAt) {
+			latest, found = b, true
+		}
+	}
+	if !found {
+		return false, false, nil
+	}
+	restorable, err := a.restorableCheck(ctx, cfg, latest.Destination)
+	if err != nil {
+		return false, false, err
+	}
+	return restorable(latest), true, nil
+}
+
+// checkBackupShrink alerts when the backup just taken is much smaller than the
+// one before it (EF-139): a backup that loses 40 %% overnight is an incident.
+func (a *app) checkBackupShrink(ctx context.Context, cfg config.Config, hub *notify.Hub, id string, newSize int64) {
+	cat, err := openCatalog(ctx, cfg)
+	if err != nil {
+		return
+	}
+	defer func() { _ = cat.Close() }()
+	backups, err := cat.ListBackups(ctx, catalog.BackupFilter{SourceID: id})
+	if err != nil {
+		return
+	}
+	var completed []catalog.Backup
+	for _, b := range backups {
+		if b.Status == catalog.StatusCompleted {
+			completed = append(completed, b)
+		}
+	}
+	sort.Slice(completed, func(i, j int) bool { return completed[i].FinishedAt.After(completed[j].FinishedAt) })
+	if len(completed) < 2 {
+		return // nothing to compare the newest against
+	}
+	prev := completed[1].SizeBytes
+	if alarm, drop := watch.ShrinkAlarming(newSize, prev, cfg.Watch.MaxShrinkOr()); alarm {
+		hub.Publish(ctx, notify.Event{
+			Severity: notify.SeverityWarning, Kind: notify.KindBackupShrank, SourceID: id,
+			OccurredAt: time.Now().UTC(),
+			Message: fmt.Sprintf("backup of %s shrank %.0f%% from the previous one (%s to %s)",
+				id, drop*100, humanBytes(prev), humanBytes(newSize)),
+		})
+	}
+}

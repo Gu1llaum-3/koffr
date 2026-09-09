@@ -27,6 +27,14 @@ const (
 
 	KindRestoreCompleted = "restore.completed"
 	KindRestoreFailed    = "restore.failed"
+
+	// Watch events (EF-138, EF-139): the state of the backups and the path to
+	// them, never the health of the database itself.
+	KindSourceUnreachable = "source.unreachable"
+	KindSourceRecovered   = "source.recovered"
+	KindBackupStale       = "backup.stale"
+	KindBackupShrank      = "backup.shrank"
+	KindBackupMissing     = "backup.missing"
 )
 
 // AtLeast reports whether s is as urgent as min.
