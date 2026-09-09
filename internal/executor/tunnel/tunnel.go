@@ -36,6 +36,14 @@ type Forwarder struct {
 	// outlived its job would hold an SSH channel open on the database host.
 	done chan struct{}
 	wg   sync.WaitGroup
+
+	// live holds both ends of every connection being carried, so Close can
+	// cut them. A carry ends when both sides have closed; a far side that
+	// streams forever -- a binary log dump thread in --stop-never -- never
+	// does, and Close would wait on it until the server rebooted.
+	mu     sync.Mutex
+	closed bool
+	live   map[net.Conn]struct{}
 }
 
 // Forward binds a loopback listener and carries its connections to target.
@@ -59,7 +67,7 @@ func Forward(ctx context.Context, ex executor.Executor, target string) (*Forward
 		return nil, fmt.Errorf("tunnel: bind local listener: %w", err)
 	}
 
-	f := &Forwarder{listener: ln, target: target, done: make(chan struct{})}
+	f := &Forwarder{listener: ln, target: target, done: make(chan struct{}), live: map[net.Conn]struct{}{}}
 	go f.accept(ctx, ex)
 	return f, nil
 }
@@ -75,6 +83,15 @@ func (f *Forwarder) accept(ctx context.Context, ex executor.Executor) {
 		if err != nil {
 			return // closed
 		}
+		// The connection is registered here, synchronously, before the carrier
+		// goroutine runs. Registering inside carry raced Close: Close could
+		// snapshot an empty set and then wait forever on a carrier that
+		// registered a moment later. If Close has already run, refuse the
+		// connection outright.
+		if !f.track(conn) {
+			_ = conn.Close()
+			continue
+		}
 		f.wg.Add(1)
 		go func() {
 			defer f.wg.Done()
@@ -85,7 +102,7 @@ func (f *Forwarder) accept(ctx context.Context, ex executor.Executor) {
 
 // carry joins one local connection to a connection opened by the executor.
 func (f *Forwarder) carry(ctx context.Context, ex executor.Executor, local net.Conn) {
-	defer func() { _ = local.Close() }()
+	defer f.release(local)
 
 	remote, err := ex.Dial(ctx, "tcp", f.target)
 	if err != nil {
@@ -95,7 +112,14 @@ func (f *Forwarder) carry(ctx context.Context, ex executor.Executor, local net.C
 		// looks like anyway.
 		return
 	}
-	defer func() { _ = remote.Close() }()
+	// If Close ran between accepting local and dialing remote, remote is not
+	// registered and would be leaked; refuse it and let local's deferred
+	// release end the carry.
+	if !f.track(remote) {
+		_ = remote.Close()
+		return
+	}
+	defer f.release(remote)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -115,7 +139,35 @@ func (f *Forwarder) carry(ctx context.Context, ex executor.Executor, local net.C
 	wg.Wait()
 }
 
-// Close stops accepting and waits for the connections in flight.
+// track registers a connection so Close can cut it, and reports whether it
+// did. Once Close has run it refuses, so a connection accepted or dialed in
+// the race with Close is handed back to be closed rather than leaked.
+func (f *Forwarder) track(c net.Conn) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return false
+	}
+	f.live[c] = struct{}{}
+	return true
+}
+
+func (f *Forwarder) release(c net.Conn) {
+	f.mu.Lock()
+	delete(f.live, c)
+	f.mu.Unlock()
+	_ = c.Close()
+}
+
+// Close stops accepting, cuts the connections in flight, and waits for their
+// carriers to finish.
+//
+// Cutting rather than draining is deliberate. A Forwarder is closed when the
+// session that owns it is done, which is after the client process has exited
+// or been killed; whatever is still open at that point is a far side that
+// has not noticed. The first receiver stopped through a tunnel hung the
+// daemon's shutdown for as long as the server kept its dump thread, which is
+// forever.
 func (f *Forwarder) Close() error {
 	f.closeOnce.Do(func() {
 		f.closeErr = f.listener.Close()
@@ -123,6 +175,12 @@ func (f *Forwarder) Close() error {
 			f.closeErr = nil
 		}
 		<-f.done
+		f.mu.Lock()
+		f.closed = true
+		for c := range f.live {
+			_ = c.Close()
+		}
+		f.mu.Unlock()
 		f.wg.Wait()
 	})
 	return f.closeErr

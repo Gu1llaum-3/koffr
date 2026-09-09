@@ -189,3 +189,57 @@ func (noDial) Capabilities() executor.Capabilities {
 func (noDial) Close() error { return nil }
 
 var _ executor.Executor = noDial{}
+
+// A connection neither end will hang up must not hold Close hostage: a
+// receiver still attached on one side, its --stop-never dump thread on the
+// other. This is the shape that hung a daemon's shutdown for six minutes
+// through a real tunnel. The executor here dials a connection that only ever
+// ends when it is closed, so the cut in Close is the single thing that can
+// unblock the carrier -- remove it and this test hangs.
+func TestForward_CloseCutsAConnectionNeitherEndHangsUp(t *testing.T) {
+	ex := &holdingExecutor{dialed: make(chan net.Conn, 1)}
+	f, err := tunnel.Forward(t.Context(), ex, "held:0")
+	require.NoError(t, err)
+
+	client, err := dial(t, f.Addr())
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+	_, err = client.Write([]byte("COM_BINLOG_DUMP"))
+	require.NoError(t, err)
+
+	// Wait until the executor has dialed, so remote is live and tracked.
+	select {
+	case <-ex.dialed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the tunnel never dialed the target")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- f.Close() }()
+	select {
+	case err := <-closed:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close waited on a connection neither end would hang up")
+	}
+}
+
+// holdingExecutor dials a connection whose reads block until it is closed --
+// a stand-in for a database that keeps streaming and never hangs up, which is
+// what a --stop-never binary log dump does.
+type holdingExecutor struct{ dialed chan net.Conn }
+
+func (e *holdingExecutor) Dial(context.Context, string, string) (net.Conn, error) {
+	mine, theirs := net.Pipe() // Read blocks until Close; no data ever flows
+	e.dialed <- theirs
+	return mine, nil
+}
+func (e *holdingExecutor) Start(context.Context, executor.Command) (executor.Process, error) {
+	return nil, errors.New("holdingExecutor cannot exec")
+}
+func (e *holdingExecutor) Capabilities() executor.Capabilities {
+	return executor.Capabilities{CanDial: true, Target: "holding"}
+}
+func (e *holdingExecutor) Close() error { return nil }
+
+var _ executor.Executor = (*holdingExecutor)(nil)
