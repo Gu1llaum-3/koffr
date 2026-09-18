@@ -348,4 +348,12 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   et exige `DOCKER_HOST` **et** `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` sur Colima ou Podman.
 - **Un commit a été fait avec `verify` rouge** (violation de `AR-05` non vue), puis amendé avant
   toute poussée. La règle reste : lire le code de retour **avant** de commiter.
-- `mise run verify` : **0**. Suite complète avec conteneurs et `-race` : **0**.
+- **La CI a rattrapé une régression que j'avais introduite et que je ne pouvais pas voir.** Après
+  avoir prouvé que la garde de requêtes mordait, j'ai restauré `mysql.go` par `git checkout` — or
+  le fichier n'avait **jamais été indexé** : la commande a remis le stub de 12 lignes à la place de
+  l'implémentation. Deux choses ont masqué la casse en local : le test concerné était **sauté**
+  dans le shell sans `DOCKER_HOST` (c'est le coût assumé de `N-9`), et **le cache de `go test`**
+  répondait `(cached)` dans l'autre. `KOFFR_REQUIRE_DOCKER=1` en CI a fait exactement ce pour quoi
+  il existe. Geste inscrit dans le skill `implementer` : pour retirer puis remettre, **copier le
+  fichier**, jamais `git checkout`, et relancer avec `-count=1`.
+- `mise run verify` : **0**. Suite complète avec conteneurs et `-race`, **sans cache** : **0**.
