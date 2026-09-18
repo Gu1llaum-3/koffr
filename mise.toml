@@ -19,8 +19,8 @@ description = "Apply the formatters"
 run = "golangci-lint fmt ./..."
 
 [tasks.test]
-description = "Unit and domain tests, with the race detector"
-run = "go test ./... -race"
+description = "Unit and domain tests, with the race detector when the machine can run it"
+run = "./scripts/run-tests.sh"
 
 [tasks.build]
 description = "Static binary for the host platform, CGO_ENABLED=0"
