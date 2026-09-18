@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -38,24 +39,25 @@ func (v Version) String() string {
 	return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
 }
 
-// IsZero reports whether no version was read at all.
+// IsZero reports whether no number could be read. Raw is not part of the
+// question: it holds what was announced, precisely so that an error can quote
+// the unreadable thing.
 func (v Version) IsZero() bool {
-	return v.Major == 0 && v.Minor == 0 && v.Patch == 0 && v.Raw == ""
+	return v.Major == 0 && v.Minor == 0 && v.Patch == 0
 }
 
-// ParseVersion reads the leading numbers of a version string. It keeps what it
-// was given: "11.4.8-MariaDB-ubu2404" parses to 11.4.8 and remembers the whole.
+// versionNumbers matches the first dotted number group of a version string.
+// Reading *every* number instead would turn "16.10 (Debian 16.10-1.pgdg13+1)"
+// into 16.10.16, because the build metadata is full of digits.
+var versionNumbers = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+// ParseVersion reads the version out of what a server or a tool announces, and
+// keeps the whole announcement. "11.4.8-MariaDB-ubu2404" is 11.4.8 and stays
+// quotable; "pg_dump (PostgreSQL) 15.4" is 15.4.
 func ParseVersion(raw string) Version {
 	version := Version{Raw: strings.TrimSpace(raw)}
 
-	fields := strings.FieldsFunc(version.Raw, func(r rune) bool {
-		return r < '0' || r > '9'
-	})
-	for i, field := range fields {
-		if i > 2 {
-			break
-		}
-
+	for i, field := range strings.Split(versionNumbers.FindString(version.Raw), ".") {
 		number, err := strconv.Atoi(field)
 		if err != nil {
 			break

@@ -176,15 +176,15 @@ test ne tiennent pas, tout le lot change de forme.
       > **Détour** : la première version lisait `KOFFR_REQUIRE_DOCKER` dans le test Go, et
       > `AR-05` l'a refusé — seul `internal/config` lit l'environnement. La règle avait raison :
       > la décision est passée dans `scripts/run-tests.sh`, là où celle de `-race` vit déjà.
-- [ ] **1.3** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
+- [x] **1.3** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
       du serveur (`N-8`), jamais déduite. Un MariaDB et un MySQL sur le même port se distinguent.
       Puis le code.
-- [ ] **1.4** Test — la sonde n'exécute **rien d'autre** que sa requête de version : pas de
+- [x] **1.4** Test — la sonde n'exécute **rien d'autre** que sa requête de version : pas de
       `SHOW TABLES`, pas de dump. Vérifié en lisant les requêtes émises.
-- [ ] **1.5** `internal/domain/resolve/ports.go` : le port `ServerProbe` déclaré **par le domaine**,
+- [x] **1.5** `internal/domain/resolve/ports.go` : le port `ServerProbe` déclaré **par le domaine**,
       implémenté par `engine` (`N-2`). Un faux de test l'implémente, pour que la suite se teste sans
       base.
-- [ ] **1.6** Vague verte : `verify`, commit `feat(engine): probe a server for its version and family`.
+- [x] **1.6** Vague verte : `verify`, commit `feat(engine): probe a server for its version and family`.
 
 ### Vague 2 — Énumération des candidats (`lot1/wave-2-tool-discovery`)
 
@@ -323,3 +323,29 @@ Sur l'instance de recette, augmentée pour l'occasion :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-18 — vague 1, sondes des moteurs
+
+- **`AR-08` amendée** d'après ADR-0013, **une fixture par règle** plus une fixture `allowed.go` qui
+  prouve l'exception. `depguard` suit. Les deux tests ont été prouvés par suppression, faute de
+  rouge par antériorité.
+- **Sonde PostgreSQL** : la version vient des **paramètres annoncés à la connexion**, donc
+  **aucune requête** n'est émise — au-delà de ce que `1.4` demandait. Trois erreurs distinguées par
+  les codes `28P01`, `28000`, `3D000`.
+- **Sonde MySQL/MariaDB** : une requête, `SELECT VERSION()`, et la famille lue de la bannière. Un
+  MariaDB **déclaré `mysql` dans la configuration** est rapporté MariaDB : `E-041` tient dans les
+  deux sens, vérifié contre de vrais serveurs 11.4 et 8.4.
+- **La garde d'ADR-0013 est écrite et mord** : `queries_test.go` lit les littéraux SQL du paquet et
+  refuse tout ce qui n'est pas `SELECT VERSION()`. Remplacer la requête par `SHOW TABLES` fait
+  échouer le test. C'est ce qui remplace le lint là où il ne sait pas exprimer « pour les sondes ».
+- **`N-9` ajoutée**, et son détour : lire `KOFFR_REQUIRE_DOCKER` dans le test Go violait `AR-05`.
+  La décision est passée dans `scripts/run-tests.sh`, là où celle de `-race` vit déjà.
+- **Deux erreurs de ma part, corrigées** : `Version.IsZero` incluait `Raw`, ce qui rendait
+  inutilisable une version illisible mais citable ; et l'analyse prenait **tous** les nombres de la
+  chaîne, transformant `16.10 (Debian 16.10-1.pgdg13+1)` en 16.10.**16**. Les deux ont été trouvées
+  par des tests écrits avant le code.
+- **Piège de la pile** inscrit en § Conventions : `testcontainers-go` ne lit pas le contexte Docker
+  et exige `DOCKER_HOST` **et** `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` sur Colima ou Podman.
+- **Un commit a été fait avec `verify` rouge** (violation de `AR-05` non vue), puis amendé avant
+  toute poussée. La règle reste : lire le code de retour **avant** de commiter.
+- `mise run verify` : **0**. Suite complète avec conteneurs et `-race` : **0**.
