@@ -1,0 +1,17 @@
+# CLAUDE.local.md — personnel, gitignoré
+
+Copier ce fichier en `CLAUDE.local.md` et adapter. Il porte ce qui dépend du poste ou de la
+personne : chemins, ports, comptes de développement. Jamais un secret de production.
+
+## Préférences locales
+
+- Ouvrir le navigateur au démarrage du serveur de dev : non.
+- Ports : app {{5173}}, base {{5432}}, collecteur de mails {{8025}}.
+
+## Comptes de développement
+
+- `{{dev@projet.local}}` : mot de passe dans `.env` (`DEV_PASSWORD`), jamais ici ni en clair.
+
+## Chemins
+
+- {{Dépôt voisin, export de référence, dossier de captures : `/Users/<moi>/...`}}

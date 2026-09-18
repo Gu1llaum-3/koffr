@@ -1,0 +1,14 @@
+# Local and secret
+.env
+.env.*
+!.env.example
+CLAUDE.local.md
+
+# Confidential documents received: keep the path in CLAUDE.local.md, not the file in git
+docs/inputs/confidentiel/
+
+# Dependencies and build
+node_modules/
+dist/
+build/
+.svelte-kit/
