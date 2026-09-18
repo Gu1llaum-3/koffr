@@ -1,0 +1,305 @@
+# Plan lot 1 — Diagnostic d'un parc réel
+
+> Statut : **brouillon**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
+
+C'est le `L0` du cahier des charges : aucune sauvegarde, et c'est voulu. Le lot valide la thèse
+technique du produit — savoir, sur un parc réel, quel outil sauvegardera quelle base, et le prouver
+en l'exécutant.
+
+## Point bloquant à lever avant validation
+
+**`internal/engine` a besoin de `database/sql`, qu'`AR-08` réserve à `internal/state`.** Voir `N-1`.
+Un ADR est nécessaire **avant** que ce plan soit validé ; il n'est pas écrit, parce que c'est un
+arbitrage, pas une évidence.
+
+## Périmètre
+
+**Exigences couvertes — 20** :
+
+| `E-nnn` | Ce qu'elle exige | Source |
+| --- | --- | --- |
+| `E-007` | Version prouvée en exécutant ; à défaut, échec actionnable, jamais d'archive douteuse | § 2 `P3` |
+| `E-011` | PostgreSQL 12 à 18, MySQL 8.x, MariaDB 10.6+ | § 3, ADR-0004 |
+| `E-013` | Trois sources d'outils : hôte, installation gérée, `docker exec` | § 3 |
+| `E-034` | `config validate` vérifie **aussi** la joignabilité des bases et l'existence des outils | § 5.1 `F1.3` |
+| `E-038` | Énumérer **toutes** les sources sans préférence initiale | § 5.2 `F2.1` |
+| `E-039` | Version obtenue **en exécutant** le candidat, mise en cache, invalidée au `mtime` | § 5.2 `F2.2` |
+| `E-040` | Filtrer par compatibilité, retenir **la plus proche par le haut** ; la provenance ne départage que les ex æquo | § 5.2 `F2.3` |
+| `E-041` | Ne jamais croiser MySQL et MariaDB ; famille détectée **à la connexion** | § 5.2 `F2.4` |
+| `E-042` | Sans candidat : message nommant la version attendue, les versions trouvées, **la commande exacte** | § 5.2 `F2.5` |
+| `E-043` | `koffr tools install` installe dans `/var/lib/koffr/tools/` | § 5.2 `F2.6` |
+| `E-044` | Empreinte SHA-256 épinglée **et signature** vérifiées avant première exécution | § 5.2 `F2.7` |
+| `E-045` | Installation automatique **désactivée par défaut**, bornée par liste blanche, tracée | § 5.2 `F2.8` |
+| `E-046` | La stratégie `exec` exige le socket Docker et se déclare **par base** | § 5.2 `F2.9` |
+| `E-047` | PostgreSQL dump : `major(pg_dump) ≥ major(serveur)` | § 5.2 matrice |
+| `E-048` | PostgreSQL restauration : `major(pg_restore) ≥ major(archive)` | § 5.2 matrice |
+| `E-049` | PostgreSQL cible : `major(cible) ≥ major(origine)` **conseillé**, signalé, jamais bloquant | § 5.2 matrice |
+| `E-050` | MySQL/MariaDB : famille identique et `version(client) ≥ version(serveur)` | § 5.2 matrice |
+| `E-103a` | Surface CLI : `doctor [--database]`, `tools list` / `install` / `remove` | § 5.12 |
+| `E-104a` | `doctor` : joignabilité, version du serveur, outil retenu avec version et provenance | § 5.12 |
+| `E-131` | Chaîne d'intégration dédiée qui construit et publie les binaires d'outils | § 11 |
+
+**Écarté de ce lot, et pourquoi** :
+
+- **La détection MyISAM** que le glossaire rattache à la sonde. Aucune exigence du lot 1 ne la
+  demande ; elle sert à la politique de tampon (`E-053`…`E-056`), au **lot 2**. La sonde est
+  écrite pour qu'on l'y ajoute sans la rouvrir.
+- **Les quatre champs restants de `doctor`** (mode de tampon, destinations accessibles, prochaine
+  exécution, état de la dernière sauvegarde) : `E-104b`, au **lot 6**. Ils supposent des lots qu'on
+  n'a pas encore.
+- **`E-049` ne s'applique qu'à la restauration** : la règle est écrite et testée ici, son usage est
+  au lot 4.
+
+**Critère de sortie**, repris de `ROADMAP.md` et rendu vérifiable :
+
+1. Sur un parc réel d'au moins trois bases hétérogènes, `koffr doctor` nomme pour **chacune** sa
+   joignabilité, la version de son serveur et l'outil retenu avec sa version et sa provenance,
+   sans se tromper ;
+2. le **piège du § 5.2** est évité, et c'est un test qui le dit : hôte en 14, base en 16, outil
+   géré en 16 → **c'est le 16 qui est choisi** ;
+3. **scénario 2 du § 8** : une base PostgreSQL 17 avec seulement le client 15 échoue en nommant la
+   version manquante **et la commande de correction** ;
+4. **scénario 3 du § 8** : `koffr tools install postgresql 17` fait réussir la même base **sans
+   toucher la configuration** ;
+5. `koffr config validate` signale une base injoignable et un outil manquant, **sans rien exécuter
+   d'autre** ;
+6. jamais `mysqldump` d'Oracle pour une MariaDB, ni l'inverse — y compris quand c'est le seul outil
+   présent.
+
+**Les critères 3 et 4 dépendent de la vague 6**, elle-même bloquée par `D-06` et `Q-15`.
+
+## État de départ (vérifié le 2026-09-18)
+
+Constaté dans le code, pas supposé.
+
+- **Lot 0 clos** : `main` vert en local et en CI, 20 paquets, 36 commits, 8 règles `CFG-nn`.
+- **`internal/domain/resolve` et `internal/engine` ne contiennent qu'un `doc.go`.** Aucune ligne de
+  code de résolution ni de sonde n'existe.
+- **Aucun pilote de base n'est dans `go.mod`** : ni `jackc/pgx/v5`, ni `go-sql-driver/mysql`, ni le
+  client Docker. `testcontainers-go` non plus.
+- **La CLI expose `version` et `config` seulement.** `doctor` et `tools` n'existent pas.
+- **`config validate` ne valide que la forme** et résout les secrets (`CFG-09`) ; il n'ouvre aucune
+  connexion.
+- **Le schéma de configuration porte déjà ce dont le lot a besoin** : `tools: auto` ou
+  `{strategy, container}` par base (`CFG-05`), et la famille n'y est **pas** déclarée — conforme à
+  `E-041`, qui veut qu'elle soit détectée à la connexion.
+- **Les sept tables de `E-028` existent** ; aucune ne stocke de cache d'outils.
+- **Le spike `E-130` a conclu positivement** : un outil peut être livré avec ses bibliothèques et
+  exécuté sur Debian, Rocky **et Alpine**. Deux contraintes en découlent : `DT_RUNPATH` ne s'hérite
+  pas, et `PT_INTERP` est **absolu** — un bundle ne se déplace pas, il se re-patche.
+- **L'instance de recette n'a pas Docker** et dispose de 2 Go de mémoire. Insuffisant pour la
+  matrice d'ADR-0004.
+- **Aucune donnée** : rien à mesurer, aucun comptage à reporter.
+
+## Ce que le cahier des charges dit, et ce qu'il ne dit pas
+
+- **Dit** : § 5.2 en entier — les neuf `F2.n`, la matrice de compatibilité et le « piège à
+  éviter » ; § 5.12 la surface CLI et le rôle central de `doctor` ; § 3 le périmètre des moteurs.
+- **Ne dit pas** : où vit le cache de versions → `N-4` ; le format de sortie de `doctor` → `N-5` ;
+  ce que `koffr tools list` montre quand rien n'est installé → `N-6`. Aucune de ces trois n'appelle
+  une `Q-nn` : ce sont des choix d'implémentation, annoncés à la recette.
+- **Contredit** : rien dans ce lot.
+- **Bloque** : `D-06` (qui construit, signe et héberge les binaires d'outils) et `Q-15` (quelle
+  signature, quelle clé). La **vague 6** ne démarre pas sans elles. `Q-20` (les outils gérés
+  hors Linux) est réduite à macOS par ADR-0011 et se traite par un message d'erreur, pas par du
+  code : c'est `N-7`.
+
+## Décisions d'implémentation
+
+- **N-1 (à trancher avant validation) — `internal/engine` doit pouvoir importer `database/sql`.**
+  *Constat* : `AR-08` d'ADR-0010 réserve `database/sql` à `internal/state`. Or ADR-0002 prévoit
+  explicitement `jackc/pgx/v5` **et** `go-sql-driver/mysql` « pour les sondes et la détection de
+  famille, jamais pour le dump » — et `go-sql-driver/mysql` n'a pas d'API utilisable hors
+  `database/sql`. *Ce que l'interdit visait* : empêcher qu'on lise un jour les tables d'une base
+  **sauvegardée** par un pilote au lieu de la dumper en sous-process, et qu'on touche l'état de
+  koffr ailleurs que dans `state`. *Proposition* : un ADR qui amende `AR-08` en
+  « `database/sql` est réservé à `internal/state`, **sauf `internal/engine` pour les sondes** ;
+  `modernc.org/sqlite` reste réservé à `state` sans exception ». *Exclut* : lire une base
+  sauvegardée par un pilote, ce qui reste interdit et le restera par revue, faute de règle de lint
+  capable d'exprimer « pour les sondes seulement ».
+- **N-2 Les sondes vivent dans `internal/engine`, le domaine ne les connaît que par un port.**
+  `internal/domain/resolve` déclare `ServerProbe` et `ToolFinder` ; `engine` les implémente ;
+  `cmd/koffr` câble. *Raison* : `AR-01` et `AR-02` l'imposent, et c'est ce qui rend la matrice de
+  compatibilité testable **sans base**. *Exclut* : un domaine qui ouvre une connexion.
+- **N-3 Les tests de sonde tournent contre des conteneurs éphémères, jamais contre un simulacre.**
+  `testcontainers-go` en dépendance **de test** (ADR-0002, `E-123`). Par vague, la version la plus
+  récente de chaque famille ; la matrice complète d'ADR-0004 sur `main`. *Raison* : une sonde qui
+  ment sur une version est exactement le défaut que `P3` combat. *Exclut* : un simulacre de pilote.
+- **N-4 Le cache de versions d'outils vit en mémoire, pour la durée du processus.** Clé : chemin du
+  binaire ; invalidé si le `mtime` change. *Raison* : `E-039` demande un cache et une invalidation,
+  pas une persistance ; `E-028` fige sept tables et `N-9` du lot 0 interdit d'en inventer une
+  huitième sans exigence. *Exclut* : une table de plus, et un cache qui survivrait à un `koffr
+  tools install`.
+- **N-5 `doctor` sort un tableau texte, une ligne par base, et rien d'autre.** Pas de `--json` :
+  `E-103a` n'en demande pas, et l'inventer maintenant fige un format avant qu'on sache ce que le
+  lot 6 y ajoutera. *Exclut* : un format machine non demandé.
+- **N-6 `koffr tools list` montre **tous les candidats énumérés**, pas seulement les outils gérés.**
+  Chaque ligne : moteur, version, chemin, provenance, et si le candidat est exécutable. *Raison* :
+  c'est la commande qui rend `E-038` observable, et elle a de la valeur **avant** que l'installation
+  gérée existe. *Exclut* : une commande qui ne listerait que `/var/lib/koffr/tools/`.
+- **N-7 Hors Linux, `koffr tools install` échoue avec un message qui nomme les deux issues** — les
+  outils de l'hôte, ou la stratégie `exec`. *Raison* : ADR-0011 et `Q-20` ; le spike ne vaut que
+  pour ELF. *Exclut* : une installation gérée sur macOS.
+- **N-8 La famille est détectée par la bannière de version du serveur, à la connexion.** Jamais par
+  la configuration, jamais par le port, jamais par le nom du binaire trouvé. *Raison* : `E-041`
+  textuellement. *Exclut* : une clé `family` dans `koffr.yaml`.
+
+## Vagues
+
+### Vague 1 — Sondes des moteurs (`lot1/wave-1-engine-probes`)
+
+Exigences : `E-011`, `E-041`, et la moitié de `E-104a`. L'inconnue d'abord : si les conteneurs de
+test ne tiennent pas, tout le lot change de forme.
+
+- [ ] **1.1** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
+      PostgreSQL 18 : joignabilité, version majeure et mineure lues du serveur. Cas d'erreur :
+      hôte injoignable, mauvais identifiants, base absente — trois erreurs **typées et
+      distinctes**. Puis le code (`jackc/pgx/v5`).
+- [ ] **1.2** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
+      du serveur (`N-8`), jamais déduite. Un MariaDB et un MySQL sur le même port se distinguent.
+      Puis le code.
+- [ ] **1.3** Test — la sonde n'exécute **rien d'autre** que sa requête de version : pas de
+      `SHOW TABLES`, pas de dump. Vérifié en lisant les requêtes émises.
+- [ ] **1.4** `internal/domain/resolve/ports.go` : le port `ServerProbe` déclaré **par le domaine**,
+      implémenté par `engine` (`N-2`). Un faux de test l'implémente, pour que la suite se teste sans
+      base.
+- [ ] **1.5** Vague verte : `verify`, commit `feat(engine): probe a server for its version and family`.
+
+### Vague 2 — Énumération des candidats (`lot1/wave-2-tool-discovery`)
+
+Exigences : `E-013`, `E-038`, `E-039`, et `tools list` de `E-103a`.
+
+- [ ] **2.1** Test d'abord `internal/engine/discover_test.go` — l'énumération visite **toutes** les
+      sources : chemins système connus par distribution, `PATH`, `/var/lib/koffr/tools/`, sortie de
+      `pg_lsclusters` si présente. **Aucune préférence** à ce stade : l'ordre de sortie ne porte pas
+      de sens (`E-038`).
+- [ ] **2.2** Test — la version d'un candidat est obtenue **en l'exécutant** (`--version`), jamais
+      par son chemin : un binaire nommé `pg_dump-16` qui répond `15.4` est en **15.4** (`E-039`).
+      Cas d'erreur : binaire non exécutable, sortie illisible, délai dépassé.
+- [ ] **2.3** Test — le cache rend la seconde interrogation **sans exécution**, et un `mtime` qui
+      change la **réinvalide** (`E-039`, `N-4`).
+- [ ] **2.4** Test `internal/cli/tools_test.go` — `koffr tools list` montre tous les candidats avec
+      leur provenance (`N-6`) ; sortie stable et triée.
+- [ ] **2.5** Règles `RSV-01` (énumération exhaustive), `RSV-02` (version prouvée par exécution),
+      `RSV-03` (cache et invalidation) dans `internal/domain/resolve/rules.md`.
+- [ ] **2.6** Vague verte : `verify`, commit `feat(resolve): enumerate every tool source and prove each version`.
+
+### Vague 3 — Matrice de compatibilité et choix (`lot1/wave-3-compatibility-matrix`)
+
+Exigences : `E-007`, `E-040`, `E-042`, `E-047`, `E-048`, `E-049`, `E-050`. Le cœur du lot, et il se
+teste **entièrement sans base** grâce au port de la vague 1.
+
+- [ ] **3.1** Test d'abord `internal/domain/resolve/matrix_test.go` — les quatre règles de la
+      matrice, chacune avec son cas nominal, sa limite et son cas d'erreur : `E-047`, `E-048`,
+      `E-050`, et `E-049` qui **signale sans bloquer**.
+- [ ] **3.2** Test — **le piège du § 5.2** : hôte en 14, base en 16, outil géré en 16 → **le 16 est
+      choisi**. La provenance ne départage que des candidats **également compatibles**, dans l'ordre
+      hôte, géré, conteneur (`E-040`).
+- [ ] **3.3** Test — « la version la plus proche par le haut » : avec 16, 17 et 18 disponibles pour
+      un serveur en 16, c'est **16** qui est retenu, pas 18.
+- [ ] **3.4** Test — **jamais de famille croisée** (`E-041`) : un `mysqldump` d'Oracle face à une
+      MariaDB est écarté **même s'il est le seul candidat**, et l'échec le dit.
+- [ ] **3.5** Test — sans candidat compatible, l'erreur nomme **la version attendue, les versions
+      trouvées et la commande exacte** (`E-042`, `E-007`). Le texte fait partie de la règle : le test
+      l'épelle.
+- [ ] **3.6** Règles `RSV-04` à `RSV-09` dans `rules.md`, avec leur source.
+- [ ] **3.7** Vague verte : `verify`, commit `feat(resolve): pick the closest compatible tool, never a crossed family`.
+
+### Vague 4 — `doctor` et `config validate` (`lot1/wave-4-doctor`)
+
+Exigences : `E-034`, `E-104a`, et `doctor` de `E-103a`. La commande la plus importante du § 5.12.
+
+- [ ] **4.1** Test d'abord `internal/cli/doctor_test.go` — pour chaque base : joignabilité, version
+      du serveur, outil retenu avec **version et provenance** (`E-104a`). Une base injoignable est
+      une **ligne de plus**, pas un arrêt : `doctor` diagnostique un parc, il ne s'arrête pas au
+      premier problème.
+- [ ] **4.2** Test — `--database ID` restreint à une base ; un identifiant inconnu est une erreur qui
+      **nomme les identifiants connus**.
+- [ ] **4.3** Test — `koffr config validate` vérifie **en plus** la joignabilité et l'existence des
+      outils (`E-034`), et **n'exécute rien d'autre**. `--offline` conserve la vérification de forme
+      seule (`CFG-09`).
+- [ ] **4.4** Test — le code de retour distingue « tout va bien » de « au moins une base en
+      défaut ».
+- [ ] **4.5** `internal/config/rules.md` : `CFG-09` **amendée** — `validate` atteint désormais les
+      bases et les outils.
+- [ ] **4.6** Vague verte : `verify`, commit `feat(cli): doctor reports each database and the tool that will dump it`.
+
+### Vague 5 — Stratégie `exec` (`lot1/wave-5-exec-strategy`)
+
+Exigences : `E-046`, et le troisième tiers de `E-013`.
+
+- [ ] **5.1** Test d'abord `internal/engine/exec_test.go` — la stratégie `exec` énumère l'outil
+      **dans le conteneur de la base**, et sa version est obtenue en l'exécutant **là**.
+- [ ] **5.2** Test — sans socket Docket accessible, l'échec **nomme** le socket attendu ; la
+      stratégie n'est jamais activée globalement, seulement par base (`E-046`).
+- [ ] **5.3** Test — une base déclarant `strategy: exec` sans `container` est refusée **à la
+      validation de configuration**, pas au premier job.
+- [ ] **5.4** Règle `RSV-10` dans `rules.md`.
+- [ ] **5.5** Vague verte : `verify`, commit `feat(engine): resolve a tool inside the database container`.
+
+### Vague 6 — Installation gérée (`lot1/wave-6-managed-tools`) — **BLOQUÉE**
+
+Exigences : `E-043`, `E-044`, `E-045`, `E-131`, et `tools install` / `remove` de `E-103a`.
+
+> **Ne démarre pas** tant que `D-06` (qui construit, signe et héberge les binaires) et `Q-15`
+> (quelle signature, quelle clé) ne sont pas tranchées. Le reste du lot avance sans elles ; les
+> critères de sortie **3 et 4** en dépendent, et eux seuls.
+
+- [ ] **6.1** Test d'abord — `koffr tools install <engine> <version>` dépose un bundle dans
+      `/var/lib/koffr/tools/<engine>/<version>/`, exécutable **depuis ce chemin exact** — le spike a
+      montré que `PT_INTERP` est absolu.
+- [ ] **6.2** Test — l'empreinte SHA-256 épinglée est vérifiée, et une archive qui ne correspond pas
+      est **refusée et supprimée** (`E-044`).
+- [ ] **6.3** Test — la signature est vérifiée avant première exécution (`E-044`, forme fixée par
+      `Q-15`).
+- [ ] **6.4** Test — l'installation automatique est **désactivée par défaut** ; activée, elle est
+      bornée par liste blanche et **tracée comme événement** (`E-045`).
+- [ ] **6.5** Test — hors Linux, l'échec nomme les deux issues (`N-7`).
+- [ ] **6.6** Le téléchargement passe par `internal/egress` : hors production, il ne télécharge rien
+      et **le dit** (ADR-0008).
+- [ ] **6.7** Chaîne d'intégration de `E-131`, dans un dépôt ou un flux dédié selon `D-06`.
+- [ ] **6.8** Règles `RSV-11` à `RSV-13`. Vague verte : `verify`, commit `feat(resolve): install a managed tool, verified before first run`.
+
+## Vérification de bout en bout
+
+Sur l'instance de recette, augmentée pour l'occasion :
+
+1. Trois bases hétérogènes réelles — PostgreSQL 16, MariaDB 11.4, MySQL 8.4 — et `koffr doctor` les
+   décrit toutes les trois sans se tromper ;
+2. le piège : hôte en 14, base en 16, outil géré en 16 → `doctor` annonce le **16**, provenance
+   `managed` ;
+3. `koffr tools list` montre les candidats de l'hôte avec leurs versions **réelles** ;
+4. une MariaDB avec seulement `mysqldump` d'Oracle présent → échec nommant la famille attendue ;
+5. `koffr config validate` sur une base éteinte → signale l'injoignabilité, code de retour non nul ;
+6. scénarios **2 et 3** du § 8, si la vague 6 a pu être exécutée.
+
+## Recette
+
+- Scénario : `docs/recette/lot-1-scenario.md`, écrit avec ce plan.
+- **Décisions attendues** : `D-06` et `Q-15` si elles ne sont pas tranchées avant ; la
+  réouverture de `D-01` (l'instance de recette doit porter Docker et neuf bases — 2 Go n'y
+  suffiront pas).
+- **Ce qui est voulu et pourrait passer pour un bug** :
+  - `doctor` n'affiche que **trois** des sept champs du § 5.12 : les quatre autres sont `E-104b`,
+    au lot 6 ;
+  - aucune sauvegarde n'est possible — c'est le lot 2 ;
+  - `koffr tools install` échoue sur macOS, et c'est écrit (`N-7`) ;
+  - `doctor` n'a pas de `--json` (`N-5`) ;
+  - le cache de versions ne survit pas au processus (`N-4`).
+
+## Risques et points à vérifier en route
+
+| Risque | Ce qu'on fait s'il se réalise |
+| --- | --- |
+| **`N-1` n'est pas tranchée** : le plan ne peut pas être validé | C'est le point bloquant en tête. Sans ADR, la vague 1 n'a pas d'implémentation possible pour MySQL |
+| `testcontainers-go` ne démarre pas sur l'instance de recette (2 Go, pas de Docker) | L'instance est augmentée **avant** la vague 1, ou les tests d'intégration ne tournent qu'en CI et on le dit |
+| La matrice d'ADR-0004 (onze instances) rend la CI trop lente | Prévu par l'ADR : sous-ensemble par vague, matrice complète sur `main`. À mesurer dès la vague 1 |
+| `pg_lsclusters` n'existe que sur Debian et dérivés | Son absence n'est pas une erreur : c'est une source qui ne rend rien. À tester explicitement |
+| La détection de famille se révèle ambiguë sur une MariaDB récente qui se présente comme MySQL | C'est le cœur d'`E-041` : si la bannière ne suffit pas, on mesure sur les conteneurs réels et on écrit une `N-n` avec la règle retenue |
+| `D-06` reste ouverte jusqu'à la fin du lot | Le lot se clôt **sans** la vague 6, avec `E-043`, `E-044`, `E-045` et `E-131` reportées par une décision écrite, et les scénarios 2 et 3 non joués |
+| Le binaire grossit avec `pgx`, le pilote MySQL et le client Docker | Marge actuelle : 25,7 Mio. Mesurer à chaque vague ; `mise run release` bloque à 30 Mo |
+
+## Journal d'exécution
+
+Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
