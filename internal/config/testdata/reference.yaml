@@ -1,0 +1,85 @@
+# The target form of the specification § 5.1, copied from docs/cdc/KEEPER-CDC.md.
+#
+# Only the product name was changed — keeper became koffr, per ADR-0001. Not a
+# single key differs, which is the point: E-037 says this document must be
+# accepted as written, and CFG-05 is the test that says so.
+agent:
+  id: "prod-fr-01"
+  timezone: "Europe/Paris"
+  max_parallel_jobs: 2
+
+encryption:
+  recipients_file: /etc/koffr/recipients.txt   # clés publiques age
+
+databases:
+  - id: boutique-prod
+    engine: postgresql
+    host: 10.0.3.12
+    port: 5432
+    database: boutique
+    user: koffr_backup
+    password_file: /run/credentials/koffr.service/boutique
+    tools: auto
+    staging: auto                    # stage | stream | auto — voir §4.5
+    schedule: "0 2 * * *"
+    min_interval: 24h                # plancher opposable au serveur central
+    allow_remote_schedule: true
+    allow_restore: false             # restauration refusée tant que non armée
+    destinations: [disque-local, s3-ovh]
+    retention:
+      last: 7
+      daily: 14
+      weekly: 8
+      monthly: 12
+
+  - id: erp-prod
+    engine: mariadb
+    host: 127.0.0.1
+    port: 3306
+    database: erp
+    user: koffr_backup
+    password_env: ERP_BACKUP_PASSWORD
+    tools:
+      strategy: exec                 # dump via le conteneur de la base
+      container: erp-mariadb
+    schedule: "30 1 * * *"
+    destinations: [disque-local, sftp-nas]
+
+destinations:
+  - id: disque-local
+    type: filesystem
+    path: /srv/backups
+  - id: s3-ovh
+    type: s3
+    endpoint: https://s3.gra.io.cloud.ovh.net
+    region: gra
+    bucket: koffr-prod
+    access_key_id_env: OVH_ACCESS_KEY
+    secret_access_key_env: OVH_SECRET_KEY
+  - id: sftp-nas
+    type: sftp
+    host: nas.interne.exemple.fr
+    port: 22
+    user: koffr
+    private_key_file: /etc/koffr/sftp_ed25519
+    path: /volume1/backups
+
+alerts:
+  channels:
+    - id: ops-mail
+      type: email
+      to: [ops@exemple.fr]
+      smtp: { host: smtp.exemple.fr, port: 587, user: koffr, password_env: SMTP_PASSWORD }
+    - id: ops-hook
+      type: webhook
+      url: https://hooks.exemple.fr/koffr
+  rules:
+    - on: [backup_failed, backup_missed, verify_failed, database_unreachable, tool_missing]
+      channels: [ops-mail, ops-hook]
+
+server:
+  enabled: false
+  url: https://koffr.interne.exemple.fr
+  token_file: /etc/koffr/uplink.token
+  delegate_alerts: true
+  fallback_after: 15m               # reprise des alertes locales si injoignable

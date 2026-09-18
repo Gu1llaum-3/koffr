@@ -17,7 +17,13 @@ func NewRoot() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCommand())
+	// --config and --state-dir override the production paths of E-026, which
+	// are the defaults. Development happens on a machine where /etc/koffr is
+	// not writable (N-11).
+	root.PersistentFlags().String("config", defaultConfigPath, "path of koffr.yaml")
+	root.PersistentFlags().String("state-dir", defaultStateDir, "directory holding the local state")
+
+	root.AddCommand(newVersionCommand(), newConfigCommand())
 
 	return root
 }

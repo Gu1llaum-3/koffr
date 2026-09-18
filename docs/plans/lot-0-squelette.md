@@ -124,6 +124,15 @@ Constaté dans le dépôt et sur le poste, pas supposé.
   réservés à `store`, `engine` et `egress` ; `net/http` leur est ouvert **plus `httpd`**, qui
   écoute et n'appelle pas. *Exclut* : un `httpd` qui ferait un appel sortant — il passera par
   `egress` comme les autres.
+- **N-15 (2026-09-18) — `config show` n'a aucun chemin de code qui imprime un secret.**
+  *Contexte* : le plan écrit `config show --redact` ; le CDC ne décrit pas la commande. Un drapeau
+  qui se désactive crée la fuite que `E-115` interdit. *Décision* : le masquage est le seul
+  comportement ; `--redact` existe, vaut `true`, et `--redact=false` est **refusé** avec un message
+  qui l'explique. *Exclut* : une option de débogage qui imprimerait les secrets en clair.
+- **N-16 (2026-09-18) — le drapeau de chemin de configuration s'appelle `--config`.**
+  *Contexte* : `N-11` dit `--config`, la vérification de bout en bout n° 3 du plan écrit `--file`.
+  *Décision* : `--config`, drapeau persistant de la racine, avec `--state-dir` ; la ligne du § 
+  « Vérification de bout en bout » se lit avec `--config`. *Exclut* : deux noms pour une chose.
 - **N-13 (2026-09-18) — l'identité git de ce dépôt est locale et sans adresse personnelle.**
   *Constat* : `~/.gitconfig` porte l'identité **professionnelle** du propriétaire, et les deux
   premiers commits en avaient hérité ; le prototype, lui, était signé d'une adresse Gmail
@@ -207,22 +216,22 @@ L'inconnue en premier : si elle tombe mal, le lot 1 change avant d'être écrit.
 
 Exigences : `E-032`, `E-033`, `E-036`, `E-037`, `E-115`.
 
-- [ ] **4.1** Test `internal/config/parse_test.go` — **`CFG-01`** : une clé inconnue est une erreur
+- [x] **4.1** Test `internal/config/parse_test.go` — **`CFG-01`** : une clé inconnue est une erreur
       qui nomme la clé **et sa ligne**. Cas : à la racine, dans `databases[0]`, dans
       `destinations[0]`. Puis le code (`yaml.v3` + `KnownFields(true)`).
-- [ ] **4.2** Test — **`CFG-02`** : chaque champ sensible accepte `x`, `x_env` et `x_file` ;
+- [x] **4.2** Test — **`CFG-02`** : chaque champ sensible accepte `x`, `x_env` et `x_file` ;
       **`CFG-03`** : deux formes déclarées à la fois est une erreur, et un `*_file` absent échoue
       **au démarrage**, pas au premier usage.
-- [ ] **4.3** Test — **`CFG-04`** : `agent.timezone` est obligatoire et validé par
+- [x] **4.3** Test — **`CFG-04`** : `agent.timezone` est obligatoire et validé par
       `time.LoadLocation` ; la variable `TZ` du système n'a aucun effet. `import _ "time/tzdata"`
       (`N-6`).
-- [ ] **4.4** Test — **`CFG-05`** : la forme cible du § 5.1, **copiée telle quelle** du CDC dans
+- [x] **4.4** Test — **`CFG-05`** : la forme cible du § 5.1, **copiée telle quelle** du CDC dans
       `internal/config/testdata/reference.yaml`, est acceptée, et chaque champ atterrit où attendu.
-- [ ] **4.5** Test — **`CFG-06`** : `config show --redact` n'affiche aucune valeur sensible, et le
+- [x] **4.5** Test — **`CFG-06`** : `config show --redact` n'affiche aucune valeur sensible, et le
       type de configuration ne fuit rien via `%v`, `%+v` ni `slog` (`E-115`).
-- [ ] **4.6** `internal/config/rules.md` créé depuis `docs/modeles/rules.md` : `CFG-01` à `CFG-06`,
+- [x] **4.6** `internal/config/rules.md` créé depuis `docs/modeles/rules.md` : `CFG-01` à `CFG-06`,
       chacune avec sa source `E-nnn` et le nom de son test.
-- [ ] **4.7** Vague verte : `verify`, commit `feat(config): strict yaml parsing with env and file secrets`.
+- [x] **4.7** Vague verte : `verify`, commit `feat(config): strict yaml parsing with env and file secrets`.
 
 ### Vague 5 — État local (`lot0/wave-5-local-state`)
 
@@ -339,6 +348,33 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
 - **Écart favorable au risque « `golangci-lint` 2.8.0 construit avec go1.25.5 »** : `mise` épingle
   désormais `golangci-lint` **2.13.2, construit avec go1.27.0**. Le repli prévu (lint en
   avertissement) est sans objet.
+- `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 4, configuration
+
+- Six règles écrites, `CFG-01` à `CFG-06`, chacune avec sa ligne dans `internal/config/rules.md`,
+  sa source et le nom de son test. Chaque test a été écrit avant son code et son **rouge
+  constaté** : `undefined: Load`, `_env` et `_file` non résolus, `Location` absente,
+  `undefined: Parse`, `Redacted` absente, `unknown command "config"`.
+- `internal/config/testdata/reference.yaml` est **extrait par script du § 5.1 du CDC**, pas
+  retapé : seul `keeper` devient `koffr` (ADR-0001). Aucune clé ne diffère.
+- **Séparation `Parse` / `Load`** : `Parse` vérifie la forme sans toucher à l'environnement ni au
+  disque ; `Load` résout ensuite les secrets. C'est ce qui permet à `config validate` de tourner
+  depuis un poste sans les fichiers de production, et à `config show` de ne jamais lire un secret.
+- `N-15` et `N-16` ajoutées.
+- **Deux pièges de la pile rencontrés**, à inscrire en § Conventions au `7.4` :
+  1. `yaml.v3` ignore les **champs privés** quand il évalue `omitempty`. Un type dont la valeur
+     est privée est donc toujours vu comme vide et **disparaît de la sortie** : il faut lui donner
+     un `IsZero()`. Sans cela un secret renseigné s'effaçait au lieu d'être masqué.
+  2. `node.Decode` dans un `UnmarshalYAML` **perd la strictité** du décodeur parent. Les clés de
+     `tools` sont donc lues à la main, ce qui préserve `CFG-01` et les numéros de ligne.
+- **Faux positif attrapé** : la première version du test `CFG-06` sur `access_key_id` passait à
+  vide, faute de destination dans le document d'essai. Deux `omitempty` manquants s'étaient
+  glissés avec. Test renforcé, tags corrigés.
+- `B-06` ouverte : `config show` imprime les champs non renseignés.
+- Vérifications de bout en bout **3, 4 et 5 du plan atteintes** : la forme cible est acceptée ;
+  `timezon:` est refusé en nommant la clé et la ligne 8 ; `config show` n'imprime aucune valeur
+  sensible.
 - `mise run verify` : **code de retour 0**.
 
 ### 2026-09-18 — vague 3, frontières d'architecture
