@@ -48,18 +48,31 @@ func TestUnknownCommandFails(t *testing.T) {
 	}
 }
 
-// run executes the root command with args and returns what it wrote out.
+// run executes the root command with args and returns what it wrote to standard
+// output. The two streams are kept apart on purpose: results go out, logs go to
+// standard error, and a caller piping `koffr config show` into a file must not
+// find log lines in it.
 func run(t *testing.T, args ...string) string {
 	t.Helper()
 
-	var out bytes.Buffer
+	out, errs, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("koffr %s: %v\n%s", strings.Join(args, " "), err, errs)
+	}
+
+	return out
+}
+
+func execute(t *testing.T, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+
+	var out, errs bytes.Buffer
 	root := NewRoot()
 	root.SetOut(&out)
-	root.SetErr(&out)
+	root.SetErr(&errs)
 	root.SetArgs(args)
 
-	if err := root.Execute(); err != nil {
-		t.Fatalf("koffr %s: %v\n%s", strings.Join(args, " "), err, out.String())
-	}
-	return out.String()
+	err = root.Execute()
+
+	return out.String(), errs.String(), err
 }

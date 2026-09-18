@@ -125,15 +125,15 @@ registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 3 — Le journal a un émetteur (`lot0/wave-10-wire-logging`) — `A-07`
 
-- [ ] **3.1** Test d'abord `internal/cli/logging_test.go` — la racine construit le logger, une
+- [x] **3.1** Test d'abord `internal/cli/logging_test.go` — la racine construit le logger, une
       commande écrit **une ligne JSON**, `--log-level` change le niveau, et **aucun secret** n'y
       apparaît.
-- [ ] **3.2** Test — un répertoire de journal non accessible en écriture **ne fait pas échouer** la
+- [x] **3.2** Test — un répertoire de journal non accessible en écriture **ne fait pas échouer** la
       commande : la sortie standard suffit (`N-3`).
-- [ ] **3.3** Le code : `internal/cli` construit `obs`, le passe par le contexte, `cmd/koffr` le
+- [x] **3.3** Le code : `internal/cli` construit `obs`, le passe par le contexte, `cmd/koffr` le
       ferme proprement.
-- [ ] **3.4** Mesurer à nouveau le binaire : `obs` et `lumberjack` y entrent. Noter l'écart.
-- [ ] **3.5** Vague verte : `verify`, commit `feat(cli): wire structured logging into every command`.
+- [x] **3.4** Mesurer à nouveau le binaire : `obs` et `lumberjack` y entrent. Noter l'écart.
+- [x] **3.5** Vague verte : `verify`, commit `feat(cli): wire structured logging into every command`.
 
 ### Vague 4 — Le scénario redevient jouable (`lot0/wave-11-acceptance-scenario`) — `A-02`, `A-04`
 
@@ -222,4 +222,23 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   construction** si les deux divergent. `README.md` a une section « Configure ».
 - `CFG-01` amendée, `CFG-09` et `CFG-10` ajoutées dans `rules.md` ; la divergence « `validate` ne
   résout aucun secret » est **barrée, pas supprimée**, avec la date et la raison.
+- `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 3, `A-07`
+
+- `internal/obs` est **câblé** : la racine cobra construit le logger dans son `PersistentPreRunE`,
+  le passe par le contexte, et le libère en `PersistentPostRunE`. `--log-dir` et `--log-level`
+  ajoutés aux drapeaux persistants. Une ligne `command started` part à chaque commande.
+- **Les journaux vont sur la sortie d'erreur, le résultat sur la sortie standard.** Trois tests
+  existants ont cassé là-dessus, et ils avaient raison de casser : mon assistant de test
+  confondait les deux flux. Séparés — quelqu'un qui redirige `koffr config show` dans un fichier
+  ne doit pas y trouver des lignes de journal.
+- `N-3` respectée et vérifiée : un répertoire de journal impossible (`/proc/impossible`) **n'arrête
+  pas** la commande, qui sort en 0 et écrit son résultat.
+- Un niveau inconnu est **refusé** (`unknown log level "chatty": use debug, info, warn or error`) :
+  une faute de frappe ne doit pas rendre muet un agent dont le métier est de dire qu'une sauvegarde
+  n'a pas eu lieu.
+- Un test vérifie qu'aucun mot de passe n'atteint le fichier de journal.
+- **Tâche `3.4` — mesure** : les trois cibles passent de 4,0 / 3,8 / 3,9 Mio à **4,3 / 4,2 /
+  4,2 Mio**. `obs` et `lumberjack` coûtent **+0,35 Mio**. Marge restante : 25,7 Mio.
 - `mise run verify` : **code de retour 0**.
