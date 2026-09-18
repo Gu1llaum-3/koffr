@@ -383,6 +383,11 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
 - `.claude/skills/implementer/SKILL.md` réécrit pour Go, 152 lignes, avec une table d'exemples
   **cités dans le code vivant** plutôt qu'inventés, et le geste à tenir quand le rouge par
   antériorité est impossible.
+- **La CI a attrapé une erreur de mon contrôle**, ce qui est exactement son objet : `go list -deps`
+  reflète l'environnement **hôte**. Sur un runner Linux, où `CGO_ENABLED` vaut 1 par défaut, `net`
+  tire `runtime/cgo` et le contrôle échouait sur un dépôt pourtant sain. Corrigé : le graphe est
+  listé **pour la construction de publication** (`CGO_ENABLED=0` + `GOOS`/`GOARCH` de chaque cible),
+  pas pour la machine qui lance le contrôle. Reproduit localement avant correction.
 - `mise run verify` : **code de retour 0**. `mise run release` : **code de retour 0**.
 
 ### 2026-09-18 — vague 6, journaux et porte de sortie

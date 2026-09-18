@@ -34,21 +34,29 @@ fail() { printf '\n  FAIL  %s\n' "$*" >&2; exit 1; }
 ok()   { printf '  ok    %s\n' "$*"; }
 
 # 1 — nothing in the dependency graph needs cgo.
+#
+# The graph is listed for the RELEASE build, not for this machine: with cgo
+# enabled — the default on a Linux host that has a compiler — net pulls
+# runtime/cgo for the system resolver, and the check would fail on a repository
+# that is perfectly fine. What matters is the graph koffr actually ships.
 check_dependencies() {
   printf '\ndependencies\n'
 
-  local deps
-  deps=$(cd "$ROOT" && go list -deps ./cmd/koffr)
+  local target os arch deps
+  for target in "${TARGETS[@]}"; do
+    os="${target%%/*}"
+    arch="${target##*/}"
 
-  if grep -q 'mattn/go-sqlite3' <<<"$deps"; then
-    fail "mattn/go-sqlite3 is in the dependency graph: E-027 forbids it and it needs CGO"
-  fi
-  ok "mattn/go-sqlite3 is absent (E-027)"
+    deps=$(cd "$ROOT" && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go list -deps ./cmd/koffr)
 
-  if grep -qx 'runtime/cgo' <<<"$deps"; then
-    fail "runtime/cgo is in the dependency graph: something requires CGO"
-  fi
-  ok "no package requires cgo"
+    if grep -q 'mattn/go-sqlite3' <<<"$deps"; then
+      fail "$target: mattn/go-sqlite3 is in the dependency graph — E-027 forbids it and it needs CGO"
+    fi
+    if grep -qx 'runtime/cgo' <<<"$deps"; then
+      fail "$target: runtime/cgo is in the release graph — something requires CGO"
+    fi
+    ok "$target: no mattn/go-sqlite3, no runtime/cgo"
+  done
 }
 
 # 4 — a static ELF has no PT_INTERP. Read straight out of the file, so that the
