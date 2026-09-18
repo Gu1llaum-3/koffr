@@ -18,7 +18,7 @@ Les quatre décisions que le CDC renvoie lui-même au propriétaire (§ 11.1) so
 
 | #    | Décision à prendre | Qui tranche | Bloque | Ouverte le | Tranchée le → où |
 | ---- | ------------------ | ----------- | ------ | ---------- | ---------------- |
-| D-01 | Utilisateur référent pour la recette régulière ? | propriétaire | recette du premier lot livrant un écran | 2026-09-18 | |
+| ~~D-01~~ | Utilisateur référent pour la recette régulière ? | propriétaire | recette du premier lot livrant un écran | 2026-09-18 | **Tranchée le 2026-09-18, provisoirement** : le propriétaire joue la recette sur une instance Multipass. **Amenée à évoluer** |
 | ~~D-02~~ | ~~Nom définitif du produit et licence~~ | propriétaire | lot 0 (`go.mod`, en-têtes, dépôt public ou non), `Q-17` | 2026-09-18 | **2026-09-18 → ADR-0001** : `koffr` / `koffr-server`, Apache-2.0 |
 | ~~D-03~~ | ~~Déduplication et sauvegarde incrémentale~~ | propriétaire | `E-129`, format d'archive, donc lot de la sauvegarde | 2026-09-18 | **2026-09-18 → ADR-0005** : écartée du produit |
 | ~~D-04~~ | ~~Portée de Windows~~ | propriétaire | `E-117`, `Q-20`, matrice de CI | 2026-09-18 | **2026-09-18 → ADR-0011** : hors périmètre, annoncé |
@@ -29,12 +29,30 @@ Les quatre décisions que le CDC renvoie lui-même au propriétaire (§ 11.1) so
 
 ## Détail
 
-### D-01 — Utilisateur référent pour la recette
+### ~~D-01~~ — Utilisateur référent pour la recette — tranchée **provisoirement** le 2026-09-18
 
-Keeper n'a pas d'utilisateur métier : son utilisateur est un exploitant. `METHODE.md` exige une
+koffr n'a pas d'utilisateur métier : son utilisateur est un exploitant. `METHODE.md` exige une
 recette régulière avec un utilisateur réel dès le premier lot qui produit un écran. À défaut d'un
 tiers, il faut nommer qui joue ce rôle et sur quel parc réel — une machine de test avec de vraies
 bases, pas un jeu de données inventé.
+
+**Tranchée pour l'instant** : le propriétaire joue la recette lui-même, sur une **instance
+Multipass** dédiée (`koffr`, Ubuntu 26.04 LTS `arm64`), réinitialisable par snapshot. Elle a servi
+à la recette du lot 0 et à son rejeu, et elle a trouvé une anomalie **bloquante** que ni le poste
+de développement ni la CI ne voyaient (`A-01`) : le dispositif fait son travail.
+
+**Le propriétaire annonce que cela évoluera.** Ce n'est donc pas une réponse définitive, et la
+question se rouvre d'elle-même dès que l'un de ces seuils est franchi :
+
+- **Lot 1** : l'instance devra porter **Docker** et de **vraies bases** PostgreSQL, MySQL et
+  MariaDB, en versions différentes — la matrice `N7` d'ADR-0004 en demande neuf. Une instance de
+  2 Go de mémoire n'y suffira probablement pas.
+- **Lot 7** : le scénario 1 du § 8 chronomètre une installation **par quelqu'un qui découvre
+  l'outil**, en suivant la seule documentation. Le propriétaire, qui l'a écrite, ne peut pas jouer
+  ce rôle sans biais. Il faudra un tiers.
+- **Lot final** : les onze scénarios rejoués sur une machine vierge.
+
+À rouvrir explicitement à la clôture du lot 1, ou plus tôt si le parc de test change.
 
 ### ~~D-02~~ — Nom et licence — tranchée le 2026-09-18 (ADR-0001)
 
