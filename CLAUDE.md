@@ -40,19 +40,20 @@ Le mode opératoire détaillé (fixtures, base réelle, nommage) est dans le ski
 
 ## Commandes
 
+Toutes les tâches passent par `mise` (`N-3` du plan du lot 0) ; il n'y a pas de `Makefile`.
+
 ```sh
-{{pnpm dev}}                 # serveur de développement
-{{pnpm check}}               # typage (bloquant)
-{{pnpm lint}}                # format + lint, dont les frontières d'architecture (bloquant)
-{{pnpm test:unit -- --run}}  # tests unitaires et de domaine
-{{pnpm test:e2e}}            # parcours critiques
-{{pnpm build}}               # build de production
-{{pnpm verify}}              # tout ce qui précède en une commande ; vert avant tout commit sur main
-{{pnpm db:migrate}}          # migrations ; le SQL généré se relit avant commit
+mise install                 # Go et golangci-lint aux versions de mise.toml
+mise run check               # go vet + go build (bloquant)
+mise run lint                # golangci-lint : format, lint et interdits globaux (bloquant)
+mise run fmt                 # applique les formateurs (gofumpt, goimports)
+mise run test                # go test ./... -race
+mise run build               # binaire statique CGO_ENABLED=0 dans dist/koffr
+mise run verify              # les quatre ci-dessus, dans l'ordre ; vert avant tout commit sur main
 ```
 
-Versions des outils : `{{mise.toml / .nvmrc / .tool-versions}}`. Dépendances pinnées ; mise à jour
-hebdomadaire planifiée dans `docs/maintenance.md`.
+Versions des outils : `mise.toml` fait autorité (Go 1.27, `golangci-lint` 2.13.2), y compris en CI.
+Dépendances pinnées dans `go.mod` ; mise à jour hebdomadaire planifiée dans `docs/maintenance.md`.
 
 ## Conventions de la stack (ce que le modèle ne sait pas ou sait faux)
 

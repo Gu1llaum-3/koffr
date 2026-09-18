@@ -105,6 +105,25 @@ Constaté dans le dépôt et sur le poste, pas supposé.
   `--config` et `--state-dir`. *Raison* : le développement se fait sur macOS, où `/etc/koffr` n'est
   pas accessible. *Exclut* : des variables d'environnement dédiées — seul `internal/config` lit
   l'environnement, et seulement celles que la configuration référence via `*_env` (ADR-0010).
+- **N-12 (tranchée par le propriétaire le 2026-09-18, option (a)) — que fait-on du dépôt distant
+  existant ?** *Contexte* : `github.com/Gu1llaum-3/koffr` contient déjà une implémentation
+  antérieure et indépendante du produit (voir le bloc sous la tâche `1.4`). *Ce qui est bloqué* :
+  la tâche `1.4` — « CI verte au premier push » n'a pas de push possible — et, au-delà, le
+  critère de sortie 1 du lot. *Options* : (a) le distant est un prototype abandonné, on le
+  remplace par le travail issu de ce plan ; (b) le distant est la vraie base de code, et ce lot 0
+  devient une reprise d'existant, pas un squelette — le plan et la roadmap sont réécrits ;
+  (c) on pousse ce travail dans un autre dépôt, et `N-2` change de chemin de module.
+  **Réponse du propriétaire** : option (a). Le distant était un prototype abandonné ; il a été
+  renommé `koffr-old` et un dépôt vide a été recréé sous le même nom. Rien n'est écrasé, le
+  prototype reste consultable, et `N-2` tient : le chemin de module ne change pas.
+- **N-13 (2026-09-18) — l'identité git de ce dépôt est locale et sans adresse personnelle.**
+  *Constat* : `~/.gitconfig` porte l'identité **professionnelle** du propriétaire, et les deux
+  premiers commits en avaient hérité ; le prototype, lui, était signé d'une adresse Gmail
+  personnelle. *Décision* : `.git/config` fixe `Gu1llaum-3
+  <67098259+Gu1llaum-3@users.noreply.github.com>` pour ce dépôt seul, et les deux commits ont été
+  réécrits **avant tout push**. *Raison* : le dépôt est public (ADR-0001) ; une adresse poussée
+  dans un commit public ne se retire plus. *Exclut* : hériter du `~/.gitconfig` global, qui reste
+  professionnel pour les autres dépôts de la machine.
 
 Aucune de ces décisions ne survit au lot au sens d'ADR : celle qui le devait — la portée de Windows —
 a été écrite en **ADR-0011** avant ce plan.
@@ -120,18 +139,32 @@ a été écrite en **ADR-0011** avant ce plan.
 
 ### Vague 1 — Dépôt, outillage, CI (`lot0/wave-1-repository-and-ci`)
 
-- [ ] **1.1** `git init` sur `main`, `.gitignore` Go, `LICENSE` Apache-2.0, `NOTICE`, `README.md` en
+- [x] **1.1** `git init` sur `main`, `.gitignore` Go, `LICENSE` Apache-2.0, `NOTICE`, `README.md` en
       anglais (ADR-0003) renvoyant vers la documentation française. *Pas de test : configuration,
       justifié.*
-- [ ] **1.2** Test d'abord `internal/build/build_test.go` — `Info()` porte nom, version, commit,
+- [x] **1.2** Test d'abord `internal/build/build_test.go` — `Info()` porte nom, version, commit,
       date, version de Go et plateforme ; la sortie `--json` a ces clés et aucune vide en build de
       release. Puis `go.mod` (`github.com/Gu1llaum-3/koffr`, `go 1.27`), `cmd/koffr/main.go`, racine
       cobra, commande `version [--json]` alimentée par `-ldflags` (`N-1`, `N-2`).
-- [ ] **1.3** Tâches `mise` : `check` (`go vet` + `go build`), `lint` (`golangci-lint run`), `test`
+- [x] **1.3** Tâches `mise` : `check` (`go vet` + `go build`), `lint` (`golangci-lint run`), `test`
       (`go test ./... -race`), `build`, `verify` (les quatre). `.golangci.yml` au **schéma v2**.
       `golangci-lint` épinglé dans `mise.toml` (`N-3`, `N-4`). `CLAUDE.md` § Commandes rempli.
 - [ ] **1.4** `.github/workflows/verify.yml` : `mise` puis `verify`, sur push et PR, **verte au
       premier push**.
+
+      > Arrêt (2026-09-18) : le fichier est écrit, mais **il ne peut pas être poussé**.
+      > `github.com/Gu1llaum-3/koffr` **existe déjà sur GitHub**, public, `main` par défaut,
+      > **59 commits** du 2026-09-05 au 2026-09-09, et contient **une autre implémentation
+      > complète de koffr** : même chemin de module, `go 1.26.0`, `Makefile` et `lefthook`,
+      > `AGENTS.md`, `adr/` à la racine avec **7 ADR qui ne sont pas les nôtres**, et
+      > `internal/{backup,binlog,catalog,cli,config,crypto,executor,httpapi,logging,manifest,
+      > notify,pipeline,restore,retention,scheduler,source,storage,verify,watch}` — soit une
+      > bonne partie du périmètre des lots 2 à 5 de notre roadmap.
+      > L'état de départ du plan (« le dépôt n'est pas sous git », « aucun code ») est vrai
+      > **en local** et faux **sur le dépôt distant nommé par `N-2`**. Rien n'a été poussé :
+      > un push de notre `main` serait rejeté, et un push forcé détruirait ces 59 commits.
+      > Résolu le 2026-09-18 par **`N-12`** (option (a)) : le distant a été renommé `koffr-old`
+      > et un dépôt vide recréé sous le même nom. La tâche reprend.
 - [ ] **1.5** Vague verte : `verify`, commit `chore: bootstrap go module, tooling and ci`.
 
 ### Vague 2 — Spike d'édition de liens (`lot0/wave-2-tool-linking-spike`) — `E-130`
@@ -277,3 +310,23 @@ le lot 0.
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-18 — vague 1, tâches 1.1 à 1.3
+
+- Plan validé, vague 0 cochée : le dossier de travail s'appelle déjà `koffr` (`0.1`), ADR-0011 est
+  écrit (`0.2`).
+- `git init -b main`, commit initial de la documentation de pilotage, puis branche
+  `lot0/wave-1-repository-and-ci`.
+- `1.1` fait : `.gitignore` Go, `LICENSE` Apache-2.0 (texte canonique), `NOTICE`, `README.md`
+  anglais renvoyant vers les documents français.
+- `1.2` fait en TDD : `internal/build/build_test.go` écrit d'abord, **rouge constaté**
+  (`undefined: Info`), puis `internal/build`, `internal/cli` (cobra, `version [--json]`) et
+  `cmd/koffr/main.go`. Le marquage `-ldflags` est vérifié sur un binaire réel.
+- `1.3` fait : cinq tâches `mise` (`check`, `lint`, `fmt`, `test`, `build`, `verify`),
+  `.golangci.yml` au schéma v2, `CLAUDE.md` § Commandes rempli.
+- **Écart favorable au risque « `golangci-lint` 2.8.0 construit avec go1.25.5 »** : `mise` épingle
+  désormais `golangci-lint` **2.13.2, construit avec go1.27.0**. Le repli prévu (lint en
+  avertissement) est sans objet.
+- `mise run verify` : **code de retour 0**. Binaire `dist/koffr` : **3 262 514 octets** (3,1 Mio),
+  très en deçà des 30 Mo de `E-117` — normal à ce stade, la pente se mesurera au lot 4.
+- `1.4` : fichier écrit, **vague arrêtée** — voir le bloc sous la tâche et `N-12`.
