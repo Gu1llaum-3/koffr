@@ -9,8 +9,10 @@ Durée attendue : vingt minutes.
 
 ## Avant de commencer
 
-- Une machine avec `mise` et Docker installés, **sans Go préinstallé** (c'est `mise` qui doit
-  l'apporter — on vérifie aussi cela).
+- Une machine avec `mise`, **sans Go préinstallé** (c'est `mise` qui doit l'apporter — on vérifie
+  aussi cela). **Docker n'est pas nécessaire** au lot 0 : le spike a déjà tourné et le parcours 5
+  se contente de lire son rapport. Il le sera au lot 1.
+- Un compilateur C n'est **pas** requis non plus : `verify` s'en passe et le dit (`A-01`).
 - Le dépôt `github.com/Gu1llaum-3/koffr` cloné, sur `main`.
 - Aucune préparation de données : le lot n'en manipule pas.
 - Prépare : le propriétaire.
@@ -20,7 +22,8 @@ Durée attendue : vingt minutes.
 | Constat | Pourquoi c'est voulu |
 | --- | --- |
 | `koffr version` est la seule commande qui fait quelque chose | `N-1` : traversée minimale du lot 0. Toute la surface CLI est au lot 1 (`E-103a`) |
-| `koffr config validate` accepte une configuration dont la base est injoignable et dont les outils n'existent pas | `E-034` est au lot 1 : le lot 0 ne valide que la **forme** |
+| `koffr config validate` accepte une configuration dont la base est injoignable et dont les outils n'existent pas | `E-034` est au lot 1. La commande lit bien les secrets qu'on lui désigne (`CFG-09`), mais n'ouvre aucune connexion |
+| `internal/state` et `internal/egress` n'ont aucun appelant | `serve` est au lot 5, un émetteur réel aux lots 1, 6 et 8 |
 | La base `koffr.db` contient sept tables dont cinq resteront vides | `N-9` : `E-028` est une exigence de ce lot ; les tables se remplissent aux lots 2 et suivants |
 | Aucune sauvegarde n'est possible | C'est le lot. La première sauvegarde est au lot 2 |
 | Il n'existe aucun binaire Windows | ADR-0011 : Windows est hors périmètre, et c'est annoncé |
@@ -33,7 +36,9 @@ Durée attendue : vingt minutes.
 1. `mise install` dans le dépôt → **on doit voir** Go 1.27.1 et `golangci-lint` installés par `mise`,
    sans avoir rien installé à la main.
 2. `mise run verify` → **on doit voir** les quatre étapes (`check`, `lint`, `test`, `build`) passer,
-   et un code de retour 0. Noter la durée.
+   et un code de retour 0. Noter la durée. Sur une machine sans compilateur C, **on doit voir**
+   `race detector: off` avec la raison et la façon de l'obtenir — et `verify` passe quand même
+   (`A-01`). La CI, elle, l'exige.
 3. Ouvrir la page des actions du dépôt sur GitHub → **on doit voir** la CI verte sur le dernier
    commit de `main`.
 
@@ -42,19 +47,23 @@ elle dépasse deux minutes dès maintenant, on le note : elle ne fera que croît
 
 ### 2. Le binaire est bien ce qu'il prétend être
 
-1. `mise run build` → **on doit voir** trois binaires, pour `linux/amd64`, `linux/arm64` et
-   `darwin/arm64`. **Aucun binaire Windows** : c'est ADR-0011.
+1. `mise run release` → **on doit voir** trois binaires dans `dist/`, pour `linux/amd64`,
+   `linux/arm64` et `darwin/arm64`, et les contrôles de `E-117` passer. **Aucun binaire Windows** :
+   c'est ADR-0011. (`mise run build`, lui, ne construit que la plateforme courante, pour itérer
+   vite.)
 2. Regarder la taille de chacun → **on doit voir** une taille bien inférieure à 30 Mo, et la CI
    l'afficher dans son journal.
-3. `./koffr version --json` → **on doit voir** un objet JSON avec le nom, la version, le commit, la
+3. `./dist/koffr-linux-arm64 version --json` → **on doit voir** un objet JSON avec le nom, la version, le commit, la
    date de construction, la version de Go et la plateforme. Aucun champ vide.
 
 **Décision attendue** : aucune. C'est une vérification.
 
 ### 3. La configuration refuse ce qu'elle doit refuser
 
-1. `koffr config validate --file exemple/koffr.yaml` sur la configuration de référence — celle du
-   § 5.1 du cahier des charges, copiée telle quelle → **on doit voir** « valide », et rien d'autre.
+1. `koffr config validate --offline --config examples/koffr.yaml` sur la configuration livrée —
+   celle du § 5.1 du cahier des charges → **on doit voir** `ok`, et rien d'autre. `--offline` parce
+   que l'exemple désigne des chemins de production (`/run/credentials/…`) qui n'existent que sur un
+   hôte koffr.
 2. Remplacer `timezone:` par `timezon:` et relancer → **on doit voir** une erreur qui **nomme la clé
    fautive et sa ligne**. Une faute de frappe ne doit jamais désactiver silencieusement une
    sauvegarde : c'est l'exigence `E-032`, et c'est la raison d'être de ce contrôle.
@@ -62,8 +71,12 @@ elle dépasse deux minutes dès maintenant, on le note : elle ne fera que croît
    obligatoire et ne s'hérite jamais du système (`E-036`).
 4. Déclarer à la fois `password:` et `password_file:` pour la même base → **on doit voir** une
    erreur : une seule forme à la fois (`E-033`).
-5. Pointer `password_file:` vers un fichier qui n'existe pas → **on doit voir** l'erreur **tout de
-   suite**, pas au premier usage.
+5. Pointer `password_file:` vers un fichier qui n'existe pas et relancer **sans** `--offline` →
+   **on doit voir** l'erreur **tout de suite**, nommant le fichier (`CFG-09`). Relancer **avec**
+   `--offline` → accepté, et la sortie dit que les secrets n'ont pas été lus.
+
+**On doit voir**, dans chacun de ces messages : la **section**, la **clé** et la **ligne** — et
+aucun nom de type Go (`A-05`).
 
 **Décision attendue** : les messages d'erreur sont-ils compréhensibles par quelqu'un qui découvre
 l'outil ? Ils sont en anglais (ADR-0003) : est-ce confortable pour vous à l'usage ?
@@ -73,8 +86,11 @@ l'outil ? Ils sont en anglais (ADR-0003) : est-ce confortable pour vous à l'usa
 1. Écrire une configuration avec un mot de passe littéral, un `*_env` et un `*_file`.
 2. `koffr config show --redact` → **on doit voir** la topologie du parc — hôtes, ports, noms de
    bases — et **aucune valeur sensible**, sous aucune des trois formes (`E-115`).
-3. Lancer `koffr version` puis regarder le fichier de journal → **on doit voir** du JSON, une ligne
-   par événement, et **aucun secret**.
+3. `koffr version --log-dir /tmp/koffr-recette` puis lire `/tmp/koffr-recette/koffr.log` →
+   **on doit voir** du JSON, une ligne par événement, et **aucun secret**. Le résultat de la
+   commande, lui, sort sur la sortie standard : les deux flux sont séparés.
+4. `koffr version --log-dir /proc/impossible` → **on doit voir** la commande **réussir** quand
+   même : un journal impossible à écrire n'arrête pas koffr (`N-3`).
 
 **Décision attendue** : la redaction va-t-elle assez loin ? Y a-t-il un champ que vous considérez
 comme sensible et que nous affichons en clair ?
@@ -95,11 +111,17 @@ sur `D-06` (qui construit et héberge ces binaires) ?
 ### 6. Les garde-fous mordent
 
 1. Ajouter volontairement, dans un paquet du domaine, un import de `internal/state` ; lancer
-   `mise run verify` → **on doit voir** l'échec, avec le nom de la règle violée.
+   `mise run verify` → **on doit voir** l'échec, avec le nom de la règle violée (`AR-01`).
 2. Retirer l'import.
 
 **Décision attendue** : aucune. C'est la démonstration qu'une règle d'architecture écrite dans
 `ARCHITECTURE.md` est vérifiée par l'outillage, et non par la bonne volonté.
+
+## Historique
+
+- **2026-09-18, première session** : jouée sur une instance Multipass. Sept anomalies, `A-01` à
+  `A-07`, toutes tranchées ; corrigées par `docs/plans/lot-0-corrections.md`. Ce scénario a été
+  corrigé par la même occasion (`A-02`, `A-04`), et rejoué en entier.
 
 ## Décisions attendues de la session
 
