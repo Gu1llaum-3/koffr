@@ -10,14 +10,6 @@ import (
 	"github.com/Gu1llaum-3/koffr/internal/config"
 )
 
-// defaultConfigPath is the production path of E-026. It is a default, not a
-// constraint: --config moves it, which is how development happens on a machine
-// where /etc/koffr does not exist (N-11).
-const (
-	defaultConfigPath = "/etc/koffr/koffr.yaml"
-	defaultStateDir   = "/var/lib/koffr"
-)
-
 func newConfigCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
@@ -108,7 +100,7 @@ func parse(path string) (*config.Config, error) {
 func configPath(cmd *cobra.Command) string {
 	path, err := cmd.Flags().GetString("config")
 	if err != nil || path == "" {
-		return defaultConfigPath
+		return config.DefaultConfigFile
 	}
 
 	return path

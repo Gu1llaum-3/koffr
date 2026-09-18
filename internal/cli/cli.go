@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Gu1llaum-3/koffr/internal/build"
+	"github.com/Gu1llaum-3/koffr/internal/config"
 )
 
 // NewRoot builds the root command. Callers set the output streams and the
@@ -20,8 +21,8 @@ func NewRoot() *cobra.Command {
 	// --config and --state-dir override the production paths of E-026, which
 	// are the defaults. Development happens on a machine where /etc/koffr is
 	// not writable (N-11).
-	root.PersistentFlags().String("config", defaultConfigPath, "path of koffr.yaml")
-	root.PersistentFlags().String("state-dir", defaultStateDir, "directory holding the local state")
+	root.PersistentFlags().String("config", config.DefaultConfigFile, "path of koffr.yaml")
+	root.PersistentFlags().String("state-dir", config.DefaultStateDir, "directory holding the local state")
 
 	root.AddCommand(newVersionCommand(), newConfigCommand())
 
