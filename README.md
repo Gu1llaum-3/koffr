@@ -1,85 +1,46 @@
-# Kit de pilotage d'un projet par Claude Code
+# koffr
 
-Ce dossier est un dépôt cible en miniature : on le copie à la racine d'un projet vide, puis on
-lance `/demarrer-projet` sur le cahier des charges. Il contient la méthode (`METHODE.md`), les
-documents de pilotage vides, leurs gabarits, et les skills qui les font vivre.
+An autonomous database backup agent for self-hosted PostgreSQL, MySQL and MariaDB fleets.
 
-Il est né de Pilot v2 (septembre 2026) : ce qui y a marché est gardé, ce qui a dérivé est corrigé
-(voir « Pourquoi ces choix » en bas).
+A single static Go binary. No Docker requirement, no mandatory central server, no service
+dependency: local state lives in SQLite, archives are compressed with zstd and encrypted with
+[age](https://age-encryption.org), and every archive stays readable with the standard `age` tool
+alone — without koffr.
 
-## Installer
+## Status
+
+**Early development.** Lot 0 (skeleton, tooling and the tool-linking spike) is in progress; no
+backup is taken yet. The `version` command is the only thing this binary does today.
+
+## Requirements
+
+- Linux (`amd64`, `arm64`) or macOS (`arm64`) — Windows is out of scope
+- Go 1.27 to build from source
+- The dump and restore tools of the engines you back up, either on the host, managed by koffr, or
+  reachable in a container
+
+## Build
 
 ```sh
-cp -R kit-projet/. <nouveau-depot>/
-cd <nouveau-depot>
-rm README.md                                   # ce fichier ne concerne que le kit
-cp CLAUDE.local.md.example CLAUDE.local.md      # préférences locales, gitignoré
-mkdir -p docs/cdc && cp <le cahier des charges> docs/cdc/
-git init && git add -A && git commit -m "chore: bootstrap project steering kit"
+mise install          # Go and golangci-lint, pinned in mise.toml
+mise run build        # static binary, CGO_ENABLED=0
+mise run verify       # vet, lint, tests and build — green before any commit on main
 ```
 
-Puis, dans Claude Code : `/demarrer-projet docs/cdc/<fichier>`. Le skill s'arrête trois fois pour
-validation (exigences, ADR proposés, roadmap) ; on ne le laisse pas enchaîner.
+## Documentation
 
-## Ce qu'il y a dedans
+The product speaks English; the project is steered in French (ADR-0003). Contributor and steering
+documents are therefore in French:
 
-| Fichier                              | Rôle                                                                                         |
-| ------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `METHODE.md`                         | La méthode : cycle, rôle de chaque document, registres, règles d'exécution, Definition of done |
-| `CLAUDE.md`                          | Ce que Claude lit à chaque session : où lire, quoi lancer, conventions non déductibles du code |
-| `ARCHITECTURE.md`                    | Structure du code et règles de dépendance, à remplir après l'ADR de stack                    |
-| `ROADMAP.md`                         | Vue macro : un lot par ligne, son critère de sortie, son plan. Pas de sous-tâches            |
-| `CLAUDE.local.md.example`            | Gabarit des préférences locales (chemins, ports, comptes de dev), jamais commité             |
-| `docs/README.md`                     | Index de `docs/` et **table des registres** (un préfixe par registre, sans collision)        |
-| `docs/cdc/`                          | Le cahier des charges reçu, son analyse et le registre d'exigences `E-nn`                    |
-| `docs/adr/`                          | Décisions figées `ADR-NNNN`, gabarit `0000-template.md`                                      |
-| `docs/decisions.md`                  | Arbitrages en attente `D-nn` (budget, calendrier, technique)                                 |
-| `docs/questions.md`                  | Questions au métier `Q-nn`, avec leurs réponses datées                                       |
-| `docs/backlog.md`                    | Ce qu'on a refusé de faire maintenant `B-nn`, avec ce que ça coûterait                        |
-| `docs/plans/`                        | Un plan par lot, gabarit `0000-template.md`, exécuté par `/executer-plan`                    |
-| `docs/retro/`                        | Une rétrospective par lot, gabarit `0000-template.md`, écrite par `/cloturer-lot`            |
-| `docs/recette/`                      | Scénarios de recette et anomalies `A-nn`                                                     |
-| `docs/modeles/rules.md`              | Gabarit du `rules.md` d'un module (règles métier tracées, une par test)                      |
-| `.claude/skills/demarrer-projet/`    | Du cahier des charges aux documents de pilotage, en trois arrêts                             |
-| `.claude/skills/ecrire-plan/`        | De la roadmap au plan d'un lot, conforme au gabarit                                          |
-| `.claude/skills/executer-plan/`      | Exécution d'un plan validé, vague par vague                                                  |
-| `.claude/skills/ecrire-adr/`         | D'une décision prise à son ADR                                                               |
-| `.claude/skills/cloturer-lot/`       | Rétro, roadmap cochée, leçons fondues dans le skill de stack, mémoire purgée                  |
-| `.claude/skills/implementer/`        | Le skill de stack : gabarit, rempli au lot 0 pour la stack choisie                           |
+| Document | What it holds |
+| --- | --- |
+| [`ROADMAP.md`](ROADMAP.md) | One line per lot, its scope and its exit criterion |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Package layout and the dependency rules the lint enforces |
+| [`METHODE.md`](METHODE.md) | How the project is run: cycle, registers, definition of done |
+| [`docs/adr/`](docs/adr/) | Frozen decisions; changed by a new ADR, never worked around in code |
+| [`docs/cdc/`](docs/cdc/) | The specification and its `E-nnn` requirement register |
+| [`docs/README.md`](docs/README.md) | Index of the documentation and table of registers |
 
-## Ce qu'on adapte à chaque projet
+## License
 
-- `CLAUDE.md` § Commandes, § Conventions de la stack, § Règles d'architecture : après l'ADR de stack.
-- `ARCHITECTURE.md` en entier.
-- `.claude/skills/implementer/SKILL.md` : les exemples canoniques de la stack.
-- La langue des textes d'interface (ADR de langues) : le kit fixe le français pour le pilotage et
-  l'anglais pour le code, pas la langue des utilisateurs.
-
-## Profil « réécriture d'un existant »
-
-Rare, non inclus par défaut. Il ajoute : un lien `legacy/` vers le code source de l'existant
-(gitignoré, chemin dans `CLAUDE.local.md`), des relevés d'écrans dans `docs/ui-reference/`, un
-registre de défauts de l'existant `L-nn`, une reprise de données rejouable par tranche verticale,
-un audit 1:1 pendant lequel on ne corrige rien, et la règle « mesurer sur les données réelles
-avant de modéliser ». Pilot v2 en est la référence (`docs/ui-reference/README.md`,
-`docs/defauts-legacy.md`, `scripts/replicate-legacy/`, ADR-0009, 0011, 0020).
-
-## Pourquoi ces choix
-
-- **Une décision qui n'est pas écrite ne se code pas.** C'est ce qui empêche le modèle de trancher à
-  la place du propriétaire. D'où les registres et les ADR en statut « proposé » tant qu'un humain
-  n'a pas dit oui.
-- **Un état, pas un journal.** Sur Pilot v2, `ROADMAP.md` a fini à 450 lignes et 96 cases, le skill
-  de stack à 363 lignes organisées par « leçons du lot N ». Ici : la roadmap ne porte que des
-  critères de sortie, les cases vivent dans les plans, le récit vit dans `docs/retro/`, et le skill
-  reste thématique et au présent.
-- **Un préfixe par registre.** Pilot v2 a eu deux registres en `D-nn` (décisions et défauts) et des
-  renvois du type « question Q3 — Q2 du registre ». La table de `docs/README.md` est la seule
-  source des préfixes.
-- **Les règles vivent dans l'outillage.** Une règle que le lint ou la CI vérifie n'a pas besoin
-  d'être répétée au modèle. `CLAUDE.md` ne garde que ce qu'on ne peut pas déduire ni vérifier.
-- **Tout ce que la méthode requiert est versionné.** Les skills vivent dans `.claude/skills/` du
-  dépôt, pas dans `~/.claude/`. Le dépôt distant et la CI verte sont dans le lot 0, pas « à
-  ajouter plus tard » (Pilot v2 a fait six lots sans remote).
-- **La mémoire de Claude ne porte pas l'état du projet.** Elle garde les préférences et les
-  retours ; l'état vit dans le dépôt, sinon les deux dérivent.
+Apache-2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).

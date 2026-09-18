@@ -7,8 +7,23 @@ CLAUDE.local.md
 # Confidential documents received: keep the path in CLAUDE.local.md, not the file in git
 docs/inputs/confidentiel/
 
-# Dependencies and build
-node_modules/
-dist/
-build/
-.svelte-kit/
+# Build output
+/dist/
+/koffr
+/koffr-*
+
+# Go test and profiling artifacts
+*.test
+*.out
+*.prof
+
+# Local state produced by running the agent from the working tree
+*.db
+*.db-wal
+*.db-shm
+/var/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/

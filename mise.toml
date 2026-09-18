@@ -1,2 +1,45 @@
 [tools]
 go = "1.27"
+golangci-lint = "2.13.2"
+
+[env]
+# The product name is fixed by ADR-0001; the ldflags path follows the module.
+KOFFR_LDFLAGS_PACKAGE = "github.com/Gu1llaum-3/koffr/internal/build"
+
+[tasks.check]
+description = "Typing and compilation — blocking"
+run = ["go vet ./...", "go build ./..."]
+
+[tasks.lint]
+description = "Format and lint, including the global bans — blocking"
+run = "golangci-lint run ./..."
+
+[tasks.fmt]
+description = "Apply the formatters"
+run = "golangci-lint fmt ./..."
+
+[tasks.test]
+description = "Unit and domain tests, with the race detector"
+run = "go test ./... -race"
+
+[tasks.build]
+description = "Static binary for the host platform, CGO_ENABLED=0"
+env = { CGO_ENABLED = "0" }
+run = """
+go build \
+  -trimpath \
+  -ldflags "-s -w \
+    -X ${KOFFR_LDFLAGS_PACKAGE}.version=${KOFFR_VERSION:-dev} \
+    -X ${KOFFR_LDFLAGS_PACKAGE}.commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
+    -X ${KOFFR_LDFLAGS_PACKAGE}.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o dist/koffr ./cmd/koffr
+"""
+
+[tasks.verify]
+description = "Everything above, in order. Green before any commit on main."
+run = [
+  "mise run check",
+  "mise run lint",
+  "mise run test",
+  "mise run build",
+]

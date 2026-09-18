@@ -1,0 +1,39 @@
+# golangci-lint v2 schema. The architecture boundaries of ADR-0010 are enforced
+# by internal/arch (N-8); this file carries the global bans only.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - errorlint
+    - misspell
+    - nilerr
+    - revive
+    - unconvert
+    - usestdlibvars
+    - wrapcheck
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go$
+        linters:
+          - wrapcheck
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Gu1llaum-3/koffr

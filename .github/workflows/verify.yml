@@ -1,0 +1,27 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # mise.toml is the single authority on tool versions, in CI as locally.
+      - uses: jdx/mise-action@v4
+        with:
+          version: 2026.3.9
+          cache: true
+
+      - run: mise run verify

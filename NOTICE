@@ -1,0 +1,9 @@
+koffr
+Copyright 2026 Guillaume Archambault
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party dependencies are listed in go.mod and keep their own licenses.
+External dump and restore tools (pg_dump, pg_restore, mysqldump, mariadb-dump
+and their variants) are never vendored into this repository: koffr locates or
+downloads them at run time, and they remain under their upstream licenses.
