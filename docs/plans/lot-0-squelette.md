@@ -149,7 +149,7 @@ a été écrite en **ADR-0011** avant ce plan.
 - [x] **1.3** Tâches `mise` : `check` (`go vet` + `go build`), `lint` (`golangci-lint run`), `test`
       (`go test ./... -race`), `build`, `verify` (les quatre). `.golangci.yml` au **schéma v2**.
       `golangci-lint` épinglé dans `mise.toml` (`N-3`, `N-4`). `CLAUDE.md` § Commandes rempli.
-- [ ] **1.4** `.github/workflows/verify.yml` : `mise` puis `verify`, sur push et PR, **verte au
+- [x] **1.4** `.github/workflows/verify.yml` : `mise` puis `verify`, sur push et PR, **verte au
       premier push**.
 
       > Arrêt (2026-09-18) : le fichier est écrit, mais **il ne peut pas être poussé**.
@@ -165,7 +165,7 @@ a été écrite en **ADR-0011** avant ce plan.
       > un push de notre `main` serait rejeté, et un push forcé détruirait ces 59 commits.
       > Résolu le 2026-09-18 par **`N-12`** (option (a)) : le distant a été renommé `koffr-old`
       > et un dépôt vide recréé sous le même nom. La tâche reprend.
-- [ ] **1.5** Vague verte : `verify`, commit `chore: bootstrap go module, tooling and ci`.
+- [x] **1.5** Vague verte : `verify`, commit `chore: bootstrap go module, tooling and ci`.
 
 ### Vague 2 — Spike d'édition de liens (`lot0/wave-2-tool-linking-spike`) — `E-130`
 
@@ -329,4 +329,15 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   avertissement) est sans objet.
 - `mise run verify` : **code de retour 0**. Binaire `dist/koffr` : **3 262 514 octets** (3,1 Mio),
   très en deçà des 30 Mo de `E-117` — normal à ce stade, la pente se mesurera au lot 4.
-- `1.4` : fichier écrit, **vague arrêtée** — voir le bloc sous la tâche et `N-12`.
+- `1.4` : arrêt sur un état de départ faux (dépôt distant déjà peuplé), tranché par `N-12`, puis
+  repris. Actions épinglées après vérification de leurs versions réelles : `actions/checkout@v7`,
+  `jdx/mise-action@v4` — les versions que le modèle « connaissait » (v5, v3) étaient périmées.
+- **`N-13`** appliquée avant tout push : identité locale `Gu1llaum-3
+  <67098259+Gu1llaum-3@users.noreply.github.com>`, les deux premiers commits réécrits. Audit :
+  plus aucune adresse professionnelle ni personnelle, ni dans les commits, ni dans les fichiers
+  suivis.
+- `1.5` : `mise run verify` **code de retour 0**, merge `--no-ff` dans `main`, premier push.
+  **CI verte au premier push** — exécution `35350393081`, `verify` en 44 s.
+- Ordre imposé par le démarrage : la CI ne pouvait pas tourner **avant** le merge, faute de dépôt
+  distant. La vague a donc été vérifiée en local, mergée, puis poussée en une fois. Les vagues
+  suivantes passeront par une branche poussée et sa CI avant merge.
