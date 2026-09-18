@@ -57,24 +57,87 @@ Dépendances pinnées dans `go.mod` ; mise à jour hebdomadaire planifiée dans 
 
 ## Conventions de la stack (ce que le modèle ne sait pas ou sait faux)
 
-{{À remplir au lot 0, depuis l'ADR de stack et le spike. Une puce par piège réellement rencontré :
-API qui a changé de nom, fichier de configuration qui n'existe plus, avertissement connu à ne pas
-« corriger ». Pas de rappel de ce que la documentation officielle dit déjà et que le modèle sait.}}
+Une puce par piège **réellement rencontré** au lot 0. Pas de rappel de ce que la documentation dit
+déjà.
 
-## Règles d'architecture (vérifiées par le lint, voir ARCHITECTURE.md)
+- **`yaml.v3` ignore les champs privés quand il évalue `omitempty`.** Un type dont la valeur est
+  privée (`config.Secret`) est donc toujours vu comme vide et **disparaît de la sortie** au lieu
+  d'être sérialisé. Il lui faut un `IsZero() bool`. Symptôme : un secret renseigné s'efface au lieu
+  d'être masqué.
+- **`node.Decode` dans un `UnmarshalYAML` perd la strictité du décodeur parent.** `KnownFields(true)`
+  ne s'y propage pas : une clé inconnue y passe en silence. Décoder les clés à la main dans ce cas
+  (voir `internal/config/tools.go`), ce qui préserve aussi les numéros de ligne.
+- **`KnownFields(true)` est la seule façon d'obtenir `E-032`.** Sans lui, `yaml.v3` ignore les clés
+  inconnues. Le message d'erreur donne la clé **et** sa ligne : ne pas le reformuler, il est ce que
+  l'exigence demande.
+- **Le pilote SQLite s'appelle `sqlite`, pas `sqlite3`.** `sqlite3` est celui de `mattn`, qui exige
+  CGO et casserait `E-117`. `depguard` l'interdit.
+- **`import _ "time/tzdata"` est obligatoire.** Sans la base de fuseaux embarquée, un binaire
+  statique ne résout aucun fuseau sur une machine sans `zoneinfo`, et `E-036` ne tient plus.
+- **Les `PRAGMA` SQLite s'appliquent par connexion.** Les poser par `Exec` après l'ouverture ne
+  couvre que la première connexion du pool. Ils vont dans la chaîne de connexion
+  (`?_pragma=journal_mode(WAL)&…`).
+- **Les tables sont `STRICT`.** Sans cela, SQLite accepte `"12 MB"` dans une colonne `INTEGER`. Les
+  horodatages sont contraints par un `GLOB`, pas par convention.
+- **`lumberjack` supprime et compresse ses archives dans une goroutine, après `Close`.** Le plafond
+  `MaxBackups` est une promesse tenue peu après, pas à l'instant de l'écriture : un test qui le
+  constate au lieu de l'attendre est instable.
+- **Sur macOS, un binaire Go lie toujours `libSystem`, même avec `CGO_ENABLED=0`.** macOS n'a pas
+  d'ABI d'appel système stable. « Statique » y veut dire « sans cgo » ; la vraie staticité ne se
+  vérifie que sur les cibles Linux (absence de `PT_INTERP`), ce que fait `mise run release`.
+- **`go test -race` exige CGO**, alors que `mise run build` impose `CGO_ENABLED=0`. Les deux tâches
+  sont distinctes exprès ; ne pas « harmoniser » en désactivant le détecteur de course.
+- **Un interdit `depguard` sur un module absent de `go.mod` ne peut pas être démontré** :
+  `typecheck` échoue d'abord et court-circuite les autres linters. La garde existe, sa preuve
+  attend qu'on ait une raison d'ajouter le module.
+- **`golangci-lint` est au schéma v2** (`version: "2"`, sections `linters.settings`, `formatters`).
+  Les formateurs sont rapportés par `golangci-lint run`, pas seulement par `fmt` : le format est
+  donc bloquant.
+- **Outils gérés (spike `E-130`)** : `DT_RUNPATH` **ne s'hérite pas**. Poser un `runpath` sur le
+  seul binaire laisse ses bibliothèques chercher les leurs dans le système ; il en faut un sur
+  **chaque bibliothèque** du bundle. Et `PT_INTERP` est **absolu** — un bundle ne se déplace pas,
+  il se re-patche. Détail dans `docs/inputs/spike-2026-09-rpath.md`.
 
-{{À remplir au lot 0. Exemples de la forme attendue :}}
+## Règles d'architecture (vérifiées par le lint et par `internal/arch`)
 
-- `src/lib/domain/` n'importe rien du framework, ni de `server/`, ni de `routes/`.
-- Une route n'appelle jamais la base : elle appelle un service.
-- Toute mutation passe par un cas d'usage du domaine, qui vérifie les droits. Pas de contrôle de
-  droits dans les routes.
-- Chaque module a un `rules.md` : règle, source (`E-nn`, `Q-nn` ou ADR), test.
+Les neuf règles d'ADR-0010, `AR-01` à `AR-09`, sont décrites avec ce qui les tient dans
+`ARCHITECTURE.md`. En résumé :
+
+- `internal/domain/**` n'importe **aucun** adaptateur, ni `net`, `net/http`, `net/smtp`, `os/exec`,
+  `database/sql`.
+- **Un module du domaine ne connaît pas son voisin** : il reçoit ce dont il a besoin par un port
+  déclaré chez lui, câblé dans `cmd/koffr`. Seul `domain/shared` est commun.
+- `internal/cli` et `internal/httpd` **n'importent jamais `internal/state`** : ils passent par un
+  cas d'usage.
+- **Seul `internal/config` lit l'environnement** ; seul `internal/engine` lance un sous-process ;
+  seul `internal/state` touche à la base ; seuls `store`, `engine` et `egress` ouvrent une
+  connexion sortante (`net/http` est en plus ouvert à `httpd`, qui **écoute**).
+- `protocol/` n'importe **rien** du dépôt : c'est ce que `koffr-server` importera.
+- Chaque module du domaine a un `rules.md` : règle, source (`E-nnn`, `Q-nn`, ADR ou `N-n`), test.
+  Les adaptateurs n'en ont pas.
+- **Une violation fait échouer `verify`.** Toute règle ajoutée ici s'accompagne de sa fixture
+  violante dans `internal/arch/testdata/`, sinon le contrôle ne prouve rien.
 
 ## Données
 
-{{À remplir au lot 0. Ce qui est fixé par ADR : types des montants, des dates, des statuts ;
-colonnes d'audit ; suppression logique ou non ; où vivent les agrégats.}}
+Fixé par ADR-0006, et **opposable dans le schéma**, pas seulement écrit ici :
+
+- **Horodatages** : `TEXT` en RFC 3339 **UTC** (`…Z`), contraints par un `GLOB` qui refuse un
+  décalage local, un `datetime()` SQLite et un entier Unix. La conversion vers `agent.timezone` se
+  fait à l'affichage et dans le manifeste, jamais en base.
+- **Statuts** : `TEXT` en toutes lettres, contraints par `CHECK`. Jamais d'entier. Les neuf noms
+  d'événements sont dans le schéma : un dixième est une migration, pas une chaîne inventée.
+- **Tailles et durées** : `INTEGER`, en octets et en millisecondes. **Aucun flottant nulle part.**
+- **Identifiants** : ULID (`TEXT`) pour les archives et les jobs ; les identifiants de base, de
+  destination et de canal sont ceux de la configuration, tels quels.
+- **Audit** : `created_at` et `updated_at` sur chaque table.
+- **Pas de suppression logique** sauf là où `E-081` l'impose ; **pas de verrou optimiste** — un seul
+  processus écrit, avec un verrou par base.
+- **Le catalogue est un index, jamais la source de vérité.** Tout ce qu'une restauration exige vit
+  aussi dans le manifeste déposé à côté de l'archive.
+- **Migrations** : fichiers SQL numérotés dans `internal/state/migrations/`, embarqués par `embed`,
+  appliquées au démarrage dans une transaction. **Aucun retour arrière automatique** : un état écrit
+  par un koffr plus récent refuse de s'ouvrir. Le SQL se relit avant commit.
 
 ## Écritures externes
 

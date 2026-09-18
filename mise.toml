@@ -35,6 +35,10 @@ go build \
   -o dist/koffr ./cmd/koffr
 """
 
+[tasks.release]
+description = "Build the three targets of ADR-0011 and check E-117: no cgo, static ELF, under 30 MB"
+run = "./scripts/check-release.sh"
+
 [tasks.verify]
 description = "Everything above, in order. Green before any commit on main."
 run = [

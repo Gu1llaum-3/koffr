@@ -133,6 +133,15 @@ Constaté dans le dépôt et sur le poste, pas supposé.
   *Contexte* : `N-11` dit `--config`, la vérification de bout en bout n° 3 du plan écrit `--file`.
   *Décision* : `--config`, drapeau persistant de la racine, avec `--state-dir` ; la ligne du § 
   « Vérification de bout en bout » se lit avec `--config`. *Exclut* : deux noms pour une chose.
+- **N-17 (2026-09-18) — « statique » n'a pas le même sens sur macOS, et le contrôle de `E-117` est
+  un script, pas un test Go.** *Constat* : même avec `CGO_ENABLED=0`, un binaire Go sur
+  `darwin/arm64` lie `/usr/lib/libSystem.B.dylib` et `libresolv` — macOS n'a pas d'ABI d'appel
+  système stable. *Décision* : `E-117` est vérifiée par cible — sur Linux, **absence de
+  `PT_INTERP`** (le binaire s'exécute sur un hôte sans libc, musl compris, ce qui a été constaté
+  dans Alpine) ; sur macOS, « statique » veut dire « sans cgo ». Le contrôle vit dans
+  `scripts/check-release.sh` et non dans un test Go : `AR-07` interdit `os/exec` hors
+  `internal/engine`, et un test Go ne peut pas inspecter un binaire qu'il n'a pas construit.
+  *Exclut* : promettre l'absence de bibliothèque dynamique sur les trois cibles.
 - **N-13 (2026-09-18) — l'identité git de ce dépôt est locale et sans adresse personnelle.**
   *Constat* : `~/.gitconfig` porte l'identité **professionnelle** du propriétaire, et les deux
   premiers commits en avaient hérité ; le prototype, lui, était signé d'une adresse Gmail
@@ -272,18 +281,18 @@ Exigences : `E-121`, `E-119`, et la porte de sortie d'ADR-0008.
 
 Exigences : `E-117` (amendée), `E-009`, `E-119`.
 
-- [ ] **7.1** Test — le binaire construit avec `CGO_ENABLED=0` ne dépend d'aucune bibliothèque
+- [x] **7.1** Test — le binaire construit avec `CGO_ENABLED=0` ne dépend d'aucune bibliothèque
       dynamique, et `go list -deps` ne contient ni `mattn/go-sqlite3` ni aucun paquet exigeant CGO.
-- [ ] **7.2** Construction des **trois** cibles d'ADR-0011, taille mesurée et **seuil bloquant à
+- [x] **7.2** Construction des **trois** cibles d'ADR-0011, taille mesurée et **seuil bloquant à
       30 Mo** dans la CI.
-- [ ] **7.3** `ARCHITECTURE.md` complété : vue d'ensemble, arborescence réelle, flux d'une
+- [x] **7.3** `ARCHITECTURE.md` complété : vue d'ensemble, arborescence réelle, flux d'une
       sauvegarde, auth et droits (renvoi ADR-0009), tests, déploiement.
-- [ ] **7.4** `CLAUDE.md` § Conventions : **les pièges réellement rencontrés** — schéma
+- [x] **7.4** `CLAUDE.md` § Conventions : **les pièges réellement rencontrés** — schéma
       `.golangci.yml` v2, pilote `sqlite` et non `sqlite3`, `time/tzdata` obligatoire pour un binaire
       statique, `KnownFields(true)` pour l'analyse stricte, et ce que le spike a appris.
-- [ ] **7.5** `.claude/skills/implementer/` rempli pour Go : structure d'un module, exemples
+- [x] **7.5** `.claude/skills/implementer/` rempli pour Go : structure d'un module, exemples
       canoniques, nommage des tests, fixtures.
-- [ ] **7.6** Vague verte : `verify`, commit `chore: release matrix and stack documentation`.
+- [x] **7.6** Vague verte : `verify`, commit `chore: release matrix and stack documentation`.
 
 ## Vérification de bout en bout
 
@@ -349,6 +358,32 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   désormais `golangci-lint` **2.13.2, construit avec go1.27.0**. Le repli prévu (lint en
   avertissement) est sans objet.
 - `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 7, publication et documentation
+
+- `scripts/check-release.sh` + tâche `mise run release`, **branchée dans la CI** : refuse un paquet
+  exigeant cgo, refuse `mattn/go-sqlite3`, construit les **trois** cibles d'ADR-0011 avec
+  `CGO_ENABLED=0`, refuse un ELF portant un `PT_INTERP`, et refuse un binaire au-dessus de 30 Mo.
+- **Vérification de bout en bout n° 2 atteinte, seuil compris** : avec
+  `KOFFR_MAX_BINARY_BYTES=1000000`, le contrôle **échoue** (code 1) en nommant la cible et la
+  taille. Un seuil qui ne fait pas échouer une CI est un commentaire.
+- **Preuve de staticité par l'exécution** : `dist/koffr-linux-arm64` lancé dans `alpine:3.20` —
+  aucune glibc — répond `koffr dev … linux/arm64`. Plus fort qu'un `ldd`.
+- `N-17` ajoutée : sur macOS, `CGO_ENABLED=0` ne donne pas un binaire sans bibliothèque dynamique.
+  La promesse est tenue par cible, pas uniformément.
+- **Tailles mesurées** : `linux/amd64` 4,0 Mio, `linux/arm64` 3,8 Mio, `darwin/arm64` 3,9 Mio. Le
+  chiffre est **provisoirement flatteur** : `internal/state`, `internal/obs` et `internal/egress`
+  ne sont liés par aucune commande. Sonde de la vague 5 : +3,5 Mio pour `modernc.org/sqlite` seul.
+  Le seuil mordra au lot 4, avec le SDK S3 et le client Docker.
+- `ARCHITECTURE.md` complété : vue d'ensemble, arborescence réelle, les neuf `AR-nn` avec ce qui
+  les tient, flux d'une sauvegarde, droits (`allow_restore`, ADR-0009), jobs, intégrations, tests,
+  déploiement. **Plus aucun gabarit.**
+- `CLAUDE.md` § Conventions, § Règles d'architecture et § Données remplis : **quatorze pièges
+  réellement rencontrés**, pas un rappel de documentation.
+- `.claude/skills/implementer/SKILL.md` réécrit pour Go, 152 lignes, avec une table d'exemples
+  **cités dans le code vivant** plutôt qu'inventés, et le geste à tenir quand le rouge par
+  antériorité est impossible.
+- `mise run verify` : **code de retour 0**. `mise run release` : **code de retour 0**.
 
 ### 2026-09-18 — vague 6, journaux et porte de sortie
 

@@ -25,3 +25,7 @@ jobs:
           cache: true
 
       - run: mise run verify
+
+      # E-117 is measured here and nowhere else: a size limit that does not
+      # fail a build is a comment.
+      - run: mise run release
