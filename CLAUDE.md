@@ -47,13 +47,19 @@ mise install                 # Go et golangci-lint aux versions de mise.toml
 mise run check               # go vet + go build (bloquant)
 mise run lint                # golangci-lint : format, lint et interdits globaux (bloquant)
 mise run fmt                 # applique les formateurs (gofumpt, goimports)
-mise run test                # go test ./... -race
+mise run test                # tests ; `-race` si la machine a un compilateur C, sinon sans, en le disant
 mise run build               # binaire statique CGO_ENABLED=0 dans dist/koffr
 mise run verify              # les quatre ci-dessus, dans l'ordre ; vert avant tout commit sur main
 ```
 
 Versions des outils : `mise.toml` fait autorité (Go 1.27, `golangci-lint` 2.13.2), y compris en CI.
 Dépendances pinnées dans `go.mod` ; mise à jour hebdomadaire planifiée dans `docs/maintenance.md`.
+
+**Le détecteur de course est facultatif en local, obligatoire en CI.** `go test -race` exige cgo,
+donc un compilateur C, qu'une machine neuve conforme aux prérequis n'a pas (`A-01`). La tâche `test`
+le constate et choisit, **en écrivant lequel des deux cas s'applique**. La CI pose
+`KOFFR_REQUIRE_RACE=1`, qui transforme son absence en échec : la garantie est mesurée là, pas sur le
+poste de chacun. Pour l'avoir en local : `build-essential` sur Debian et Ubuntu.
 
 ## Conventions de la stack (ce que le modèle ne sait pas ou sait faux)
 
@@ -86,7 +92,11 @@ déjà.
   d'ABI d'appel système stable. « Statique » y veut dire « sans cgo » ; la vraie staticité ne se
   vérifie que sur les cibles Linux (absence de `PT_INTERP`), ce que fait `mise run release`.
 - **`go test -race` exige CGO**, alors que `mise run build` impose `CGO_ENABLED=0`. Les deux tâches
-  sont distinctes exprès ; ne pas « harmoniser » en désactivant le détecteur de course.
+  sont distinctes exprès ; ne pas « harmoniser » en désactivant le détecteur de course. Et sans
+  compilateur C, Go force `CGO_ENABLED=0` **tout seul** : `-race` devient impossible sur une machine
+  qui n'a pourtant rien d'anormal. D'où `scripts/run-tests.sh` et `KOFFR_REQUIRE_RACE` (`A-01`).
+  Tester `go env CGO_ENABLED` **ne suffit pas** : la variable peut être exportée à la main sur une
+  machine sans compilateur. Le script vérifie en plus que `go env CC` est trouvable.
 - **Un interdit `depguard` sur un module absent de `go.mod` ne peut pas être démontré** :
   `typecheck` échoue d'abord et court-circuite les autres linters. La garde existe, sa preuve
   attend qu'on ait une raison d'ajouter le module.

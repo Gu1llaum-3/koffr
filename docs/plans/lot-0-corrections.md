@@ -1,6 +1,6 @@
 # Plan lot 0 — Corrections de recette
 
-> Statut : **brouillon**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **validé par le propriétaire le 2026-09-18**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 Travail transverse issu de la session de recette du lot 0 (2026-09-18, instance Multipass `koffr`).

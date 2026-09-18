@@ -15,6 +15,12 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
+    env:
+      # The race detector is optional on a developer machine that has no C
+      # toolchain (A-01); here it is not. Without it, the test task fails.
+      KOFFR_REQUIRE_RACE: "1"
+
     steps:
       - uses: actions/checkout@v7
 
