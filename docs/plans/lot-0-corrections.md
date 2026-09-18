@@ -1,6 +1,7 @@
 # Plan lot 0 — Corrections de recette
 
-> Statut : **validé par le propriétaire le 2026-09-18**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **terminé le 2026-09-18**. Cinq vagues mergées, `verify` et CI verts sur `main`, et le
+> scénario de recette rejoué en entier sur une instance nue. Reste `/cloturer-lot`. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 Travail transverse issu de la session de recette du lot 0 (2026-09-18, instance Multipass `koffr`).
@@ -150,7 +151,7 @@ registre fait foi : `docs/recette/anomalies.md`.
 - [x] **4.2** `docs/recette/anomalies.md` : colonne « Corrigée » remplie pour les sept.
 - [x] **4.3** **Rejouer le scénario entier sur l'instance Multipass restaurée par snapshot**, mot à
       mot, sans contournement. Consigner le résultat.
-- [ ] **4.4** Vague verte : `verify`, commit `docs(recette): replay the lot 0 scenario as written`.
+- [x] **4.4** Vague verte : `verify`, commit `docs(recette): replay the lot 0 scenario as written`.
 
 ### Vague 5 — Les journaux vont au bon lecteur (`lot0/wave-12-log-destinations`) — `A-08`
 
@@ -200,6 +201,24 @@ Toute sur l'instance Multipass `koffr`, restaurée par snapshot, dépôt cloné 
 | Le fichier de journal par défaut (`/var/log/koffr`) n'est pas accessible en développement | Traité par `N-3` : sortie standard seule, sans échec. À vérifier explicitement en `3.2` |
 | Câbler `obs` fait entrer `lumberjack` dans le binaire et rapproche du seuil | Mesuré en `3.4`. La marge est de 22,6 Mio : aucun risque réel à ce stade, mais le chiffre se note |
 | Le scénario rejoué révèle de **nouvelles** anomalies | Elles sont numérotées `A-08` et suivantes, et on décide alors — on ne les corrige pas dans la foulée |
+
+## Résultat
+
+Les **huit** anomalies sont corrigées et **vérifiées sur l'instance**, pas seulement sur le poste
+de développement. Le critère de sortie, point par point :
+
+| # | Critère | État |
+| --- | --- | --- |
+| 1 | `verify` vert sur une machine sans compilateur C, sans rien y installer | ✅ code 0, en 3,1 s |
+| 2 | La CI reste bloquante sur `-race` | ✅ journal de la CI : `race detector: on (gcc)` |
+| 3 | `validate` accepte l'exemple, refuse un secret introuvable, `--offline` accepte | ✅ les trois |
+| 4 | Une clé inconnue nomme la section, la clé et la ligne, sans type Go | ✅ `line 24: unknown key "timezon" in agent` |
+| 5 | `koffr version` écrit une ligne JSON dans le fichier de journal | ✅ et **plus** à l'écran (ADR-0012) |
+| 6 | Le scénario est rejouable **mot à mot** | ✅ six parcours, aucun contournement |
+
+**`A-08` a été trouvée par le rejeu lui-même** — une régression de la vague 3 de ce plan. C'est
+l'argument le plus net en faveur du rejeu : une recette qu'on ne rejoue pas ne voit pas ce que ses
+propres corrections ont cassé.
 
 ## Journal d'exécution
 

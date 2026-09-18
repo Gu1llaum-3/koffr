@@ -13,7 +13,7 @@ périmètre** (§ 3 et § 10 du CDC, reportées dans `docs/backlog.md`). Aucune 
 | Lot | Nom                                        | Exigences | Statut  | Plan | Fin |
 | --- | ------------------------------------------ | --------- | ------- | ---- | --- |
 | 0   | Squelette, outillage et spike des outils   | 13        | en recette | `docs/plans/lot-0-squelette.md` | |
-| 0c  | Corrections de recette du lot 0            | 7 `A-nn` | plan en cours | `docs/plans/lot-0-corrections.md` | |
+| 0c  | Corrections de recette du lot 0            | 8 `A-nn` | terminé | `docs/plans/lot-0-corrections.md` | 2026-09-18 |
 | 1   | Diagnostic d'un parc réel                  | 20        | à faire | | |
 | 2   | Sauvegarder une base vers un fichier chiffré | 20      | à faire | | |
 | 3   | Manifeste, catalogue et vérification       | 11        | à faire | | |
