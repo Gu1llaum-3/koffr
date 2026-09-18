@@ -31,8 +31,9 @@ func setUpLogging(cmd *cobra.Command) (func() error, error) {
 	}
 
 	logger, release := obs.New(cmd.ErrOrStderr(), obs.Options{
-		Level: level,
-		File:  paths.LogFile(),
+		Level:        level,
+		ConsoleLevel: consoleLevel(cmd, level),
+		File:         paths.LogFile(),
 	})
 
 	cmd.SetContext(context.WithValue(cmd.Context(), loggerKey{}, logger))
@@ -48,6 +49,19 @@ func loggerOf(cmd *cobra.Command) *slog.Logger {
 	}
 
 	return slog.New(slog.DiscardHandler)
+}
+
+// consoleLevel decides what a human sees. A command answers, it does not
+// narrate: by default only warnings and errors reach the terminal, and the
+// trace of the run goes to the file (ADR-0012). Asking for a level explicitly
+// overrides that — requesting --log-level debug and seeing nothing would be
+// absurd.
+func consoleLevel(cmd *cobra.Command, asked slog.Level) slog.Level {
+	if cmd.Flags().Changed("log-level") {
+		return asked
+	}
+
+	return slog.LevelWarn
 }
 
 // logLevel reads --log-level. An unknown value is refused: a typo must not

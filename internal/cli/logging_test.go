@@ -118,3 +118,40 @@ func logLines(t *testing.T, path string) []map[string]any {
 
 	return entries
 }
+
+// A-08, ADR-0012 — a command says its answer and nothing else. The trace of the
+// run goes to the file; the console of a human stays clean.
+func TestACommandDoesNotPrintItsOwnLogOnTheConsole(t *testing.T) {
+	dir := t.TempDir()
+
+	stdout, stderr, err := execute(t, "version", "--log-dir", dir)
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+
+	if strings.Contains(stderr, "command started") {
+		t.Errorf("the console shows the log of the command:\n%s", stderr)
+	}
+	if strings.Contains(stdout, "{") {
+		t.Errorf("the answer is polluted by a log line:\n%s", stdout)
+	}
+	// And the trace is kept where it belongs.
+	if lines := logLines(t, filepath.Join(dir, "koffr.log")); len(lines) == 0 {
+		t.Error("the file lost the trace the console did not show")
+	}
+}
+
+// ADR-0012 — asking for a level explicitly makes the console follow: requesting
+// --log-level debug and seeing nothing would be absurd.
+func TestAnExplicitLogLevelMakesTheConsoleFollow(t *testing.T) {
+	dir := t.TempDir()
+
+	_, stderr, err := execute(t, "version", "--log-dir", dir, "--log-level", "info")
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+
+	if !strings.Contains(stderr, "command started") {
+		t.Errorf("--log-level info was asked for and the console stayed silent:\n%s", stderr)
+	}
+}

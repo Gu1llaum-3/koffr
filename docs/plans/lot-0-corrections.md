@@ -21,6 +21,7 @@ registre fait foi : `docs/recette/anomalies.md`.
 | `A-05` | gênant | Nommer la section, pas le type Go |
 | `A-06` | gênant | `config validate` résout les secrets ; `--offline` pour la forme seule |
 | `A-07` | gênant | Câbler `obs` dans la racine cobra |
+| `A-08` | gênant | **Amendement du 2026-09-18** : anomalie trouvée au **rejeu**, tranchée par **ADR-0012** et corrigée par une vague 5 ajoutée à ce plan. Le propriétaire a délégué le choix ; l'ADR porte la trace de cette délégation |
 
 **Exigences touchées** — aucune n'est rouverte ; trois sont **mieux** tenues qu'avant :
 
@@ -89,6 +90,11 @@ registre fait foi : `docs/recette/anomalies.md`.
 - **N-4 `examples/koffr.yaml` est la source, `internal/config/testdata/reference.yaml` en devient
   une copie vérifiée.** Un test compare les deux et échoue si elles divergent. *Raison* : un
   exemple qui périme est pire que pas d'exemple. *Exclut* : deux fichiers entretenus à la main.
+- **N-6 (2026-09-18) — la vague 5 existe parce que le rejeu a trouvé `A-08`.** *Raison* : la
+  régression vient de la vague 3 de ce plan, pas du produit d'origine ; la laisser ouverte
+  reviendrait à clore un plan de corrections en ayant introduit un défaut. *Exclut* : corriger
+  `A-08` sans ADR — le choix du destinataire des journaux s'écarte de la lettre de `E-121`, survit
+  au lot et contraint le lot 5.
 - **N-5 La traduction des erreurs de `yaml.v3` se fait par une table type Go → nom de section.**
   *Raison* : `yaml.v3` ne donne que le nom du type Go ; il n'y a pas d'autre accroche. *Exclut* :
   réécrire l'analyse syntaxique pour produire nos propres erreurs, disproportionné ici.
@@ -145,6 +151,23 @@ registre fait foi : `docs/recette/anomalies.md`.
 - [x] **4.3** **Rejouer le scénario entier sur l'instance Multipass restaurée par snapshot**, mot à
       mot, sans contournement. Consigner le résultat.
 - [ ] **4.4** Vague verte : `verify`, commit `docs(recette): replay the lot 0 scenario as written`.
+
+### Vague 5 — Les journaux vont au bon lecteur (`lot0/wave-12-log-destinations`) — `A-08`
+
+Ajoutée le 2026-09-18 (`N-6`), après le rejeu. Décision : **ADR-0012**.
+
+- [x] **5.1** ADR-0012 écrit et indexé : le fichier reçoit tout, la console reçoit ce que son
+      lecteur attend. L'écart à la lettre de `E-121` y est écrit, avec sa raison.
+- [x] **5.2** Test d'abord `internal/obs/destinations_test.go` — un même événement va aux deux
+      destinataires, chacune avec **son** seuil ; le masquage de `E-115` s'applique aux deux ; les
+      deux seuils sont indépendants. Puis le distributeur `fanout`.
+- [x] **5.3** Test d'abord `internal/cli/logging_test.go` — une commande n'imprime **pas** son
+      journal à l'écran, la trace est quand même dans le fichier, et `--log-level` posé
+      explicitement fait suivre la console.
+- [x] **5.4** `docs/recette/lot-0-scenario.md` : parcours 4 réécrit — console muette, fichier
+      renseigné, niveau explicite, et une sortie redirigée sans ligne de journal.
+- [x] **5.5** `CLAUDE.md` § Commandes : la règle en trois phrases, avec le renvoi à ADR-0012.
+- [x] **5.6** Vague verte : `verify`, commit `fix(obs): send the log to the file and the console to its reader`.
 
 ## Vérification de bout en bout
 
@@ -222,6 +245,28 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   construction** si les deux divergent. `README.md` a une section « Configure ».
 - `CFG-01` amendée, `CFG-09` et `CFG-10` ajoutées dans `rules.md` ; la divergence « `validate` ne
   résout aucun secret » est **barrée, pas supprimée**, avec la date et la raison.
+- `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 5, `A-08`
+
+- **ADR-0012 écrit avant le code**, et accepté **par délégation** : le propriétaire a vu les trois
+  options et a répondu « fais ce qui pour toi est le plus pertinent ». L'index des ADR interdit de
+  coder sur un ADR proposé ; la délégation est donc écrite dans l'ADR lui-même, pour qu'elle se
+  révoque en une ligne.
+- Le raisonnement, refait avant d'implémenter : `E-121` est une exigence **non fonctionnelle** du
+  § 7, dont l'objectif nommé est `journald` — et `systemd` ramasse **les deux** flux. « Sortie
+  standard » y décrit la convention d'un **démon**, et n'engage rien sur une commande tapée à la
+  main. Le vrai défaut n'est pas le flux choisi : c'est qu'il y a **trois lecteurs** et qu'un seul
+  seuil les servait tous.
+- **La ligne `command started` est gardée**, au fichier. La supprimer réglait le bruit en perdant
+  la trace : dans un agent de sauvegarde, savoir qui a lancé quoi et quand vaut plus qu'une ligne
+  économisée.
+- `internal/obs/fanout.go` : un même événement, plusieurs gestionnaires, **un seuil chacun**. La
+  bibliothèque standard ne l'offre pas. Le masquage de `E-115` vit dans le gestionnaire, donc il
+  s'applique à chaque destinataire et ne peut pas se perdre en ajoutant un troisième.
+- Constaté sur le binaire : `koffr version` n'affiche que sa réponse ; le fichier porte la trace ;
+  `--log-level info` fait suivre la console ; `koffr config show > copie.yaml` donne **0 ligne**
+  de journal dans le fichier obtenu.
 - `mise run verify` : **code de retour 0**.
 
 ### 2026-09-18 — vague 4, `A-02`, `A-04`, et le rejeu
