@@ -137,12 +137,12 @@ registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 4 — Le scénario redevient jouable (`lot0/wave-11-acceptance-scenario`) — `A-02`, `A-04`
 
-- [ ] **4.1** `docs/recette/lot-0-scenario.md` : `mise run release` pour les trois cibles,
+- [x] **4.1** `docs/recette/lot-0-scenario.md` : `mise run release` pour les trois cibles,
       `--config` au lieu de `--file`, `examples/koffr.yaml` au lieu de `exemple/koffr.yaml`,
       parcours 4.3 réécrit avec le journal réel, parcours 3.5 avec le nouveau comportement.
       Prérequis corrigés : Docker **n'est pas** nécessaire au lot 0.
-- [ ] **4.2** `docs/recette/anomalies.md` : colonne « Corrigée » remplie pour les sept.
-- [ ] **4.3** **Rejouer le scénario entier sur l'instance Multipass restaurée par snapshot**, mot à
+- [x] **4.2** `docs/recette/anomalies.md` : colonne « Corrigée » remplie pour les sept.
+- [x] **4.3** **Rejouer le scénario entier sur l'instance Multipass restaurée par snapshot**, mot à
       mot, sans contournement. Consigner le résultat.
 - [ ] **4.4** Vague verte : `verify`, commit `docs(recette): replay the lot 0 scenario as written`.
 
@@ -222,6 +222,39 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   construction** si les deux divergent. `README.md` a une section « Configure ».
 - `CFG-01` amendée, `CFG-09` et `CFG-10` ajoutées dans `rules.md` ; la divergence « `validate` ne
   résout aucun secret » est **barrée, pas supprimée**, avec la date et la raison.
+- `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 4, `A-02`, `A-04`, et le rejeu
+
+- `docs/recette/lot-0-scenario.md` corrigé : `mise run release` pour les trois cibles, `--config`
+  au lieu de `--file`, `examples/koffr.yaml`, prérequis sans Docker **ni compilateur C**, parcours
+  4.3 réécrit avec le journal réel et un 4.4 sur le répertoire impossible, parcours 3.5 avec
+  `--offline`. Une section « Historique » garde la trace de la première session.
+- Colonne « Corrigée » remplie pour les sept anomalies.
+- **Scénario rejoué en entier sur l'instance restaurée par snapshot**, dépôt cloné depuis GitHub,
+  **sans rien y installer** :
+
+  | Parcours | Résultat |
+  | --- | --- |
+  | 1.1 `mise install` | ✅ Go 1.27.1 + `golangci-lint` 2.13.2 en 10 s |
+  | 1.2 `mise run verify` | ✅ **code 0**, avec `race detector: off` et sa raison — `A-01` levée |
+  | 2.1 `mise run release` | ✅ trois cibles, aucun Windows |
+  | 2.3 `version --json` | ✅ six champs, aucun vide |
+  | 3.1 `examples/koffr.yaml` | ✅ `ok … (offline: the secrets were not read)` — `A-03` levée |
+  | 3.2 `timezon:` | ✅ `line 24: unknown key "timezon" in agent` — `A-05` levée |
+  | 3.3 fuseau absent | ✅ message complet |
+  | 3.4 deux formes | ✅ les deux clés et la base nommées |
+  | 3.5 secret introuvable | ✅ **refusé** sans `--offline`, accepté avec — `A-06` levée |
+  | 4.2 `config show` | ✅ topologie visible, aucune des trois valeurs sensibles |
+  | 4.3 journal | ✅ une ligne JSON dans le fichier — `A-07` levée |
+  | 4.4 journal impossible | ✅ code 0 |
+  | 5 spike | ✅ rapport présent et concluant |
+  | 6 garde-fou | ✅ `AR-01` nommée, et cette fois `verify` échoue **pour la bonne raison** |
+
+- **Le rejeu a trouvé `A-08`**, une **régression introduite par la vague 3** : toute commande écrit
+  une ligne `INFO command started` sur la sortie d'erreur, visible dans le terminal, et le choix de
+  la sortie d'erreur plutôt que de la sortie standard s'écarte de la lettre de `E-121`. Consignée,
+  **non corrigée dans la foulée** — la table des risques de ce plan le prévoyait explicitement.
 - `mise run verify` : **code de retour 0**.
 
 ### 2026-09-18 — vague 3, `A-07`
