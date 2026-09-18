@@ -257,16 +257,16 @@ Exigences : `E-027`, `E-028`, `E-026`.
 
 Exigences : `E-121`, `E-119`, et la porte de sortie d'ADR-0008.
 
-- [ ] **6.1** Test `internal/obs/log_test.go` — `slog` écrit du JSON sur la sortie standard, un objet
+- [x] **6.1** Test `internal/obs/log_test.go` — `slog` écrit du JSON sur la sortie standard, un objet
       par ligne, avec `time`, `level`, `msg` et les attributs attendus, sans préfixe qui gênerait
       `journald`.
-- [ ] **6.2** Test — le fichier de journal tourne à la taille configurée et conserve N archives, sans
+- [x] **6.2** Test — le fichier de journal tourne à la taille configurée et conserve N archives, sans
       aucun service tiers (`E-119`, `N-5`).
-- [ ] **6.3** Test — un champ sensible passé à `slog` sort **masqué** ; complète `E-115`.
-- [ ] **6.4** Test `internal/egress/sink_test.go` — la porte de sortie en mode « puits » journalise
+- [x] **6.3** Test — un champ sensible passé à `slog` sort **masqué** ; complète `E-115`.
+- [x] **6.4** Test `internal/egress/sink_test.go` — la porte de sortie en mode « puits » journalise
       et **n'ouvre aucune connexion** ; test de garde « aucune connexion sortante avec la
       configuration de développement » (ADR-0008).
-- [ ] **6.5** Vague verte : `verify`, commit `feat(obs): structured logs, rotation and egress sink`.
+- [x] **6.5** Vague verte : `verify`, commit `feat(obs): structured logs, rotation and egress sink`.
 
 ### Vague 7 — Publication et documentation (`lot0/wave-7-release-and-documentation`)
 
@@ -348,6 +348,30 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
 - **Écart favorable au risque « `golangci-lint` 2.8.0 construit avec go1.25.5 »** : `mise` épingle
   désormais `golangci-lint` **2.13.2, construit avec go1.27.0**. Le repli prévu (lint en
   avertissement) est sans objet.
+- `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 6, journaux et porte de sortie
+
+- `internal/obs` : `slog` JSON sur la sortie standard, un objet par ligne, sans préfixe — journald
+  le lit sans configuration (`E-121`). Le même flux part dans un fichier que koffr **fait tourner
+  lui-même** par `lumberjack` (`N-5`) : dépendre de `logrotate` contredirait `E-119`.
+- **Masquage par nom de clé** ajouté au gestionnaire : toute valeur dont la clé contient
+  `password`, `token`, `secret`, `access_key`, `private_key`, `credential` ou `authorization` sort
+  `[redacted]`, même passée en chaîne nue. `CFG-06` protège le type `config.Secret` ; ceci rattrape
+  le mot de passe journalisé à la main. La valeur est remplacée, pas supprimée.
+- `internal/egress` : mode **puits par défaut** (valeur zéro), qui journalise et n'envoie pas. Une
+  configuration absente n'est **jamais** une erreur et ne pointe **jamais** vers une valeur réelle
+  (ADR-0008). Un message sans cible est refusé plutôt qu'envoyé quelque part d'inventé.
+- **La garde d'ADR-0008 aurait été vide** : tant que rien n'utilise le composeur, « aucune
+  connexion ouverte » est vrai par construction. `Gate.Dial` a donc été ajouté comme **porte unique
+  et réellement câblée** — elle refuse en mode puits sans toucher au réseau, et passe par le
+  composeur injecté en mode réel. Deux tests le prouvent dans les deux sens.
+- **Test instable attrapé** : `lumberjack` supprime et compresse ses archives dans une goroutine,
+  **après** `Close`. Le plafond `MaxBackups` est une promesse tenue peu après, pas à l'instant de
+  l'écriture. Le test attend la condition au lieu de la constater. À inscrire en § Conventions au
+  `7.4`.
+- **`internal/obs` n'est pas dans l'arborescence d'ADR-0010** : à ajouter à `ARCHITECTURE.md` en
+  `7.3`, comme `internal/build` et `internal/arch`.
 - `mise run verify` : **code de retour 0**.
 
 ### 2026-09-18 — vague 5, état local
