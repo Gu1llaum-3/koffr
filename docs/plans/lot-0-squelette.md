@@ -1,6 +1,7 @@
 # Plan lot 0 — Squelette, outillage et spike des outils
 
-> Statut : **validé par le propriétaire le 2026-09-18**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **terminé le 2026-09-18**, sept vagues mergées, `verify` et CI verts sur `main`.
+> Reste la recette (`docs/recette/lot-0-scenario.md`), puis `/cloturer-lot`. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 ## Périmètre
@@ -295,6 +296,10 @@ Exigences : `E-117` (amendée), `E-009`, `E-119`.
 - [x] **7.6** Vague verte : `verify`, commit `chore: release matrix and stack documentation`.
 
 ## Vérification de bout en bout
+
+> Rejouée le 2026-09-18, à la fin de la vague 7. Les huit points sont atteints ; le détail de
+> chacun est dans le journal d'exécution de la vague qui l'a produit.
+
 
 1. `mise run verify` vert en local ; CI verte sur le premier push.
 2. `go build` pour les trois cibles avec `CGO_ENABLED=0` ; la taille de chacune est notée dans le
