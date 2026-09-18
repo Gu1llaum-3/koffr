@@ -129,8 +129,13 @@ Les neuf règles d'ADR-0010, `AR-01` à `AR-09`, sont décrites avec ce qui les 
 - `internal/cli` et `internal/httpd` **n'importent jamais `internal/state`** : ils passent par un
   cas d'usage.
 - **Seul `internal/config` lit l'environnement** ; seul `internal/engine` lance un sous-process ;
-  seul `internal/state` touche à la base ; seuls `store`, `engine` et `egress` ouvrent une
-  connexion sortante (`net/http` est en plus ouvert à `httpd`, qui **écoute**).
+  seuls `store`, `engine` et `egress` ouvrent une connexion sortante (`net/http` est en plus ouvert
+  à `httpd`, qui **écoute**).
+- **`database/sql` est réservé à `internal/state` et `internal/engine`** (ADR-0013). Dans `engine`,
+  une connexion de pilote sert à **sonder** — joignabilité, version, famille — et **jamais** à lire
+  les données d'une base à sauvegarder : le dump reste un sous-process. Ce que le lint ne sait pas
+  exprimer, un test le dit : la sonde n'émet **que** sa requête de version.
+  `modernc.org/sqlite` reste réservé à `state`, sans exception.
 - `protocol/` n'importe **rien** du dépôt : c'est ce que `koffr-server` importera.
 - Chaque module du domaine a un `rules.md` : règle, source (`E-nnn`, `Q-nn`, ADR ou `N-n`), test.
   Les adaptateurs n'en ont pas.

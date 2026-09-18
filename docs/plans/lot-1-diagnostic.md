@@ -7,11 +7,6 @@ C'est le `L0` du cahier des charges : aucune sauvegarde, et c'est voulu. Le lot 
 technique du produit — savoir, sur un parc réel, quel outil sauvegardera quelle base, et le prouver
 en l'exécutant.
 
-## Point bloquant à lever avant validation
-
-**`internal/engine` a besoin de `database/sql`, qu'`AR-08` réserve à `internal/state`.** Voir `N-1`.
-**ADR-0013** l'écrit, statut **proposé** : il doit être accepté avant que ce plan soit validé.
-
 ## Périmètre
 
 **Exigences couvertes — 20** :
@@ -106,8 +101,8 @@ Constaté dans le code, pas supposé.
 
 ## Décisions d'implémentation
 
-- **N-1 — `internal/engine` peut importer `database/sql` pour sonder.** Écrite en **ADR-0013**
-  (proposé) ; ce plan ne se valide pas avant elle. Résumé :
+- **N-1 — `internal/engine` peut importer `database/sql` pour sonder.** Figée par **ADR-0013**,
+  accepté le 2026-09-18. Rappel :
   *Constat* : `AR-08` d'ADR-0010 réserve `database/sql` à `internal/state`. Or ADR-0002 prévoit
   explicitement `jackc/pgx/v5` **et** `go-sql-driver/mysql` « pour les sondes et la détection de
   famille, jamais pour le dump » — et `go-sql-driver/mysql` n'a pas d'API utilisable hors
@@ -152,19 +147,23 @@ Constaté dans le code, pas supposé.
 Exigences : `E-011`, `E-041`, et la moitié de `E-104a`. L'inconnue d'abord : si les conteneurs de
 test ne tiennent pas, tout le lot change de forme.
 
-- [ ] **1.1** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
+- [ ] **1.1** `internal/arch` : `AR-08` amendée d'après **ADR-0013** — `database/sql` ouvert à
+      `internal/engine`, `AR-08b` gardant `modernc.org/sqlite` à `state` seul. **Une fixture
+      violante pour chacune** : une règle assouplie sans fixture est une règle qu'on ne vérifie
+      plus. `depguard` suit.
+- [ ] **1.2** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
       PostgreSQL 18 : joignabilité, version majeure et mineure lues du serveur. Cas d'erreur :
       hôte injoignable, mauvais identifiants, base absente — trois erreurs **typées et
       distinctes**. Puis le code (`jackc/pgx/v5`).
-- [ ] **1.2** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
+- [ ] **1.3** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
       du serveur (`N-8`), jamais déduite. Un MariaDB et un MySQL sur le même port se distinguent.
       Puis le code.
-- [ ] **1.3** Test — la sonde n'exécute **rien d'autre** que sa requête de version : pas de
+- [ ] **1.4** Test — la sonde n'exécute **rien d'autre** que sa requête de version : pas de
       `SHOW TABLES`, pas de dump. Vérifié en lisant les requêtes émises.
-- [ ] **1.4** `internal/domain/resolve/ports.go` : le port `ServerProbe` déclaré **par le domaine**,
+- [ ] **1.5** `internal/domain/resolve/ports.go` : le port `ServerProbe` déclaré **par le domaine**,
       implémenté par `engine` (`N-2`). Un faux de test l'implémente, pour que la suite se teste sans
       base.
-- [ ] **1.5** Vague verte : `verify`, commit `feat(engine): probe a server for its version and family`.
+- [ ] **1.6** Vague verte : `verify`, commit `feat(engine): probe a server for its version and family`.
 
 ### Vague 2 — Énumération des candidats (`lot1/wave-2-tool-discovery`)
 
@@ -292,7 +291,7 @@ Sur l'instance de recette, augmentée pour l'occasion :
 
 | Risque | Ce qu'on fait s'il se réalise |
 | --- | --- |
-| **`N-1` n'est pas tranchée** : le plan ne peut pas être validé | C'est le point bloquant en tête. Sans ADR, la vague 1 n'a pas d'implémentation possible pour MySQL |
+| `engine` peut désormais ouvrir une connexion SQL : la garantie « le dump est un sous-process » n'est plus purement mécanique (ADR-0013) | Ce qui la tient est la tâche `1.4` — un test qui épelle les requêtes émises — et la petite taille du paquet. Toute requête ajoutée à `engine` se justifie en revue |
 | `testcontainers-go` ne démarre pas sur l'instance de recette (2 Go, pas de Docker) | L'instance est augmentée **avant** la vague 1, ou les tests d'intégration ne tournent qu'en CI et on le dit |
 | La matrice d'ADR-0004 (onze instances) rend la CI trop lente | Prévu par l'ADR : sous-ensemble par vague, matrice complète sur `main`. À mesurer dès la vague 1 |
 | `pg_lsclusters` n'existe que sur Debian et dérivés | Son absence n'est pas une erreur : c'est une source qui ne rend rien. À tester explicitement |

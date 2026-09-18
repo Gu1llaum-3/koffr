@@ -1,7 +1,7 @@
 # ADR-0013 — `internal/engine` peut ouvrir une connexion de base pour sonder, jamais pour lire
 
 - **Date** : 2026-09-18
-- **Statut** : **proposé**
+- **Statut** : **accepté** — par le propriétaire, le 2026-09-18
 - **Exigences** : `E-041`, `E-011`, `E-104a`, `E-034`
 - **Références** : **amende `AR-08` d'ADR-0010** ; lié à ADR-0002 (pile) et ADR-0004 (moteurs) ;
   `N-1` du plan du lot 1

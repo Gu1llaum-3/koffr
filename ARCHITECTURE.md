@@ -75,7 +75,8 @@ sur un appel et non sur un import, et c'est `forbidigo` qui la tient.
 | `AR-05` | tout sauf `internal/config` | `os.Getenv`, `os.LookupEnv`, `os.Environ` | `forbidigo` |
 | `AR-06` | tout sauf `store`, `engine`, `egress` | `net`, `net/smtp` ; `net/http` est en plus ouvert à `httpd`, qui **écoute** et n'appelle pas (`N-14`) | `internal/arch` |
 | `AR-07` | tout sauf `internal/engine` | `os/exec` | `internal/arch` **et** `depguard` |
-| `AR-08` | tout sauf `internal/state` | `database/sql`, `modernc.org/sqlite` | `internal/arch` |
+| `AR-08` | tout sauf `internal/state` **et `internal/engine`** | `database/sql` — `engine` s'en sert pour **sonder** un serveur, jamais pour lire les données à sauvegarder (ADR-0013) | `internal/arch` |
+| `AR-08b` | tout sauf `internal/state` | `modernc.org/sqlite` — sans exception | `internal/arch`, `depguard` |
 | `AR-09` | `protocol/` | tout le reste du dépôt | `internal/arch` |
 
 `depguard` interdit par ailleurs `github.com/mattn/go-sqlite3` partout (`E-027`). Cet interdit ne

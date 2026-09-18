@@ -18,7 +18,7 @@ que le propriétaire ne l'a pas passé en **accepté** ; on ne code pas dessus.
 | 0007 | L'agent ne détient qu'une clé publique ; la clé privée est fournie à la restauration | accepté | 2026-09-18 |
 | 0008 | Deux catégories de sorties : les fonctionnelles et celles d'exploitation | accepté | 2026-09-18 |
 | 0009 | L'accès à la machine fait les droits ; le serveur central est le seul acteur distant | accepté | 2026-09-18 |
-| 0010 | Le domaine est découpé par cas d'usage, les composants du CDC sont des adaptateurs | accepté | 2026-09-18 |
+| 0010 | Le domaine est découpé par cas d'usage, les composants du CDC sont des adaptateurs | accepté, `AR-08` amendée par ADR-0013 | 2026-09-18 |
 | 0011 | Windows est hors périmètre, et c'est annoncé | accepté | 2026-09-18 |
 | 0012 | Le fichier reçoit tout, la console reçoit ce que son lecteur attend | accepté | 2026-09-18 |
-| 0013 | `internal/engine` peut ouvrir une connexion de base pour sonder, jamais pour lire | **proposé** | 2026-09-18 |
+| 0013 | `internal/engine` peut ouvrir une connexion de base pour sonder, jamais pour lire | accepté | 2026-09-18 |
