@@ -1,10 +1,8 @@
 # ADR-0012 — Le fichier reçoit tout, la console reçoit ce que son lecteur attend
 
 - **Date** : 2026-09-18
-- **Statut** : **accepté par délégation**, 2026-09-18. Le propriétaire a vu les trois options
-  possibles et a répondu « fais maintenant ce qui pour toi est le plus pertinent ». Ce n'est pas
-  une auto-acceptation : c'est une délégation explicite, tracée ici pour qu'elle se révoque en une
-  ligne à la clôture du lot.
+- **Statut** : **accepté** — confirmé par le propriétaire le 2026-09-18, après lecture. Le choix
+  lui avait d'abord été délégué ; la confirmation lève cette réserve.
 - **Exigences** : `E-121`, `E-115`, `E-103`
 - **Références** : anomalie `A-08` du rejeu de recette ; ADR-0003 (langues) ; lié à ADR-0009
 

@@ -20,4 +20,4 @@ que le propriétaire ne l'a pas passé en **accepté** ; on ne code pas dessus.
 | 0009 | L'accès à la machine fait les droits ; le serveur central est le seul acteur distant | accepté | 2026-09-18 |
 | 0010 | Le domaine est découpé par cas d'usage, les composants du CDC sont des adaptateurs | accepté | 2026-09-18 |
 | 0011 | Windows est hors périmètre, et c'est annoncé | accepté | 2026-09-18 |
-| 0012 | Le fichier reçoit tout, la console reçoit ce que son lecteur attend | accepté (par délégation) | 2026-09-18 |
+| 0012 | Le fichier reçoit tout, la console reçoit ce que son lecteur attend | accepté | 2026-09-18 |
