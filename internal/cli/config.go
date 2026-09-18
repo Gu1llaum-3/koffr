@@ -21,7 +21,9 @@ func newConfigCommand() *cobra.Command {
 }
 
 func newConfigValidateCommand() *cobra.Command {
-	return &cobra.Command{
+	var offline bool
+
+	cmd := &cobra.Command{
 		Use:   "validate",
 		Short: "Check the configuration file and say what is wrong with it",
 		Args:  cobra.NoArgs,
@@ -33,17 +35,40 @@ func newConfigValidateCommand() *cobra.Command {
 				return err
 			}
 
-			cmd.Printf("ok %s: %d databases, %d destinations, %d alert channels, timezone %s\n",
+			// Resolving reads a file and an environment variable, and nothing
+			// else: a password koffr cannot read is found here rather than in
+			// the middle of the night (CFG-09). Reaching the databases and the
+			// tools is E-034, at lot 1.
+			if !offline {
+				if err := parsed.Resolve(); err != nil {
+					return fmt.Errorf("invalid configuration: %s: %w", path, err)
+				}
+			}
+
+			cmd.Printf("ok %s: %d databases, %d destinations, %d alert channels, timezone %s%s\n",
 				path,
 				len(parsed.Databases),
 				len(parsed.Destinations),
 				len(parsed.Alerts.Channels),
 				parsed.Agent.Timezone,
+				offlineNote(offline),
 			)
 
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&offline, "offline", false,
+		"check the shape only, without reading the secrets the file points at")
+
+	return cmd
+}
+
+func offlineNote(offline bool) string {
+	if offline {
+		return " (offline: the secrets were not read)"
+	}
+
+	return ""
 }
 
 func newConfigShowCommand() *cobra.Command {

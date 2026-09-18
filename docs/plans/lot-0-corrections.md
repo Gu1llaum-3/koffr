@@ -110,18 +110,18 @@ registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 2 — La configuration dit la vérité (`lot0/wave-9-validate-and-messages`) — `A-05`, `A-06`, `A-03`
 
-- [ ] **2.1** Test d'abord `internal/config/parse_test.go` — **`CFG-01` amendée** : le message nomme
+- [x] **2.1** Test d'abord `internal/config/parse_test.go` — **`CFG-01` amendée** : le message nomme
       **la section** (`agent`, `databases[0]`, `destinations[0]`), la clé et la ligne, et **ne
       contient plus** `config.` ni `type `. Puis la table de traduction (`N-5`).
-- [ ] **2.2** Test d'abord `internal/cli/config_test.go` — **`CFG-09`** : `config validate` échoue
+- [x] **2.2** Test d'abord `internal/cli/config_test.go` — **`CFG-09`** : `config validate` échoue
       sur un `password_file` absent et sur un `*_env` non défini, en nommant le fichier ou la
       variable ; `--offline` accepte les deux. Puis le code (`N-1`).
-- [ ] **2.3** `examples/koffr.yaml` créé depuis le § 5.1, et test **`CFG-10`** : l'exemple est
+- [x] **2.3** `examples/koffr.yaml` créé depuis le § 5.1, et test **`CFG-10`** : l'exemple est
       accepté, et il est **identique** à `internal/config/testdata/reference.yaml` (`N-4`).
       `README.md` le pointe.
-- [ ] **2.4** `internal/config/rules.md` : `CFG-01` amendée, `CFG-09` et `CFG-10` ajoutées avec leur
+- [x] **2.4** `internal/config/rules.md` : `CFG-01` amendée, `CFG-09` et `CFG-10` ajoutées avec leur
       source ; la divergence « `validate` ne résout aucun secret » est **barrée**, pas supprimée.
-- [ ] **2.5** Vague verte : `verify`, commit `feat(config): validate resolves secrets and errors name the section`.
+- [x] **2.5** Vague verte : `verify`, commit `feat(config): validate resolves secrets and errors name the section`.
 
 ### Vague 3 — Le journal a un émetteur (`lot0/wave-10-wire-logging`) — `A-07`
 
@@ -200,3 +200,26 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   L'instance a ensuite été **restaurée par snapshot** — `gcc` et le clone ont disparu, l'état est
   celui du départ.
 - `mise run verify` en local : **code de retour 0**.
+
+### 2026-09-18 — vague 2, `A-03`, `A-05`, `A-06`
+
+- **`A-05`** : `internal/config/unknownkey.go` traduit ce que dit `yaml.v3`. Plutôt que de se
+  contenter du nom de section déduit du type Go, il **localise la clé dans l'arbre YAML** par sa
+  ligne et son nom, ce qui donne le chemin exact : `agent`, `databases[0]`, `destinations[0]`,
+  `the root`, `tools`. Message obtenu : `line 24: unknown key "timezon" in agent`. Le test
+  interdit explicitement `config.`, `type `, `yaml: unmarshal` et `not found in` dans la sortie.
+- **Deux erreurs dans mon propre test**, corrigées : une ligne attendue fausse (9, pas 10) et un
+  contrôle de jargon trop naïf — `"yaml:"` matchait le nom du fichier temporaire `koffr.yaml:`.
+- **`A-06`** : `Config.Resolve` exporté, `config validate` l'appelle, `--offline` ne l'appelle pas
+  et **l'annonce** dans sa sortie. `config show` ne résout toujours rien.
+- **Conséquence immédiate et saine** : deux tests existants ont cassé, parce que `reference.yaml`
+  pointe vers `/run/credentials/koffr.service/boutique`, qui n'existe que sur un hôte koffr. Ils
+  passent désormais `--offline` — c'est précisément le cas d'usage du drapeau.
+- Message d'erreur resserré : le chemin n'est plus répété deux fois.
+- **`A-03`** : `examples/koffr.yaml` créé, avec un en-tête qui explique l'analyse stricte, les
+  trois formes de secret et les trois commandes de vérification. Il est la **source** ;
+  `internal/config/testdata/reference.yaml` en est la copie, et `CFG-10` **fait échouer la
+  construction** si les deux divergent. `README.md` a une section « Configure ».
+- `CFG-01` amendée, `CFG-09` et `CFG-10` ajoutées dans `rules.md` ; la divergence « `validate` ne
+  résout aucun secret » est **barrée, pas supprimée**, avec la date et la raison.
+- `mise run verify` : **code de retour 0**.

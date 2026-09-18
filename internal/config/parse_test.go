@@ -8,14 +8,17 @@ import (
 	"testing"
 )
 
-// CFG-01 — an unknown key is an error that names the key and its line, wherever
-// it sits. A typo must never silently disable a backup (E-032, § 5.1 F1.1).
-func TestCFG01UnknownKeyIsAnErrorNamingTheKeyAndItsLine(t *testing.T) {
+// CFG-01 — an unknown key is an error that names the section it sits in, the
+// key and its line. A typo must never silently disable a backup (E-032,
+// § 5.1 F1.1), and the person reading the message is an operator: it names
+// `agent`, not the Go type that happens to carry it (A-05).
+func TestCFG01UnknownKeyIsAnErrorNamingTheSectionTheKeyAndItsLine(t *testing.T) {
 	cases := []struct {
-		name string
-		yaml string
-		key  string
-		line int
+		name    string
+		yaml    string
+		key     string
+		line    int
+		section string
 	}{
 		{
 			name: "at the root of a section",
@@ -24,8 +27,9 @@ agent:
   id: "prod-fr-01"
   timezon: "Europe/Paris"
 `,
-			key:  "timezon",
-			line: 3,
+			key:     "timezon",
+			line:    3,
+			section: "agent",
 		},
 		{
 			name: "in a section of its own",
@@ -36,8 +40,9 @@ agent:
 encryptions:
   recipients_file: /etc/koffr/recipients.txt
 `,
-			key:  "encryptions",
-			line: 4,
+			key:     "encryptions",
+			line:    4,
+			section: "the root",
 		},
 		{
 			name: "in databases[0]",
@@ -50,8 +55,9 @@ databases:
     engine: postgresql
     hostname: 10.0.3.12
 `,
-			key:  "hostname",
-			line: 7,
+			key:     "hostname",
+			line:    7,
+			section: "databases[0]",
 		},
 		{
 			name: "in destinations[0]",
@@ -64,8 +70,26 @@ destinations:
     type: filesystem
     directory: /srv/backups
 `,
-			key:  "directory",
-			line: 7,
+			key:     "directory",
+			line:    7,
+			section: "destinations[0]",
+		},
+		{
+			name: "under tools, decoded by hand",
+			yaml: `
+agent:
+  id: "prod-fr-01"
+  timezone: "Europe/Paris"
+databases:
+  - id: erp
+    engine: mariadb
+    tools:
+      strategy: exec
+      containers: erp-mariadb
+`,
+			key:     "containers",
+			line:    9,
+			section: "tools",
 		},
 	}
 
@@ -82,6 +106,17 @@ destinations:
 			}
 			if want := "line " + strconv.Itoa(c.line); !strings.Contains(got, want) {
 				t.Errorf("the error does not give %q:\n%s", want, got)
+			}
+			if !strings.Contains(got, c.section) {
+				t.Errorf("the error does not name the section %q:\n%s", c.section, got)
+			}
+
+			// A-05 — an operator reads this, not a Go developer.
+			// "yaml:" alone would match the temporary file name in the prefix.
+			for _, jargon := range []string{"config.", "type ", "yaml: unmarshal", "not found in"} {
+				if strings.Contains(got, jargon) {
+					t.Errorf("the error leaks %q at the operator:\n%s", jargon, got)
+				}
 			}
 		})
 	}
