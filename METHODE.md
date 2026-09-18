@@ -95,11 +95,21 @@ il n'écrit que ce qui lui est propre.
    vérification est verte. `main` est toujours vert.
 3. **TDD** pour tout code de domaine et de serveur : le test d'abord, rouge, puis le code minimal,
    puis refactor. Pour l'interface et la configuration, un test n'est pas toujours possible : on le
-   dit plutôt que de forcer.
+   dit plutôt que de forcer. **Quand le découpage du plan rend le rouge impossible** — une tâche
+   qui teste ce que la précédente a écrit —, on le **dit dans le journal**, et on prouve au moins
+   que le test mord : retirer la contrainte, constater l'échec, la remettre. Un rouge par
+   suppression vaut moins qu'un rouge par antériorité, et ne se présente jamais comme tel.
 4. **Vérification complète à la fin de chaque vague** (la commande `verify` de `CLAUDE.md`), codes
-   de retour lus, pas seulement la dernière ligne.
+   de retour lus, pas seulement la dernière ligne. Quand une CI existe, on attend sa **fin** avant
+   de merger, en s'assurant d'abord que l'exécution qu'on surveille **existe** : une commande de
+   surveillance lancée trop tôt échoue sans rien avoir observé, et son échec ressemble à celui
+   d'une CI rouge.
 5. **Mesurer avant de modéliser** : quand une donnée existe (base, export, fichier), une requête de
    dix secondes précède la décision de schéma.
+5. bis **L'état de départ se vérifie aussi hors du dépôt local.** Tout ce que le plan **nomme** —
+   dépôt distant, registre de paquets, nom de domaine, machine cible — se regarde avant d'écrire
+   « rien n'existe ». Un `git rev-parse` qui échoue dit que le dossier n'est pas sous git, pas que
+   le dépôt distant est vide.
 6. **Un échec arrête la vague.** On rapporte, on note l'échec sous la tâche dans le plan, on
    attend. Une tâche ambiguë ou destructrice attend une confirmation.
 7. **Une case se coche au moment où la tâche passe**, pas en bloc à la fin.
@@ -119,8 +129,10 @@ il n'écrit que ce qui lui est propre.
 3. Aucune règle métier sans test, aucun test sans règle nommée.
 4. Toute mutation vérifie les droits dans la couche métier, jamais dans la couche transport.
 5. Toute évolution de schéma a sa migration relue.
-6. Recette faite avec un utilisateur, anomalies `A-nn` consignées, décisions attendues prises ou
-   inscrites en `D-nn`.
+6. Recette faite avec un utilisateur, **sur une machine distincte du poste de développement**,
+   anomalies `A-nn` consignées, décisions attendues prises ou inscrites en `D-nn`. Quand la recette
+   a donné lieu à des corrections, le scénario est **rejoué en entier** après elles : une recette
+   corrigée mais non rejouée ne voit pas ce que ses propres corrections ont cassé.
 7. `docs/retro/lot-N.md` écrite, roadmap cochée, ADR écrits pour toute décision structurante prise
    en route, skill de stack amendé, `METHODE.md` amendée si la rétro le demande.
 

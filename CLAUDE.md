@@ -106,6 +106,9 @@ déjà.
 - **Un interdit `depguard` sur un module absent de `go.mod` ne peut pas être démontré** :
   `typecheck` échoue d'abord et court-circuite les autres linters. La garde existe, sa preuve
   attend qu'on ait une raison d'ajouter le module.
+- **Vérifier la version courante d'une action ou d'un outil avant de l'épingler.** Ce que le modèle
+  « connaît » date de son entraînement : `actions/checkout@v5` et `jdx/mise-action@v3` étaient
+  périmées (v7 et v4). Une requête à l'API du dépôt coûte deux secondes.
 - **`golangci-lint` est au schéma v2** (`version: "2"`, sections `linters.settings`, `formatters`).
   Les formateurs sont rapportés par `golangci-lint run`, pas seulement par `fmt` : le format est
   donc bloquant.

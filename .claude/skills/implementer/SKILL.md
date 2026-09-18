@@ -38,6 +38,17 @@ antériorité est impossible. On le **dit**, et on prouve au moins que le test m
 contrainte, constater l'échec, la remettre. Un rouge par suppression vaut moins ; ne pas le faire
 passer pour un rouge.
 
+**Un test qui ne peut pas échouer ne prouve rien.** Avant de le croire, se demander ce qui le
+ferait tomber — et le vérifier. Deux pièges vus en vrai :
+
+- le test s'exécute sur un document ou un état où le cas **n'existe pas** (vérifier l'absence d'une
+  clé dans une configuration qui n'a aucune destination : il passe, et il ne teste rien) ;
+- le test garde un chemin que **personne n'emprunte** (« aucune connexion sortante » est vrai tant
+  que rien n'ouvre de connexion). Câbler le chemin, ou dire que la garde est vide.
+
+Le geste : une **fixture violante** quand c'est possible — `internal/arch/testdata/` en contient une
+par règle —, sinon retirer ce que le test vérifie et constater qu'il tombe.
+
 Ce qu'on ne fait pas : écrire le code puis « ajouter les tests » ; adapter le test au code quand il
 échoue ; passer un test en `t.Skip` pour merger.
 

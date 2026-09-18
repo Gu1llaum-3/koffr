@@ -12,7 +12,7 @@ périmètre** (§ 3 et § 10 du CDC, reportées dans `docs/backlog.md`). Aucune 
 
 | Lot | Nom                                        | Exigences | Statut  | Plan | Fin |
 | --- | ------------------------------------------ | --------- | ------- | ---- | --- |
-| 0   | Squelette, outillage et spike des outils   | 13        | en recette | `docs/plans/lot-0-squelette.md` | |
+| 0   | Squelette, outillage et spike des outils   | 13        | terminé | `docs/plans/lot-0-squelette.md` | 2026-09-18 |
 | 0c  | Corrections de recette du lot 0            | 8 `A-nn` | terminé | `docs/plans/lot-0-corrections.md` | 2026-09-18 |
 | 1   | Diagnostic d'un parc réel                  | 20        | à faire | | |
 | 2   | Sauvegarder une base vers un fichier chiffré | 20      | à faire | | |
@@ -38,6 +38,9 @@ Celles de `METHODE.md` § « Règles de pilotage », plus celles propres à ce p
 - **`D-06` (qui construit, signe et héberge les binaires d'outils) bloque une vague du lot 1**, pas
   le lot entier : la résolution et le diagnostic avancent sans elle.
 - Le CDC est une source, pas une vérité : une exigence contredite par une mesure devient une `Q-nn`.
+- **`main` est protégé contre la destruction** — ni force-push, ni suppression. Sa **verdeur**, elle,
+  tient par la méthode : `verify` avant merge, CI attendue. À durcir en contrôle requis dès qu'on
+  est plus d'un sur le dépôt, ce qui imposera alors le passage par une PR.
 
 ---
 

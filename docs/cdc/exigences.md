@@ -37,7 +37,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | E-006 | Aucun identifiant de base, aucune clé de stockage, aucune clé de chiffrement ne transite vers le serveur central ni n'y est stocké ; son seul pouvoir d'écriture est la modification d'un planning, validée par l'agent contre ses propres garde-fous. | § 2 `P2`, § 6.1 | sécurité | doit | 8 | à faire |
 | E-007 | La version de l'outil de dump est vérifiée en l'exécutant, jamais déduite d'un chemin ; à défaut d'outil compatible, le job échoue avec un message actionnable plutôt que de produire une archive douteuse. | § 2 `P3` | technique | doit | 1 | à faire |
 | E-008 | Une archive n'est marquée valide qu'après contrôle d'intégrité **et** vérification qu'elle est structurellement relisible ; une sauvegarde non vérifiée est signalée comme telle dans l'interface. | § 2 `P4` | fonctionnel | doit | 3 | à faire |
-| E-009 | Le produit ne dépend d'aucun service tiers (ni Redis, ni base externe, ni runtime) : l'état tient dans un fichier SQLite et le binaire est statique, compilé sans CGO. | § 2 `P5`, `N3` | technique | doit | 0 | à faire |
+| E-009 | Le produit ne dépend d'aucun service tiers (ni Redis, ni base externe, ni runtime) : l'état tient dans un fichier SQLite et le binaire est statique, compilé sans CGO. | § 2 `P5`, `N3` | technique | doit | 0 | couverte (`mise run release` : aucun paquet cgo, ELF sans interpréteur ; état SQLite `internal/state`) |
 | E-010 | L'absence de sauvegarde réussie est un événement de premier ordre, au même titre qu'un échec. | § 2 `P6`, § 5.10 | fonctionnel | doit | 6 | à faire |
 
 ## § 3 — Périmètre du MVP
@@ -65,9 +65,9 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | --- | --- | --- | --- | --- | --- | --- |
 | E-024 | Une sauvegarde suit sept étapes dans cet ordre : résolution, dump, compression, chiffrement, écriture, vérification, manifeste. | § 4.1 | technique | doit | 2 | à faire |
 | E-025 | Le dump brut n'est jamais matérialisé, ni en mémoire ni sur disque : dump, compression (zstd), chiffrement et calcul d'empreinte sont chaînés en flux, en une seule passe sur la sortie du sous-process. | § 4.1, § 4.5, `F3.3` | technique | doit | 2 | à faire |
-| E-026 | L'agent respecte l'arborescence disque prescrite : `/etc/keeper/` (`keeper.yaml`, `recipients.txt`), `/var/lib/keeper/` (`keeper.db`, `tools/<moteur>/<version>/bin/`, `tmp/` purgé au démarrage), `/var/log/keeper/keeper.log` avec rotation interne. | § 4.3 | exploitation | doit | 0 | à faire (ADR-0001 : chemins `/etc/koffr`) |
-| E-027 | L'état local est tenu par SQLite via `modernc.org/sqlite`, implémentation pure Go, pour conserver `CGO_ENABLED=0` ; `mattn/go-sqlite3` est interdit. | § 4.4, § 12, `N1` | technique | doit | 0 | à faire |
-| E-028 | L'état local comprend les tables `databases`, `jobs`, `job_logs`, `backups`, `backup_locations`, `schedules` et `alerts`, avec le contenu décrit au § 4.4. | § 4.4 | donnée | doit | 0 | à faire |
+| E-026 | L'agent respecte l'arborescence disque prescrite : `/etc/keeper/` (`keeper.yaml`, `recipients.txt`), `/var/lib/keeper/` (`keeper.db`, `tools/<moteur>/<version>/bin/`, `tmp/` purgé au démarrage), `/var/log/keeper/keeper.log` avec rotation interne. | § 4.3 | exploitation | doit | 0 | couverte (`CFG-07`, `CFG-08`) — chemins d'ADR-0001 |
+| E-027 | L'état local est tenu par SQLite via `modernc.org/sqlite`, implémentation pure Go, pour conserver `CGO_ENABLED=0` ; `mattn/go-sqlite3` est interdit. | § 4.4, § 12, `N1` | technique | doit | 0 | couverte (`depguard`, `state/open_test.go › TestTheDriverIsThePureGoOne`) |
+| E-028 | L'état local comprend les tables `databases`, `jobs`, `job_logs`, `backups`, `backup_locations`, `schedules` et `alerts`, avec le contenu décrit au § 4.4. | § 4.4 | donnée | doit | 0 | couverte (`state/migrate_test.go › TestTheSevenTablesOfE028AreCreated`) |
 | E-029 | Trois modes de tampon existent et sont sélectionnables par base : `stage` (fichier tampon compressé et chiffré, puis envoi depuis ce fichier), `stream` (envoi direct, sans reprise possible) et `auto` (arbitrage par exécution selon l'espace, le nombre de destinations, le format de dump et la politique de vérification). | § 4.5 | fonctionnel | doit | 2 | à faire |
 | E-030 | Le mode `stage` est imposé dès que le format `-Fd` est retenu, dès qu'il y a plus d'une destination, ou dès que la vérification structurelle est exigée sans egress. | § 4.5 | fonctionnel | doit | 2 | à faire |
 | E-031 | `keeper doctor` indique, pour chaque base, le mode de tampon qui sera effectivement appliqué. | § 4.5, `F3.4`, § 5.12 | fonctionnel | doit | 6 | à faire |
@@ -76,12 +76,12 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-032 | La configuration tient dans un fichier YAML unique analysé strictement : toute clé inconnue est une erreur, jamais un avertissement. | § 5.1 `F1.1` | technique | doit | 0 | à faire |
-| E-033 | Chaque champ sensible accepte trois formes : valeur littérale, `*_env` (variable d'environnement) et `*_file` (fichier, compatible `systemd` credentials et Vault Agent). | § 5.1 `F1.2` | sécurité | doit | 0 | à faire |
+| E-032 | La configuration tient dans un fichier YAML unique analysé strictement : toute clé inconnue est une erreur, jamais un avertissement. | § 5.1 `F1.1` | technique | doit | 0 | couverte (`CFG-01`) |
+| E-033 | Chaque champ sensible accepte trois formes : valeur littérale, `*_env` (variable d'environnement) et `*_file` (fichier, compatible `systemd` credentials et Vault Agent). | § 5.1 `F1.2` | sécurité | doit | 0 | couverte (`CFG-02`, `CFG-03`, `CFG-09`) |
 | E-034 | `keeper config validate` vérifie la syntaxe, la cohérence, la joignabilité des bases et l'existence des outils, sans rien exécuter d'autre. | § 5.1 `F1.3` | fonctionnel | doit | 1 | à faire |
 | E-035 | La configuration est relue à chaud sur `SIGHUP` et sur changement de mtime ; une configuration invalide est rejetée, l'ancienne conservée, et une alerte émise. | § 5.1 `F1.4`, § 4.3 | fonctionnel | devrait | 5 | en question (Q-12) |
-| E-036 | Le fuseau horaire des plannings est déclaré explicitement dans la configuration, jamais hérité de l'environnement système. | § 5.1 `F1.5` | donnée | doit | 0 | à faire |
-| E-037 | La configuration accepte la forme cible du § 5.1 : sections `agent`, `encryption`, `databases`, `destinations`, `alerts` (`channels`, `rules`) et `server`, avec les clés qui y figurent. | § 5.1 (forme cible) | donnée | doit | 0 | en question (Q-04, Q-06) |
+| E-036 | Le fuseau horaire des plannings est déclaré explicitement dans la configuration, jamais hérité de l'environnement système. | § 5.1 `F1.5` | donnée | doit | 0 | couverte (`CFG-04`) |
+| E-037 | La configuration accepte la forme cible du § 5.1 : sections `agent`, `encryption`, `databases`, `destinations`, `alerts` (`channels`, `rules`) et `server`, avec les clés qui y figurent. | § 5.1 (forme cible) | donnée | doit | 0 | couverte (`CFG-05`, `CFG-10`) ; `Q-04` et `Q-06` **ajouteront** des clés, sans rupture (`N-7`) |
 
 ## § 5.2 — Résolution des outils (`F2`)
 
@@ -230,18 +230,18 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | E-112 | Un serveur central compromis n'obtient aucun identifiant de base ou de stockage, aucune clé, aucune capacité de restauration et aucun accès réseau aux bases ; il n'obtient que la vue du parc et la modification des plannings dans la limite des planchers locaux. | § 6, § 6.1 | sécurité | doit | 8 | à faire |
 | E-113 | Un agent compromis ne permet pas de déchiffrer les archives passées : il ne détient qu'une clé publique. | § 6, `F6.3` | sécurité | doit | 3 | à faire |
 | E-114 | Un stockage compromis n'expose que des archives chiffrées et leurs manifestes — donc des métadonnées : noms de bases, tailles, horaires — et jamais le contenu des archives ni un identifiant. | § 6, `F3.8` | sécurité | doit | 3 | à faire |
-| E-115 | La lecture du fichier de configuration n'expose aucun mot de passe dès lors que les formes `*_file` ou `*_env` sont utilisées : elle n'expose que la topologie du parc. | § 6, `F1.2` | sécurité | doit | 0 | à faire |
+| E-115 | La lecture du fichier de configuration n'expose aucun mot de passe dès lors que les formes `*_file` ou `*_env` sont utilisées : elle n'expose que la topologie du parc. | § 6, `F1.2` | sécurité | doit | 0 | couverte (`CFG-06`, `CFG-09`, `obs/redact_test.go`) |
 | E-116 | La documentation porte les quatre recommandations de déploiement du § 6.2 : utilisateur de base dédié en lecture seule distinct de l'utilisateur de restauration, Object Lock ou versionnement avec des clés en écriture seule, clé privée conservée hors production avec séquestre et procédure testée, absence de route réseau du serveur central vers les bases. | § 6.2 | exploitation | à qualifier | 7 | en question (Q-06) |
 
 ## § 7 — Exigences non fonctionnelles
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-117 | Le binaire est statique, compilé avec `CGO_ENABLED=0`, publié pour `linux/amd64`, `linux/arm64` et `darwin/arm64`, et pèse moins de 30 Mo. **Amendée par ADR-0011** : la cible `windows/amd64` du CDC est retirée. | § 7 `N1`, ADR-0011 | technique | doit | 0 | à faire (ADR-0011) |
+| E-117 | Le binaire est statique, compilé avec `CGO_ENABLED=0`, publié pour `linux/amd64`, `linux/arm64` et `darwin/arm64`, et pèse moins de 30 Mo. **Amendée par ADR-0011** : la cible `windows/amd64` du CDC est retirée. | § 7 `N1`, ADR-0011 | technique | doit | 0 | couverte (`mise run release`, seuil bloquant en CI) — amendée par ADR-0011, nuancée par `N-17` (macOS lie `libSystem`) |
 | E-118 | L'empreinte mémoire au repos est inférieure à 50 Mo et indépendante de la taille des bases sauvegardées. | § 7 `N2` | technique | doit | final | à faire |
-| E-119 | Aucun service tiers n'est requis : ni base de données externe, ni file de messages, ni runtime. | § 7 `N3`, `P5` | technique | doit | 0 | à faire |
+| E-119 | Aucun service tiers n'est requis : ni base de données externe, ni file de messages, ni runtime. | § 7 `N3`, `P5` | technique | doit | 0 | couverte (rotation interne `internal/obs`, SQLite embarqué, aucun service requis) |
 | E-120 | Une unité `systemd` durcie est fournie : utilisateur dédié, `ProtectSystem`, `NoNewPrivileges`, `PrivateTmp`. | § 7 `N4` | exploitation | doit | 7 | à faire |
-| E-121 | Les journaux sont structurés en JSON vers la sortie standard, doublés d'un fichier avec rotation interne, et compatibles `journald` sans configuration. | § 7 `N5`, § 12 | exploitation | doit | 0 | en question (Q-21) |
+| E-121 | Les journaux sont structurés en JSON vers la sortie standard, doublés d'un fichier avec rotation interne, et compatibles `journald` sans configuration. | § 7 `N5`, § 12 | exploitation | doit | 0 | couverte (`internal/obs`, ADR-0012) ; `Q-21` (purge de `job_logs`) reste au lot 5 |
 | E-122 | L'arrêt est propre : plus aucun nouveau job après `SIGTERM`, délai de grâce pour les jobs en cours, état cohérent en base quoi qu'il arrive. | § 7 `N6`, `F3.9` | technique | doit | 5 | à faire |
 | E-123 | Des tests d'intégration réels tournent contre PostgreSQL 13 à 18 et MariaDB 10.6, 10.11 et 11.4 via conteneurs éphémères, en incluant systématiquement l'aller-retour sauvegarde puis restauration. | § 7 `N7`, § 12 | technique | doit | 4 | à faire (ADR-0004 : matrice élargie à MySQL 8.x et PostgreSQL 12) |
 | E-124 | Une image conteneur est publiée en complément du binaire, pour ceux qui la préfèrent, jamais comme prérequis. | § 7 `N8` | exploitation | doit | 7 | à faire |
@@ -260,7 +260,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-130 | L'embarquement des bibliothèques partagées et l'ajustement du `RPATH` des outils installés sont validés par un essai réel sur Debian, Rocky et Alpine **avant `L0`** : c'est le risque technique numéro un du document. | § 11 (risque 1) | technique | doit | 0 | à faire |
+| E-130 | L'embarquement des bibliothèques partagées et l'ajustement du `RPATH` des outils installés sont validés par un essai réel sur Debian, Rocky et Alpine **avant `L0`** : c'est le risque technique numéro un du document. | § 11 (risque 1) | technique | doit | 0 | couverte (`docs/inputs/spike-2026-09-rpath.md`, 18 exécutions) — conclusion **positive**, `E-043` non amendée |
 | E-131 | Une chaîne d'intégration dédiée construit et publie les binaires d'outils par versions figées, avec empreintes épinglées dans la version de l'agent, pour sept versions de PostgreSQL et trois de MariaDB sur deux architectures. | § 11 (risque 2), `F2.6`, `F2.7` | exploitation | doit | 1 | en question (D-06) |
 | E-132 | Des destinataires multiples sont obligatoires dès la configuration initiale, la procédure de séquestre est documentée, et un avertissement est émis au premier démarrage tant qu'une seule clé est déclarée. | § 11 (risque 3), `F6.2` | sécurité | doit | 2 | en question (Q-04) |
 
