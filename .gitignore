@@ -27,3 +27,6 @@ docs/inputs/confidentiel/
 .DS_Store
 .idea/
 .vscode/
+
+# Scratch space of scripts/spike-rpath.sh
+/.spike/

@@ -171,15 +171,19 @@ a été écrite en **ADR-0011** avant ce plan.
 
 L'inconnue en premier : si elle tombe mal, le lot 1 change avant d'être écrit.
 
-- [ ] **2.1** `scripts/spike-rpath.sh` : extraire `pg_dump` 16 et `mariadb-dump` 11.4 avec leurs
+- [x] **2.1** `scripts/spike-rpath.sh` : extraire `pg_dump` 16 et `mariadb-dump` 11.4 avec leurs
       bibliothèques partagées, ajuster le `RPATH` (`patchelf`), puis **exécuter `--version`** dans
       Debian 12, Rocky 9 et Alpine 3.20, en `linux/arm64` (natif) et `linux/amd64` (émulé).
-- [ ] **2.2** Rapport `docs/inputs/spike-2026-09-rpath.md` : ce qui marche, ce qui casse, sur quelle
+- [x] **2.2** Rapport `docs/inputs/spike-2026-09-rpath.md` : ce qui marche, ce qui casse, sur quelle
       distribution et pourquoi. **Conclusion explicite** : `E-043` est tenable, ou ne l'est pas.
-- [ ] **2.3** Si Alpine (musl) échoue — le résultat attendu — écrire la conclusion et **ouvrir un
+- [x] **2.3** Si Alpine (musl) échoue — le résultat attendu — écrire la conclusion et **ouvrir un
       ADR** amendant `E-043` (outils gérés sur glibc seulement ; Alpine renvoyé à la stratégie
       `exec` ou aux outils de l'hôte), **avant** le lot 1.
-- [ ] **2.4** Vague verte : commit `chore(tools): add linking spike and its report`.
+
+      > Sans objet (2026-09-18) : **la condition ne s'est pas réalisée**. Alpine passe, `--version`
+      > comme dump réel par TCP, en `arm64` et en `amd64`. Aucun ADR n'est écrit ; la raison
+      > technique est dans le rapport. `E-043` reste en l'état.
+- [x] **2.4** Vague verte : commit `chore(tools): add linking spike and its report`.
 
 ### Vague 3 — Frontières d'architecture (`lot0/wave-3-architecture-boundaries`)
 
@@ -341,3 +345,25 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
 - Ordre imposé par le démarrage : la CI ne pouvait pas tourner **avant** le merge, faute de dépôt
   distant. La vague a donc été vérifiée en local, mergée, puis poussée en une fois. Les vagues
   suivantes passeront par une branche poussée et sa CI avant merge.
+
+### 2026-09-18 — vague 2, spike `E-130`
+
+- `scripts/spike-rpath.sh` écrit et rejoué : 2 outils × 3 distributions × 2 architectures,
+  **18 exécutions, 18 succès**. Rapport : `docs/inputs/spike-2026-09-rpath.md`.
+- **Première version rouge partout**, Debian comprise : `patchelf --set-rpath` écrit `DT_RUNPATH`,
+  qui **n'est pas hérité** par les dépendances. Corrigé en posant un `runpath` sur **chaque
+  bibliothèque** du bundle. C'est l'enseignement principal du spike.
+- **Écart au plan, favorable** : le plan tenait l'échec sur Alpine pour acquis. Alpine **passe** —
+  le bundle embarque son propre chargeur glibc, et depuis glibc 2.34 `nss_files` et `nss_dns` sont
+  intégrés à `libc.so.6` (vérifié sur la libc 2.41 embarquée). La tâche `2.3` est donc **sans
+  objet** : aucun ADR n'amende `E-043`, et le lot 1 garde sa vague « installation gérée ».
+- **Extension assumée de la tâche `2.1`** : au-delà du `--version` demandé, `pg_dump` sauvegarde
+  **réellement** une base par TCP en désignant le serveur **par son nom**, depuis les trois cibles.
+  Sans cela, la conclusion demandée par `2.2` n'aurait porté que sur l'édition de liens, pas sur
+  la résolution de noms — le vrai risque sur musl.
+- **Contrainte nouvelle pour `E-026`** : `PT_INTERP` est absolu et n'interprète pas `$ORIGIN`. Un
+  outil géré ne se **déplace** pas, il se **re-patche**. À prendre en compte au lot 1.
+- `B-05` ouverte : aucun lint des scripts shell (`shellcheck`) dans `verify`.
+- Poste `darwin/arm64` : `amd64` est émulé. Résultat identique à `arm64`, à reconfirmer sur une
+  machine `amd64` réelle.
+- `mise run verify` : **code de retour 0**.
