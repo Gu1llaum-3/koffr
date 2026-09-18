@@ -21,6 +21,7 @@ Chaque entrée dit d'où elle vient, ce qu'elle apporterait et ce qu'elle coûte
 | B-02 | Point d'entrée de métriques (Prometheus) et sonde de santé de l'agent | `analyse.md` § 7, silence 15 | Supervision d'un parc par les outils déjà en place chez l'exploitant, sans serveur central | Faible : un `/metrics` servi par `httpd` | ouvert |
 | B-03 | Reprise d'un dépôt d'archives existant (Portabase ou autre) : inventaire, catalogage, restauration | `Q-22`, hypothèse retenue (aucune reprise) | Migration sans faire tourner deux outils en parallèle | Élevé : un lot entier, un format tiers à lire | ouvert |
 | B-04 | Sauvegarde de plusieurs bases d'une même instance par une seule entrée de configuration | `Q-07` | Moins de configuration sur un serveur qui héberge vingt bases | Moyen : boucle de jobs, rétention par base | ouvert |
+| B-05 | Analyse statique des scripts shell (`shellcheck`) dans `verify` | Vague 2 du lot 0 : `scripts/spike-rpath.sh` est le premier script du dépôt, et rien ne le vérifie | Un script d'exploitation cassé se voit en CI, pas sur la machine d'un utilisateur | Faible : un outil de plus dans `mise.toml` et une tâche | ouvert |
 
 ## Reporté après la mise en service
 
