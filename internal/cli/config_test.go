@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,17 +111,13 @@ func typo(t *testing.T) string {
 	return path
 }
 
-// failing runs the root command and returns its output and its error.
+// failing runs the root command and returns its standard output and its error.
 func failing(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 
-	var out bytes.Buffer
-	root := NewRoot()
-	root.SetOut(&out)
-	root.SetErr(&out)
-	root.SetArgs(args)
+	out, _, err := execute(t, args...)
 
-	return out.String(), root.Execute()
+	return out, err
 }
 
 // CFG-09 — `config validate` resolves the secrets the configuration points at.
