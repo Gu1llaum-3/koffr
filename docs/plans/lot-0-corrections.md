@@ -97,16 +97,16 @@ registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 1 — `verify` passe sur une machine nue (`lot0/wave-8-race-when-available`) — `A-01`
 
-- [ ] **1.1** `mise.toml` : la tâche `test` détecte le compilateur C (`go env CGO_ENABLED`) et
+- [x] **1.1** `mise.toml` : la tâche `test` détecte le compilateur C (`go env CGO_ENABLED`) et
       choisit `-race` ou non, **en journalisant son choix**. `KOFFR_REQUIRE_RACE=1` fait échouer la
       tâche si `-race` est indisponible (`N-2`). *Pas de test unitaire : tâche d'outillage,
       justifié ; la vérification est l'exécution sur l'instance.*
-- [ ] **1.2** `.github/workflows/verify.yml` : exporter `KOFFR_REQUIRE_RACE=1`.
-- [ ] **1.3** `CLAUDE.md` § Commandes et § Conventions : dire le comportement et pourquoi.
-- [ ] **1.4** **Vérifié sur l'instance Multipass** : `mise run verify` vert sans rien y installer,
+- [x] **1.2** `.github/workflows/verify.yml` : exporter `KOFFR_REQUIRE_RACE=1`.
+- [x] **1.3** `CLAUDE.md` § Commandes et § Conventions : dire le comportement et pourquoi.
+- [x] **1.4** **Vérifié sur l'instance Multipass** : `mise run verify` vert sans rien y installer,
       et le message annonce que `-race` est sauté. Puis, après `apt install -y gcc`, `-race`
       s'active — l'instance est ensuite restaurée par snapshot.
-- [ ] **1.5** Vague verte : `verify`, commit `fix(tooling): run the race detector when a C toolchain is there`.
+- [x] **1.5** Vague verte : `verify`, commit `fix(tooling): run the race detector when a C toolchain is there`.
 
 ### Vague 2 — La configuration dit la vérité (`lot0/wave-9-validate-and-messages`) — `A-05`, `A-06`, `A-03`
 
@@ -181,3 +181,22 @@ Toute sur l'instance Multipass `koffr`, restaurée par snapshot, dépôt cloné 
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-18 — vague 1, `A-01`
+
+- `scripts/run-tests.sh` : `-race` si la machine peut le lancer, sauté **en le disant** sinon,
+  **échec** si `KOFFR_REQUIRE_RACE=1`. La CI pose cette variable au niveau du job.
+- **Le risque du plan s'est confirmé avant même d'être rencontré** : tester `go env CGO_ENABLED`
+  ne suffit pas, la variable pouvant être exportée à la main sur une machine sans compilateur. Le
+  script vérifie **en plus** que `go env CC` est trouvable dans le `PATH`. Pas de `N-n`
+  supplémentaire : le plan prévoyait déjà ce geste dans sa table des risques.
+- Les trois chemins exercés localement : `-race` actif (`clang`), sauté, et exigé-absent → **code
+  de retour 1**.
+- **Vérifié sur l'instance Multipass nue**, sans rien y installer : `mise run verify` → **code de
+  retour 0**, en 3,1 s, avec le message qui explique pourquoi `-race` est sauté et comment
+  l'obtenir. C'est le critère de sortie n° 1 du plan, atteint.
+- Puis, après `apt-get install build-essential` sur la même instance : `CGO_ENABLED` repasse à `1`,
+  le message devient `race detector: on (gcc)`, et les tests passent **avec** le détecteur.
+  L'instance a ensuite été **restaurée par snapshot** — `gcc` et le clone ont disparu, l'état est
+  celui du départ.
+- `mise run verify` en local : **code de retour 0**.
