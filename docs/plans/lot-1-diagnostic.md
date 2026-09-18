@@ -147,10 +147,16 @@ Constaté dans le code, pas supposé.
 Exigences : `E-011`, `E-041`, et la moitié de `E-104a`. L'inconnue d'abord : si les conteneurs de
 test ne tiennent pas, tout le lot change de forme.
 
-- [ ] **1.1** `internal/arch` : `AR-08` amendée d'après **ADR-0013** — `database/sql` ouvert à
+- [x] **1.1** `internal/arch` : `AR-08` amendée d'après **ADR-0013** — `database/sql` ouvert à
       `internal/engine`, `AR-08b` gardant `modernc.org/sqlite` à `state` seul. **Une fixture
       violante pour chacune** : une règle assouplie sans fixture est une règle qu'on ne vérifie
       plus. `depguard` suit.
+
+      > Fait le 2026-09-18. **Pas de rouge par antériorité** : la fixture existante déclenchait
+      > déjà les deux règles. Prouvé autrement, comme la rétro du lot 0 le demande — en retirant
+      > l'exception de `engine`, `TestTheCheckAcceptsWhatTheRulesAllow` échoue ; en retirant la
+      > fixture d'`AR-08b`, `TestTheCheckCatchesAViolationOfEveryRule` échoue. `depguard` refuse
+      > `database/sql` dans `pipeline` et l'accepte dans `engine`.
 - [ ] **1.2** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
       PostgreSQL 18 : joignabilité, version majeure et mineure lues du serveur. Cas d'erreur :
       hôte injoignable, mauvais identifiants, base absente — trois erreurs **typées et
