@@ -42,7 +42,7 @@ func (t *Tools) UnmarshalYAML(node *yaml.Node) error {
 		case "container":
 			t.Container = value.Value
 		default:
-			return fmt.Errorf("line %d: field %s not found in tools", key.Line, key.Value)
+			return unknownKeyIn("tools", key)
 		}
 	}
 

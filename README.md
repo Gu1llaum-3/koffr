@@ -27,6 +27,21 @@ mise run build        # static binary, CGO_ENABLED=0
 mise run verify       # vet, lint, tests and build — green before any commit on main
 ```
 
+## Configure
+
+`examples/koffr.yaml` is a complete, working configuration — the one koffr's own
+tests are run against, so it cannot quietly drift from what koffr accepts.
+
+```sh
+cp examples/koffr.yaml /etc/koffr/koffr.yaml
+koffr config validate              # reads the secrets it points at
+koffr config validate --offline    # checks the shape only, on a machine that holds none
+koffr config show                  # prints it with every secret masked
+```
+
+Parsing is strict: an unknown key is an error naming the key, its line and its section.
+Every sensitive field takes three forms — a literal value, `*_env`, or `*_file`.
+
 ## Documentation
 
 The product speaks English; the project is steered in French (ADR-0003). Contributor and steering

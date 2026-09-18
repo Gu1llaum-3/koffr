@@ -25,7 +25,7 @@ func Parse(raw []byte, name string) (*Config, error) {
 	decoder.KnownFields(true)
 
 	if err := decoder.Decode(&config); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%s: %w", name, err)
+		return nil, fmt.Errorf("%s: %w", name, translateUnknownKeys(err, parseDocument(raw)))
 	}
 
 	if err := config.resolveTimezone(); err != nil {
@@ -53,9 +53,17 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	if err := config.resolveSecrets(); err != nil {
+	if err := config.Resolve(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 
 	return config, nil
+}
+
+// Resolve turns every *_env and *_file into a value. It is separate from Parse
+// so that a caller can choose: checking a configuration on the host it runs on
+// should resolve, and reading one from a laptop that holds none of the
+// production files should not (CFG-09).
+func (c *Config) Resolve() error {
+	return c.resolveSecrets()
 }

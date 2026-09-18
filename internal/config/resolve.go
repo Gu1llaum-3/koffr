@@ -111,7 +111,9 @@ func (c *Config) resolveSecrets() error {
 		case field.file != "":
 			raw, err := os.ReadFile(field.file)
 			if err != nil {
-				return fmt.Errorf("%s: %s_file reads %s: %w", field.where, field.key, field.file, err)
+				// The path is already in the error os returns; repeating it
+				// makes the line twice as long and no clearer.
+				return fmt.Errorf("%s: %s_file: %w", field.where, field.key, err)
 			}
 			*field.target = NewSecret(strings.TrimRight(string(raw), "\r\n"))
 		}

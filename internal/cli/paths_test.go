@@ -44,7 +44,7 @@ func TestCFG08ACommandRunByHandDoesNotClearTheWorkingSpace(t *testing.T) {
 		t.Fatalf("prepare the working space: %v", err)
 	}
 
-	run(t, "config", "validate", "--config", reference, "--state-dir", stateDir)
+	run(t, "config", "validate", "--offline", "--config", reference, "--state-dir", stateDir)
 
 	if _, err := os.Stat(scratch); err != nil {
 		t.Errorf("a command run by hand cleared the working space: %v", err)
