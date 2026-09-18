@@ -237,21 +237,21 @@ Exigences : `E-032`, `E-033`, `E-036`, `E-037`, `E-115`.
 
 Exigences : `E-027`, `E-028`, `E-026`.
 
-- [ ] **5.1** Test `internal/state/open_test.go` — l'ouverture pose `journal_mode=WAL`,
+- [x] **5.1** Test `internal/state/open_test.go` — l'ouverture pose `journal_mode=WAL`,
       `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL` (ADR-0006), avec le pilote
       `modernc.org/sqlite` (nom de pilote **`sqlite`**, pas `sqlite3`).
-- [ ] **5.2** Test `internal/state/migrate_test.go` — la migration `0001` crée les **sept** tables de
+- [x] **5.2** Test `internal/state/migrate_test.go` — la migration `0001` crée les **sept** tables de
       `E-028` (`N-9`), est idempotente, et enregistre sa version ; une base d'une version inconnue
       refuse de démarrer.
-- [ ] **5.3** Test — les statuts sont contraints par `CHECK` (un statut inconnu échoue à
+- [x] **5.3** Test — les statuts sont contraints par `CHECK` (un statut inconnu échoue à
       l'insertion) ; les horodatages sont en RFC 3339 **UTC** ; tailles et durées sont des entiers
       (ADR-0006).
-- [ ] **5.4** Test `internal/state/paths_test.go` — les chemins de `E-026` sont les valeurs par
+- [x] **5.4** Test `internal/state/paths_test.go` — les chemins de `E-026` sont les valeurs par
       défaut, surchargeables par `--config` et `--state-dir` (`N-11`), et `tmp/` est purgé à
       l'ouverture de l'état, pas à chaque commande (`N-10`).
-- [ ] **5.5** `internal/config/rules.md` complété : **`CFG-07`** (chemins par défaut et surcharges),
+- [x] **5.5** `internal/config/rules.md` complété : **`CFG-07`** (chemins par défaut et surcharges),
       **`CFG-08`** (purge de `tmp/`).
-- [ ] **5.6** Vague verte : `verify`, commit `feat(state): sqlite schema, migrations and disk layout`.
+- [x] **5.6** Vague verte : `verify`, commit `feat(state): sqlite schema, migrations and disk layout`.
 
 ### Vague 6 — Journaux et porte de sortie (`lot0/wave-6-logging-and-egress`)
 
@@ -348,6 +348,33 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
 - **Écart favorable au risque « `golangci-lint` 2.8.0 construit avec go1.25.5 »** : `mise` épingle
   désormais `golangci-lint` **2.13.2, construit avec go1.27.0**. Le repli prévu (lint en
   avertissement) est sans objet.
+- `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 5, état local
+
+- `internal/state` : ouverture, migrations embarquées, les **sept tables de `E-028`** en une seule
+  migration relue à la main (`N-9`), et la purge de `tmp/`. `internal/config` porte désormais
+  l'arborescence de `E-026` (`Paths`), ce que `internal/cli` consomme — `AR-04` lui interdit
+  d'importer `internal/state`.
+- Les `PRAGMA` d'ADR-0006 sont posés **dans la chaîne de connexion**, pas par des `Exec` après
+  ouverture : SQLite les applique par connexion, et `database/sql` en ouvre autant qu'il veut. Un
+  test tient deux connexions à la fois pour le prouver.
+- Le schéma applique ADR-0006 de façon **opposable**, pas documentaire : tables `STRICT` (une
+  taille écrite « 12 MB » est refusée), statuts contraints par `CHECK`, horodatages imposés par un
+  `GLOB` qui **refuse** `+02:00`, un `datetime()` SQLite et un entier Unix.
+- **Écart de méthode, assumé et signalé** : les tâches `5.3` et une partie de `5.4` n'ont **pas**
+  eu leur rouge. Le schéma écrit en `5.2` et la purge écrite en `5.1` les satisfaisaient déjà. À
+  défaut, les contraintes ont été **retirées temporairement** pour vérifier que les tests
+  échouent sans elles — ils échouent —, puis remises. Un rouge par suppression vaut moins qu'un
+  rouge par antériorité ; c'est le découpage du plan qui l'a produit, pas un raccourci.
+- `CFG-07` (chemins) et `CFG-08` (purge) écrites dans `internal/config/rules.md`, avec la raison
+  pour laquelle elles y vivent alors qu'un de leurs tests tourne dans `internal/state`.
+- **Mesure de `E-117`** : le binaire fait **3,9 Mio**, mais `internal/state` **n'est encore lié
+  par aucune commande** — `serve` est au lot 5. Une sonde qui le lie donne **7,4 Mio** :
+  `modernc.org/sqlite` coûte **+3,5 Mio**, et il reste **22,6 Mio** avant le seuil de 30 Mo. La
+  mesure de la tâche `7.2` devra le dire, sans quoi elle annoncera une marge qui n'existe pas.
+- **Non créée** : la table d'historique des suppressions de rétention qu'ADR-0006 mentionne pour
+  `E-081`. `E-028` en nomme sept, `N-9` dit sept. Elle viendra avec le lot 5, par migration.
 - `mise run verify` : **code de retour 0**.
 
 ### 2026-09-18 — vague 4, configuration

@@ -15,6 +15,17 @@ pas supprimée.
 | CFG-05 | La **forme cible du § 5.1**, copiée du cahier des charges, est acceptée telle quelle, et chaque clé atterrit dans le champ que le reste de koffr ira lire — y compris les deux écritures de `tools` (`auto` et la stratégie explicite). | `E-037`, § 5.1 | `reference_test.go › TestCFG05TheTargetFormOfTheSpecificationIsAccepted` |
 | CFG-06 | Une valeur sensible **ne s'imprime jamais** : ni par `%v`, `%+v`, `%#v` ou `%s`, ni par `slog`, ni par la sérialisation YAML de `config show`. Elle ne sort que par `Expose()`. Un champ sensible non renseigné n'apparaît pas du tout. | `E-115`, § 6 | `redact_test.go › TestCFG06AConfigurationNeverPrintsItsSecrets`, `› TestCFG06SlogNeverPrintsASecret`, `› TestCFG06ASecretIsReachableThroughExposeOnly`, `› TestCFG06RedactedRendersTheTopologyWithoutASecret` |
 
+## Chemins et espace de travail
+
+Les chemins sont une donnée de configuration : c'est `config` qui les porte, et `state` qui les
+consomme. Un adaptateur n'a pas de `rules.md` (ADR-0010), donc les deux règles vivent ici même si
+le second test s'exécute dans `internal/state`.
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| CFG-07 | L'arborescence de `E-026` est la **valeur par défaut** : `/etc/koffr/koffr.yaml`, `/etc/koffr/recipients.txt`, `/var/lib/koffr/koffr.db`, `/var/lib/koffr/tools/`, `/var/lib/koffr/tmp/`, `/var/log/koffr/koffr.log`. `--config` et `--state-dir` la déplacent, et chaque chemin suit le répertoire dont il dépend. | `E-026`, § 4.3, ADR-0001, `N-11` | `config/paths_test.go › TestCFG07TheDefaultPathsAreTheOnesOfE026`, `› TestCFG07EveryPathFollowsTheDirectoryItIsOverriddenWith`, `cli/paths_test.go › TestCFG07TheFlagsDefaultToTheProductionPaths` |
+| CFG-08 | `tmp/` est vidé **à l'ouverture de l'état**, pas à chaque commande : une commande tapée à la main pendant une sauvegarde ne détruit pas son espace de travail. Le répertoire lui-même, `tools/` et `koffr.db` survivent, et l'arborescence est créée si elle manque. | `E-026`, § 4.3, `N-10` | `state/paths_test.go › TestCFG08OpeningTheStateClearsTheWorkingSpace`, `› TestCFG08ClearingTheWorkingSpaceSparesEverythingElse`, `› TestCFG08OpeningCreatesTheLayoutOfE026`, `cli/paths_test.go › TestCFG08ACommandRunByHandDoesNotClearTheWorkingSpace` |
+
 ## Divergences avec le cahier des charges
 
 - **`config show --redact` ne se désactive pas** (`N-15`). Le CDC ne décrit pas la commande ; le
@@ -44,3 +55,13 @@ pas supprimée.
 | Chemin de la configuration | `/etc/koffr/koffr.yaml` | `E-026`, ADR-0001 | Défaut, surchargé par `--config` (`N-11`) |
 | Répertoire d'état | `/var/lib/koffr` | `E-026`, ADR-0001 | Défaut, surchargé par `--state-dir` (`N-11`) |
 | Marqueur de masquage | `[redacted]` | `N-15` | `redact_test.go` |
+| Répertoire des journaux | `/var/log/koffr` | `E-026`, `E-121` | `paths_test.go` |
+
+## Ce que `state` garantit, et qui n'est pas une règle de `config`
+
+`internal/state` est un adaptateur : ses invariants sont ceux d'ADR-0006, vérifiés par ses propres
+tests et par le schéma lui-même — tables `STRICT`, statuts contraints par `CHECK`, horodatages
+RFC 3339 **UTC** imposés par un `GLOB`, tailles en octets et durées en millisecondes en entiers,
+`journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL` posés sur
+**chaque** connexion du pool. Voir `internal/state/migrations/0001_initial.sql` et
+`internal/state/*_test.go`.
