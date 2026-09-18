@@ -20,6 +20,9 @@ jobs:
       # The race detector is optional on a developer machine that has no C
       # toolchain (A-01); here it is not. Without it, the test task fails.
       KOFFR_REQUIRE_RACE: "1"
+      # Probes are tested against real servers. A runner without Docker would
+      # skip them and leave a suite that is green and proves nothing.
+      KOFFR_REQUIRE_DOCKER: "1"
 
     steps:
       - uses: actions/checkout@v7

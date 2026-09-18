@@ -113,6 +113,10 @@ Constaté dans le code, pas supposé.
   `modernc.org/sqlite` reste réservé à `state` sans exception ». *Exclut* : lire une base
   sauvegardée par un pilote, ce qui reste interdit et le restera par revue, faute de règle de lint
   capable d'exprimer « pour les sondes seulement ».
+- **N-9 (2026-09-18) — les tests contre conteneurs sont sautés bruyamment, et exigés en CI.**
+  *Raison* : une machine sans Docker ne peut pas les jouer, et les taire rendrait `verify` vert
+  sans rien prouver. `KOFFR_REQUIRE_DOCKER=1` en CI fait échouer leur absence. *Exclut* : un
+  simulacre de serveur, et un `verify` qui mentirait par omission.
 - **N-2 Les sondes vivent dans `internal/engine`, le domaine ne les connaît que par un port.**
   `internal/domain/resolve` déclare `ServerProbe` et `ToolFinder` ; `engine` les implémente ;
   `cmd/koffr` câble. *Raison* : `AR-01` et `AR-02` l'imposent, et c'est ce qui rend la matrice de
@@ -157,10 +161,21 @@ test ne tiennent pas, tout le lot change de forme.
       > l'exception de `engine`, `TestTheCheckAcceptsWhatTheRulesAllow` échoue ; en retirant la
       > fixture d'`AR-08b`, `TestTheCheckCatchesAViolationOfEveryRule` échoue. `depguard` refuse
       > `database/sql` dans `pipeline` et l'accepte dans `engine`.
-- [ ] **1.2** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
+- [x] **1.2** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
       PostgreSQL 18 : joignabilité, version majeure et mineure lues du serveur. Cas d'erreur :
       hôte injoignable, mauvais identifiants, base absente — trois erreurs **typées et
       distinctes**. Puis le code (`jackc/pgx/v5`).
+
+      > Fait le 2026-09-18, contre un **vrai** PostgreSQL 18. La version est lue des paramètres
+      > que le serveur annonce à la connexion : **aucune requête** n'est émise, ce qui va au-delà
+      > de ce que `1.4` demande. Les trois erreurs sont distinguées par les codes `28P01`, `28000`
+      > et `3D000`.
+      > **`N-9` ajoutée** : sans Docker, les tests de sonde sont **sautés bruyamment** et la CI
+      > pose `KOFFR_REQUIRE_DOCKER=1`, qui transforme l'absence en échec — même marché que `A-01`
+      > pour `-race`. Sans cela, `verify` serait vert en ne prouvant rien.
+      > **Détour** : la première version lisait `KOFFR_REQUIRE_DOCKER` dans le test Go, et
+      > `AR-05` l'a refusé — seul `internal/config` lit l'environnement. La règle avait raison :
+      > la décision est passée dans `scripts/run-tests.sh`, là où celle de `-race` vit déjà.
 - [ ] **1.3** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
       du serveur (`N-8`), jamais déduite. Un MariaDB et un MySQL sur le même port se distinguent.
       Puis le code.
