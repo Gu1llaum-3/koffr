@@ -10,8 +10,7 @@ en l'exécutant.
 ## Point bloquant à lever avant validation
 
 **`internal/engine` a besoin de `database/sql`, qu'`AR-08` réserve à `internal/state`.** Voir `N-1`.
-Un ADR est nécessaire **avant** que ce plan soit validé ; il n'est pas écrit, parce que c'est un
-arbitrage, pas une évidence.
+**ADR-0013** l'écrit, statut **proposé** : il doit être accepté avant que ce plan soit validé.
 
 ## Périmètre
 
@@ -107,7 +106,8 @@ Constaté dans le code, pas supposé.
 
 ## Décisions d'implémentation
 
-- **N-1 (à trancher avant validation) — `internal/engine` doit pouvoir importer `database/sql`.**
+- **N-1 — `internal/engine` peut importer `database/sql` pour sonder.** Écrite en **ADR-0013**
+  (proposé) ; ce plan ne se valide pas avant elle. Résumé :
   *Constat* : `AR-08` d'ADR-0010 réserve `database/sql` à `internal/state`. Or ADR-0002 prévoit
   explicitement `jackc/pgx/v5` **et** `go-sql-driver/mysql` « pour les sondes et la détection de
   famille, jamais pour le dump » — et `go-sql-driver/mysql` n'a pas d'API utilisable hors
