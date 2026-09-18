@@ -14,6 +14,8 @@ linters:
     - misspell
     - nilerr
     - revive
+    - depguard
+    - forbidigo
     - unconvert
     - usestdlibvars
     - wrapcheck
@@ -22,12 +24,45 @@ linters:
       rules:
         - name: exported
         - name: package-comments
+    depguard:
+      rules:
+        # E-027 and ADR-0002: the driver must be pure Go, or CGO_ENABLED=0 dies
+        # and E-117 with it.
+        sqlite-driver-is-pure-go:
+          list-mode: lax
+          deny:
+            - pkg: github.com/mattn/go-sqlite3
+              desc: "E-027: use modernc.org/sqlite; mattn/go-sqlite3 needs CGO and breaks E-117"
+        # AR-07 of ADR-0010. internal/arch checks the same rule on the import
+        # graph; this one makes it fail the lint as well (N-8).
+        sub-processes-belong-to-engine:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!**/internal/engine/**"
+          deny:
+            - pkg: os/exec
+              desc: "ADR-0010: only internal/engine runs a sub-process"
+    forbidigo:
+      # AR-05 of ADR-0010: an import graph cannot see a call, so this is the
+      # only place the rule lives.
+      forbid:
+        - pattern: "^os\\.Getenv$"
+          msg: "ADR-0010: only internal/config reads the environment"
+        - pattern: "^os\\.LookupEnv$"
+          msg: "ADR-0010: only internal/config reads the environment"
+        - pattern: "^os\\.Environ$"
+          msg: "ADR-0010: only internal/config reads the environment"
   exclusions:
     generated: lax
     rules:
       - path: _test\.go$
         linters:
           - wrapcheck
+      # internal/config is the one reader of the environment (AR-05).
+      - path: internal/config/
+        linters:
+          - forbidigo
 
 formatters:
   enable:

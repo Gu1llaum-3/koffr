@@ -116,6 +116,14 @@ Constaté dans le dépôt et sur le poste, pas supposé.
   **Réponse du propriétaire** : option (a). Le distant était un prototype abandonné ; il a été
   renommé `koffr-old` et un dépôt vide a été recréé sous le même nom. Rien n'est écrasé, le
   prototype reste consultable, et `N-2` tient : le chemin de module ne change pas.
+- **N-14 (2026-09-18) — la règle réseau d'ADR-0010 vise les clients, pas les serveurs.**
+  *Contexte* : ADR-0010 écrit « tout sauf `store`, `engine`, `egress` : l'ouverture d'une connexion
+  réseau ». Pris à la lettre, cela interdit à `internal/httpd` d'importer `net/http`, alors que
+  l'ADR le désigne comme l'interface web locale — la règle se contredirait. `ARCHITECTURE.md` lève
+  l'ambiguïté en parlant de « tout **client** réseau ». *Décision* : `net` et `net/smtp` restent
+  réservés à `store`, `engine` et `egress` ; `net/http` leur est ouvert **plus `httpd`**, qui
+  écoute et n'appelle pas. *Exclut* : un `httpd` qui ferait un appel sortant — il passera par
+  `egress` comme les autres.
 - **N-13 (2026-09-18) — l'identité git de ce dépôt est locale et sans adresse personnelle.**
   *Constat* : `~/.gitconfig` porte l'identité **professionnelle** du propriétaire, et les deux
   premiers commits en avaient hérité ; le prototype, lui, était signé d'une adresse Gmail
@@ -187,13 +195,13 @@ L'inconnue en premier : si elle tombe mal, le lot 1 change avant d'être écrit.
 
 ### Vague 3 — Frontières d'architecture (`lot0/wave-3-architecture-boundaries`)
 
-- [ ] **3.1** Squelette des paquets d'ADR-0010, un `doc.go` d'une phrase par paquet.
-- [ ] **3.2** Test d'abord `internal/arch/boundaries_test.go` — les neuf règles de dépendance
+- [x] **3.1** Squelette des paquets d'ADR-0010, un `doc.go` d'une phrase par paquet.
+- [x] **3.2** Test d'abord `internal/arch/boundaries_test.go` — les neuf règles de dépendance
       d'ADR-0010 vérifiées sur le graphe réel des imports, avec des fixtures violantes dans
       `testdata/` qui **doivent** faire échouer le test (`N-8`).
-- [ ] **3.3** `.golangci.yml` : `depguard` interdit `mattn/go-sqlite3` (`E-027`) ; `forbidigo`
+- [x] **3.3** `.golangci.yml` : `depguard` interdit `mattn/go-sqlite3` (`E-027`) ; `forbidigo`
       interdit `os.Getenv` hors `internal/config` et `os/exec` hors `internal/engine`.
-- [ ] **3.4** Vague verte : commit `chore(arch): enforce dependency boundaries in verify`.
+- [x] **3.4** Vague verte : commit `chore(arch): enforce dependency boundaries in verify`.
 
 ### Vague 4 — Configuration (`lot0/wave-4-configuration`)
 
@@ -331,6 +339,31 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
 - **Écart favorable au risque « `golangci-lint` 2.8.0 construit avec go1.25.5 »** : `mise` épingle
   désormais `golangci-lint` **2.13.2, construit avec go1.27.0**. Le repli prévu (lint en
   avertissement) est sans objet.
+- `mise run verify` : **code de retour 0**.
+
+### 2026-09-18 — vague 3, frontières d'architecture
+
+- 19 paquets d'ADR-0010 créés, un `doc.go` d'une phrase chacun.
+- `internal/arch/boundaries_test.go` écrit d'abord, **rouge constaté** (fixtures absentes, linter
+  muet), puis les fixtures et la configuration du linter.
+- **Huit des neuf règles** sont vérifiées sur le graphe réel des imports (`AR-01` à `AR-04`,
+  `AR-06` à `AR-09`), chacune avec sa fixture violante sous `testdata/violations/` : un test qui
+  cesserait de détecter une règle échoue. Une fixture **autorisée** (un module du domaine qui
+  n'importe que `shared`) garde le contrôle de ses faux positifs.
+- **`AR-05` (seul `config` lit l'environnement) n'est pas exprimable sur un graphe d'imports** :
+  c'est un appel, pas un import. `forbidigo` la porte (`os.Getenv`, `os.LookupEnv`, `os.Environ`),
+  et un troisième test vérifie que la configuration du linter la porte toujours.
+- `depguard` : `mattn/go-sqlite3` interdit partout (`E-027`), `os/exec` interdit hors
+  `internal/engine`.
+- **Les règles mordent, vérifié** : un fichier fautif dans `internal/pipeline` produit
+  `depguard: 1` et `forbidigo: 1` ; le même import dans `internal/engine`, et `os.Getenv` dans
+  `internal/config`, passent. Le test d'architecture, lui, a bien signalé `AR-07`.
+- **Limite constatée** : l'interdit `mattn/go-sqlite3` ne peut pas être prouvé tant que le module
+  n'est pas dans `go.mod` — `typecheck` échoue d'abord et court-circuite les autres linters. La
+  garde existe, sa démonstration attend qu'on ait une raison d'ajouter le module. À noter en
+  § Conventions au `7.4`.
+- `N-14` ajoutée : la règle réseau vise les clients, pas `httpd` qui écoute.
+- Les codes `AR-nn` doivent être repris dans `ARCHITECTURE.md` à la tâche `7.3`.
 - `mise run verify` : **code de retour 0**. Binaire `dist/koffr` : **3 262 514 octets** (3,1 Mio),
   très en deçà des 30 Mo de `E-117` — normal à ce stade, la pente se mesurera au lot 4.
 - `1.4` : arrêt sur un état de départ faux (dépôt distant déjà peuplé), tranché par `N-12`, puis
