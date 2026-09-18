@@ -1,6 +1,6 @@
 # Plan lot 1 — Diagnostic d'un parc réel
 
-> Statut : **brouillon**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **validé par le propriétaire le 2026-09-18**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 C'est le `L0` du cahier des charges : aucune sauvegarde, et c'est voulu. Le lot valide la thèse
