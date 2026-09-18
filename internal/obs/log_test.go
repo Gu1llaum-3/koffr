@@ -117,3 +117,10 @@ func firstEntry(t *testing.T, raw string) map[string]any {
 
 	return entry
 }
+
+// Levels named for the tests, so that a reader does not have to remember the
+// numeric values of slog.
+const (
+	levelDebug = -4
+	levelWarn  = 4
+)

@@ -17,8 +17,16 @@ type Logger = slog.Logger
 // Options configures the logger. The zero value is usable: JSON at info level
 // on the writer it is given, no file.
 type Options struct {
-	// Level is the lowest level written. The zero value is slog.LevelInfo.
+	// Level is the lowest level the file keeps. The zero value is
+	// slog.LevelInfo. The file keeps everything koffr does, including the
+	// trace of a command somebody ran by hand (ADR-0012).
 	Level slog.Level
+
+	// ConsoleLevel is the lowest level the writer given to New receives. The
+	// zero value is slog.LevelInfo, which is what a daemon wants; a command
+	// typed by a human asks for slog.LevelWarn, so that its output is its
+	// answer and nothing else (ADR-0012).
+	ConsoleLevel slog.Level
 
 	// File, when set, receives the same lines as the writer, and is rotated by
 	// koffr itself — E-119 forbids depending on logrotate, which would be a
@@ -47,21 +55,27 @@ const (
 // journald picks it up with no configuration at all, and the same lines in a
 // file for the machines where nobody reads journald.
 func New(out io.Writer, options Options) (*Logger, func() error) {
-	writer := out
 	release := func() error { return nil }
+
+	handlers := []slog.Handler{jsonHandler(out, options.ConsoleLevel)}
 
 	if options.File != "" {
 		file := rotatingFile(options)
-		writer = io.MultiWriter(out, file)
+		handlers = append(handlers, jsonHandler(file, options.Level))
 		release = file.Close
 	}
 
-	handler := slog.NewJSONHandler(writer, &slog.HandlerOptions{
-		Level:       options.Level,
+	return slog.New(fanout{handlers: handlers}), release
+}
+
+// jsonHandler builds one destination. Masking lives here rather than in a
+// wrapper, so that it applies to every destination and cannot be lost by
+// adding a third one (E-115).
+func jsonHandler(out io.Writer, level slog.Level) slog.Handler {
+	return slog.NewJSONHandler(out, &slog.HandlerOptions{
+		Level:       level,
 		ReplaceAttr: redactSensitive,
 	})
-
-	return slog.New(handler), release
 }
 
 // rotatingFile is the log file and the rotation koffr performs itself. The

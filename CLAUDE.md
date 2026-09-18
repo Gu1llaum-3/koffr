@@ -55,6 +55,12 @@ mise run verify              # les quatre ci-dessus, dans l'ordre ; vert avant t
 Versions des outils : `mise.toml` fait autorité (Go 1.27, `golangci-lint` 2.13.2), y compris en CI.
 Dépendances pinnées dans `go.mod` ; mise à jour hebdomadaire planifiée dans `docs/maintenance.md`.
 
+**Les journaux vont au fichier, pas à l'écran.** Une commande répond, elle ne raconte pas : la
+console ne reçoit que les avertissements et les erreurs, sur la **sortie d'erreur**, tandis que le
+fichier de `E-026` garde tout, y compris la trace de la commande. `--log-level` fixe le niveau du
+fichier, et **fait suivre la console quand on le pose explicitement**. `serve` (lot 5) écrira tout
+sur la **sortie standard**, comme `E-121` le demande. Voir ADR-0012.
+
 **Le détecteur de course est facultatif en local, obligatoire en CI.** `go test -race` exige cgo,
 donc un compilateur C, qu'une machine neuve conforme aux prérequis n'a pas (`A-01`). La tâche `test`
 le constate et choisit, **en écrivant lequel des deux cas s'applique**. La CI pose

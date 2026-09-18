@@ -86,10 +86,16 @@ l'outil ? Ils sont en anglais (ADR-0003) : est-ce confortable pour vous à l'usa
 1. Écrire une configuration avec un mot de passe littéral, un `*_env` et un `*_file`.
 2. `koffr config show --redact` → **on doit voir** la topologie du parc — hôtes, ports, noms de
    bases — et **aucune valeur sensible**, sous aucune des trois formes (`E-115`).
-3. `koffr version --log-dir /tmp/koffr-recette` puis lire `/tmp/koffr-recette/koffr.log` →
-   **on doit voir** du JSON, une ligne par événement, et **aucun secret**. Le résultat de la
-   commande, lui, sort sur la sortie standard : les deux flux sont séparés.
-4. `koffr version --log-dir /proc/impossible` → **on doit voir** la commande **réussir** quand
+3. `koffr version --log-dir /tmp/koffr-recette` → **on doit voir** la réponse de la commande **et
+   rien d'autre** : pas de ligne de journal à l'écran (ADR-0012). Puis lire
+   `/tmp/koffr-recette/koffr.log` → **on doit voir** du JSON, une ligne par événement, et **aucun
+   secret** : la trace est gardée, elle n'est pas montrée.
+4. Relancer avec `--log-level info` → **on doit voir** cette fois la ligne à l'écran : demander un
+   niveau explicitement fait suivre la console.
+5. `koffr config show --config examples/koffr.yaml > /tmp/copie.yaml` → **on doit voir** un fichier
+   qui ne contient **aucune** ligne de journal : le résultat va sur la sortie standard, les
+   journaux sur la sortie d'erreur.
+6. `koffr version --log-dir /proc/impossible` → **on doit voir** la commande **réussir** quand
    même : un journal impossible à écrire n'arrête pas koffr (`N-3`).
 
 **Décision attendue** : la redaction va-t-elle assez loin ? Y a-t-il un champ que vous considérez
