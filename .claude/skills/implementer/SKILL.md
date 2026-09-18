@@ -1,120 +1,152 @@
 ---
 name: implementer
-description: Ajouter ou faire évoluer un module, un cas d'usage, un écran ou un job de {{PROJET}} en respectant l'architecture, le TDD et la Definition of done — structure d'un module, exemples canoniques de la stack, pièges connus. Gabarit rempli au lot 0 pour la stack retenue, amendé à chaque rétro ; à utiliser pour toute tâche de code.
+description: Ajouter ou faire évoluer un module, un cas d'usage, une commande ou un job de koffr en respectant l'architecture, le TDD et la Definition of done — structure d'un module Go, exemples canoniques cités dans le code vivant, pièges connus. À utiliser pour toute tâche de code.
 ---
 
-# Implémenter — {{stack}}
+# Implémenter — Go 1.27, sans CGO
 
-> **Gabarit.** Rempli au lot 0 depuis l'ADR de stack et le module de bout en bout ; amendé par
-> `/cloturer-lot`. Ce skill est **thématique et au présent** : pas de « leçons du lot N », pas de
-> numéro de version, pas d'historique. Une leçon se fond dans la section où le lecteur la
-> cherchera. Les références de vérité restent `CLAUDE.md`, `ARCHITECTURE.md` et `docs/adr/` ; ce
-> skill montre comment les appliquer. S'il dépasse 250 lignes, on le scinde par thème.
+Ce skill est **thématique et au présent** : pas de « leçons du lot N », pas d'historique. Les
+références de vérité sont `CLAUDE.md`, `ARCHITECTURE.md` et `docs/adr/` ; ce skill montre comment
+les appliquer. Les pièges de la pile vivent dans `CLAUDE.md` § Conventions et ne sont pas répétés
+ici.
 
 ## Avant d'écrire
 
 1. Lire `ROADMAP.md` (lot en cours), le plan, et le `rules.md` du module visé.
-2. Lire l'exigence `E-nn` **et son § du CDC**. Ce qu'il ne dit pas se demande (`docs/questions.md`),
-   ne s'invente pas.
-3. **Mesurer avant de modéliser** si une donnée existe : comptages, valeurs distinctes, cas limites.
-4. Écrire la règle `MOD-nn` dans `rules.md` **avant** le code : énoncé, source, test.
-5. **TDD**, sans exception pour le domaine et le serveur : voir la section suivante.
+2. Lire l'exigence `E-nnn` **et son § du CDC**. Ce qu'il ne dit pas se demande
+   (`docs/questions.md`), ne s'invente pas.
+3. **Mesurer avant de modéliser** si une donnée existe.
+4. Écrire la règle `MOD-nn` dans `rules.md` **avant** le code : énoncé, source, nom du test.
+5. **TDD**, sans exception pour le domaine et les adaptateurs qui portent une garantie.
 
-## TDD : le cycle, tel qu'on le tient ici
+## TDD : le geste, ici
 
-`CLAUDE.md` fixe la règle ; voici le geste. Une tâche de code se déroule **dans cet ordre**, et on
-le montre dans la conversation (la commande lancée et son résultat, pas « les tests passent »).
-
-1. **Nommer le test depuis la règle.** Le fichier de test vit à côté du code (`service.spec.ts`
-   pour `service.ts`) ; chaque cas porte le numéro de la règle : `it('MOD-07 refuse une remise
-   supérieure à 100 %')`. Un test sans numéro de règle est un test dont on ne sait pas ce qu'il
-   prouve.
+1. **Nommer le test depuis la règle.** Le numéro de la règle est **dans le nom de la fonction** :
+   `func TestCFG01UnknownKeyIsAnErrorNamingTheKeyAndItsLine(t *testing.T)`. Un test sans numéro est
+   un test dont on ne sait pas ce qu'il prouve. Les sous-cas passent par `t.Run`.
 2. **Écrire le test d'abord**, avec ses trois cas quand ils existent : nominal, limite, erreur
-   typée. Sur une base réelle si le module écrit (fixture minimale, transaction annulée à la fin ;
-   jamais de mock de la base).
-3. **Lancer et constater le rouge** : `{{pnpm test:unit -- --run <fichier>}}`. Le rouge doit
-   échouer **pour la bonne raison** (l'assertion, pas un import manquant). Coller la ligne d'échec.
-4. **Écrire le code minimal** qui fait passer le test. Pas d'anticipation d'un cas qui n'a pas
-   encore son test.
-5. **Vert**, même commande. Puis refactor si besoin, le test restant vert.
-6. **Élargir** : le cas suivant de la règle, ou la règle suivante. Un cas limite qu'on découvre en
-   codant s'écrit d'abord comme test, puis se code.
+   typée. Sur une base SQLite réelle si le module écrit — `t.TempDir()`, jamais de simulacre de
+   base.
+3. **Lancer et constater le rouge** : `go test ./internal/<paquet>/ -run TestXxx`. Le rouge doit
+   échouer **pour la bonne raison**. Coller la ligne d'échec dans la conversation.
+4. **Écrire le code minimal.** Pas d'anticipation d'un cas qui n'a pas son test.
+5. **Vert**, même commande, puis refactor, le test restant vert.
+6. **Élargir** : le cas suivant, ou la règle suivante.
 
-Ce qui n'est pas du TDD et qu'on ne fait pas : écrire le code puis « ajouter les tests » ; écrire
-dix tests puis tout le code ; adapter le test au code quand il échoue ; passer un test en `skip`
-pour merger.
+**Quand le code existe déjà** — un schéma écrit à la tâche précédente, par exemple — le rouge par
+antériorité est impossible. On le **dit**, et on prouve au moins que le test mord : retirer la
+contrainte, constater l'échec, la remettre. Un rouge par suppression vaut moins ; ne pas le faire
+passer pour un rouge.
 
-Ce qu'on teste autrement, et qu'on **dit** dans la tâche du plan : un composant d'interface (test
-de composant : rendu, interaction, états vide / erreur / chargement), un parcours (test de bout en
-bout sur les parcours critiques), une configuration ou un script unique (vérification manuelle
-consignée dans le plan).
+Ce qu'on ne fait pas : écrire le code puis « ajouter les tests » ; adapter le test au code quand il
+échoue ; passer un test en `t.Skip` pour merger.
 
-## Structure d'un module
+## Structure d'un module du domaine
 
 ```
-{{À remplir : l'arbre d'un module avec le rôle d'un fichier par ligne, tel qu'il existe dans le
-module de bout en bout du lot 0.}}
+internal/domain/<module>/
+  doc.go        # une phrase : ce que le module décide
+  model.go      # entrées, sorties, invariants. Types du domaine, pas de types SQL ni HTTP
+  ports.go      # les interfaces dont le module a besoin : ToolFinder, Store, Clock, Notifier
+  <usecase>.go  # un cas d'usage par fichier, nommé par ce qu'il fait
+  errors.go     # erreurs typées, comparables par errors.Is
+  rules.md      # les règles MOD-nn : énoncé, source, test
+  *_test.go     # un test par règle, à côté du code
 ```
+
+**Un module ne connaît pas son voisin** (`AR-03`). La sauvegarde a besoin de la résolution, du
+catalogue et des alertes : elle les déclare comme **ports chez elle**, et `cmd/koffr` câble les
+implémentations. C'est plus verbeux, et c'est ce qui rend le domaine testable sans base, sans
+réseau et sans outil externe.
+
+Les adaptateurs (`engine`, `store`, `pipeline`, `state`, `egress`, `obs`, `httpd`, `cli`) **n'ont
+pas de `rules.md`** : leurs garanties sont celles d'un ADR, vérifiées par leurs tests.
 
 ## Exemples canoniques
 
-Chaque exemple est **court, réel et cité** (chemin du fichier vivant qui le montre). On n'invente
-pas d'exemple : on pointe le code qui fait foi.
+Aucun exemple inventé : on pointe le code qui fait foi.
 
-### Cas d'usage : droits, transaction, verrou optimiste
+| Ce qu'on cherche | Où le lire |
+| --- | --- |
+| Un test nommé par sa règle, avec ses trois cas | `internal/config/parse_test.go` |
+| Une valeur qui ne s'imprime jamais | `internal/config/secret.go` — `String`, `GoString`, `LogValue`, `MarshalYAML`, `IsZero` |
+| Une erreur qui nomme ce qui ne va pas, et où | `internal/config/resolve.go` |
+| Une commande fine : lire, appeler, rendre | `internal/cli/config.go` |
+| Un test sur une base réelle | `internal/state/open_test.go`, `internal/state/constraints_test.go` |
+| Un schéma qui fait respecter un ADR | `internal/state/migrations/0001_initial.sql` |
+| Un appel sortant derrière la porte | `internal/egress/egress.go` — `Gate.Dial` |
+| Une règle d'architecture vérifiée, avec sa fixture violante | `internal/arch/` |
 
-{{Extrait de 20 lignes du service du module de référence, avec le chemin.}}
+### Une commande cobra
 
-### Exposition : une déclaration, tous les canaux
+Une commande **lit, appelle un cas d'usage, rend**. Elle ne décide rien.
 
-{{Comment un cas d'usage devient une route, une API, un outil.}}
+- Elle écrit sur `cmd.OutOrStdout()`, jamais sur `os.Stdout` : sans cela elle n'est pas testable.
+- Elle renvoie une erreur, elle n'appelle pas `os.Exit` : `cmd/koffr/main.go` est le seul endroit
+  qui sort en code 1.
+- `SilenceUsage` et `SilenceErrors` sont posés sur la racine : une erreur métier n'affiche pas
+  l'aide.
+- `internal/cli` **n'importe jamais `internal/state`** (`AR-04`).
 
-### Adaptateur : une route fine
+### Une erreur
 
-{{Validation de forme, construction du contexte, appel du service, traduction des erreurs.}}
+Un message d'erreur est **en anglais** (ADR-0003), et il dit trois choses : ce qui ne va pas, **où**
+(fichier, ligne, identifiant de la base), et ce qu'on peut y faire quand c'est connu. `E-042` en
+fait une exigence : nommer la version attendue, les versions trouvées et la commande de correction.
 
-### Composant d'interface
+```go
+return fmt.Errorf("%s: %s are given together; keep one", field.where, strings.Join(forms, " and "))
+```
 
-{{Le composant de référence, ses conventions d'état et d'événements.}}
+Envelopper avec `%w` quand l'appelant peut vouloir `errors.Is`. Le linter `wrapcheck` refuse une
+erreur d'un autre paquet renvoyée nue.
 
-### Test de domaine
+### Un secret
 
-{{Le test de référence : fixture, cas nominal, cas d'erreur typée, sur base réelle si le module écrit.}}
+Tout ce qui est sensible passe par `config.Secret` : il ne s'imprime ni par `%v`, ni par `%+v`, ni
+par `%#v`, ni par `slog`, ni par YAML, et ne sort que par `Expose()` — un appel greppable, à
+regarder en revue. `internal/obs` masque en plus toute clé d'attribut qui **nomme** un secret.
 
-### Traitement différé
+### Un test sur base réelle
 
-{{Un job de référence : idempotence, clé de déduplication, reprise, aucune exception avalée.}}
-
-### Appel sortant
-
-{{Un adaptateur derrière la porte de sortie : jamais de client réseau ailleurs.}}
-
-## Écrans
-
-### Ce qu'un écran doit à l'utilisateur
-
-- Les champs, colonnes et libellés du CDC ; rien d'inventé, rien d'omis sans décision.
-- Pas de phrase d'explication : des champs, des valeurs, des libellés courts, un message au moment
-  de l'action.
-- Un état de chargement, un état vide, un état d'erreur, un conflit de version.
-- Clavier : {{raccourcis convenus}}.
-
-### Tests d'écran
-
-{{Ce qu'on teste en composant, ce qu'on teste en parcours.}}
+`t.TempDir()`, `state.Open(dir)`, `t.Cleanup` pour fermer. Pas de simulacre : SQLite coûte quelques
+millisecondes et ce qu'on veut vérifier — `CHECK`, `STRICT`, clés étrangères — n'existe que dans un
+vrai moteur.
 
 ## Données
 
-{{Ce que les ADR fixent, appliqué : type des montants, des dates, des statuts, colonnes d'audit,
-verrou optimiste, agrégats dans la base.}}
+Fixé par ADR-0006 et rappelé dans `CLAUDE.md` § Données : horodatages RFC 3339 **UTC** contraints
+par `GLOB`, statuts en toutes lettres contraints par `CHECK`, tailles en octets et durées en
+millisecondes, **aucun flottant**, `created_at` / `updated_at` partout, tables `STRICT`.
 
-## Pièges de la stack
+Une évolution de schéma est une **nouvelle** migration numérotée dans
+`internal/state/migrations/`, jamais une modification d'une migration déjà appliquée. Le SQL se
+relit avant commit, et on le dit dans la tâche.
 
-{{Une puce par piège **rencontré** : le symptôme, la cause, le geste. Alimenté par les rétros.
-Un piège que le lint attrape n'a pas besoin d'être ici.}}
+## Écritures externes
 
-## Definition of done
+Deux régimes, ADR-0008 :
 
-Celle de `METHODE.md`. Avant de dire « terminé » : `verify` vert, règle dans `rules.md` avec test,
-frontières tenues, droits vérifiés dans le service, migration relue, anglais dans le code, français
-dans le pilotage, plan coché.
+- **Fonctionnelles** — `internal/store` et `internal/engine` écrivent **réellement**, y compris en
+  développement : c'est la fonction du produit. Les tests tournent contre des conteneurs éphémères,
+  jamais contre un tiers réel.
+- **D'exploitation** — SMTP, webhook, liaison, téléchargement d'outils : par `internal/egress`,
+  dont le mode par défaut est le **puits**. Une configuration absente met en puits, **jamais en
+  erreur**, jamais vers une valeur réelle.
+
+Aucun hôte, jeton, clé ou destinataire dans le code ni en base. Tout vient de la configuration
+validée au démarrage, avec les trois formes de `E-033`.
+
+## Interface locale (à partir du lot 7)
+
+Anglais (ADR-0003), pas de phrase d'explication : des champs, des valeurs, des libellés courts, un
+message au moment de l'action. Chaque vue a son état vide, son état d'erreur et son état de
+chargement. `internal/httpd` **écoute** ; il n'appelle pas — un appel sortant passe par `egress`.
+La restauration n'y est pas déclenchable : ADR-0007 la réduit à l'affichage de la commande.
+
+## Avant de dire « terminé »
+
+`mise run verify` **vert, code de retour lu** ; la règle est dans `rules.md` avec sa source et le
+nom de son test ; les frontières tiennent (`internal/arch` et le lint) ; la migration est relue ; le
+code est en anglais et le pilotage en français ; la case du plan est cochée **au moment où la tâche
+passe**, pas en bloc à la fin.
