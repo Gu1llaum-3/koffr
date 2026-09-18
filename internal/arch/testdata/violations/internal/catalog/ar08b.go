@@ -2,9 +2,9 @@
 // check parses imports instead of building. Every file here breaks a rule of
 // ADR-0010 on purpose, so that a check which stops working is caught.
 //
-// AR-08 — a package that is neither state nor engine opening a SQL connection.
-package httpd
+// AR-08b — a package other than state reaching for the local SQLite driver.
+package catalog
 
 import (
-	_ "database/sql"
+	_ "modernc.org/sqlite"
 )

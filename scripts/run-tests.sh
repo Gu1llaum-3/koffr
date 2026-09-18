@@ -24,7 +24,28 @@ race_is_available() {
   command -v "$compiler" >/dev/null 2>&1
 }
 
+# Probes are tested against real servers started by testcontainers. Where that
+# is the point — the CI — a missing Docker must fail rather than skip: a suite
+# that skips its only real test is green and proves nothing.
+require_docker_if_asked() {
+  [ "${KOFFR_REQUIRE_DOCKER:-0}" = "1" ] || return 0
+
+  if docker info >/dev/null 2>&1; then
+    echo "containers: on" >&2
+
+    return 0
+  fi
+
+  echo "containers: REQUIRED here and unavailable." >&2
+  echo "  docker info failed. The probe tests would be skipped, and the suite" >&2
+  echo "  would pass without probing anything." >&2
+
+  exit 1
+}
+
 main() {
+  require_docker_if_asked
+
   if race_is_available; then
     echo "race detector: on ($(go env CC))" >&2
 

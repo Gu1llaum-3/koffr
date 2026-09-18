@@ -33,6 +33,27 @@ linters:
           deny:
             - pkg: github.com/mattn/go-sqlite3
               desc: "E-027: use modernc.org/sqlite; mattn/go-sqlite3 needs CGO and breaks E-117"
+        # AR-08b of ADR-0010, unchanged by ADR-0013: the local state of koffr
+        # belongs to one package.
+        sqlite-belongs-to-state:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!**/internal/state/**"
+          deny:
+            - pkg: modernc.org/sqlite
+              desc: "ADR-0010: only internal/state touches the local SQLite state"
+        # AR-08 as ADR-0013 amended it: engine may open a SQL connection to
+        # probe a server, never to read the data it is there to dump.
+        sql-belongs-to-state-and-engine:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!**/internal/state/**"
+            - "!**/internal/engine/**"
+          deny:
+            - pkg: database/sql
+              desc: "ADR-0013: database/sql belongs to internal/state, and to internal/engine for probes only"
         # AR-07 of ADR-0010. internal/arch checks the same rule on the import
         # graph; this one makes it fail the lint as well (N-8).
         sub-processes-belong-to-engine:

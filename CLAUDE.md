@@ -106,6 +106,11 @@ déjà.
 - **Un interdit `depguard` sur un module absent de `go.mod` ne peut pas être démontré** :
   `typecheck` échoue d'abord et court-circuite les autres linters. La garde existe, sa preuve
   attend qu'on ait une raison d'ajouter le module.
+- **`testcontainers-go` ne lit pas le contexte Docker.** Sur une machine dont le contexte n'est pas
+  le socket par défaut — Colima, Podman —, il annonce `rootless Docker not found`. Il faut
+  `DOCKER_HOST`, **et** `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` : le réapeur
+  monte le socket **dans** un conteneur, et c'est le chemin vu de l'intérieur de la machine
+  virtuelle qui compte. Sans la seconde, l'échec parle d'un `mkdir` sur le socket.
 - **Vérifier la version courante d'une action ou d'un outil avant de l'épingler.** Ce que le modèle
   « connaît » date de son entraînement : `actions/checkout@v5` et `jdx/mise-action@v3` étaient
   périmées (v7 et v4). Une requête à l'API du dépôt coûte deux secondes.

@@ -113,6 +113,10 @@ Constaté dans le code, pas supposé.
   `modernc.org/sqlite` reste réservé à `state` sans exception ». *Exclut* : lire une base
   sauvegardée par un pilote, ce qui reste interdit et le restera par revue, faute de règle de lint
   capable d'exprimer « pour les sondes seulement ».
+- **N-9 (2026-09-18) — les tests contre conteneurs sont sautés bruyamment, et exigés en CI.**
+  *Raison* : une machine sans Docker ne peut pas les jouer, et les taire rendrait `verify` vert
+  sans rien prouver. `KOFFR_REQUIRE_DOCKER=1` en CI fait échouer leur absence. *Exclut* : un
+  simulacre de serveur, et un `verify` qui mentirait par omission.
 - **N-2 Les sondes vivent dans `internal/engine`, le domaine ne les connaît que par un port.**
   `internal/domain/resolve` déclare `ServerProbe` et `ToolFinder` ; `engine` les implémente ;
   `cmd/koffr` câble. *Raison* : `AR-01` et `AR-02` l'imposent, et c'est ce qui rend la matrice de
@@ -147,23 +151,40 @@ Constaté dans le code, pas supposé.
 Exigences : `E-011`, `E-041`, et la moitié de `E-104a`. L'inconnue d'abord : si les conteneurs de
 test ne tiennent pas, tout le lot change de forme.
 
-- [ ] **1.1** `internal/arch` : `AR-08` amendée d'après **ADR-0013** — `database/sql` ouvert à
+- [x] **1.1** `internal/arch` : `AR-08` amendée d'après **ADR-0013** — `database/sql` ouvert à
       `internal/engine`, `AR-08b` gardant `modernc.org/sqlite` à `state` seul. **Une fixture
       violante pour chacune** : une règle assouplie sans fixture est une règle qu'on ne vérifie
       plus. `depguard` suit.
-- [ ] **1.2** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
+
+      > Fait le 2026-09-18. **Pas de rouge par antériorité** : la fixture existante déclenchait
+      > déjà les deux règles. Prouvé autrement, comme la rétro du lot 0 le demande — en retirant
+      > l'exception de `engine`, `TestTheCheckAcceptsWhatTheRulesAllow` échoue ; en retirant la
+      > fixture d'`AR-08b`, `TestTheCheckCatchesAViolationOfEveryRule` échoue. `depguard` refuse
+      > `database/sql` dans `pipeline` et l'accepte dans `engine`.
+- [x] **1.2** Test d'abord `internal/engine/probe_test.go` — contre un conteneur **réel**
       PostgreSQL 18 : joignabilité, version majeure et mineure lues du serveur. Cas d'erreur :
       hôte injoignable, mauvais identifiants, base absente — trois erreurs **typées et
       distinctes**. Puis le code (`jackc/pgx/v5`).
-- [ ] **1.3** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
+
+      > Fait le 2026-09-18, contre un **vrai** PostgreSQL 18. La version est lue des paramètres
+      > que le serveur annonce à la connexion : **aucune requête** n'est émise, ce qui va au-delà
+      > de ce que `1.4` demande. Les trois erreurs sont distinguées par les codes `28P01`, `28000`
+      > et `3D000`.
+      > **`N-9` ajoutée** : sans Docker, les tests de sonde sont **sautés bruyamment** et la CI
+      > pose `KOFFR_REQUIRE_DOCKER=1`, qui transforme l'absence en échec — même marché que `A-01`
+      > pour `-race`. Sans cela, `verify` serait vert en ne prouvant rien.
+      > **Détour** : la première version lisait `KOFFR_REQUIRE_DOCKER` dans le test Go, et
+      > `AR-05` l'a refusé — seul `internal/config` lit l'environnement. La règle avait raison :
+      > la décision est passée dans `scripts/run-tests.sh`, là où celle de `-race` vit déjà.
+- [x] **1.3** Test — contre MariaDB 11.4 **et** MySQL 8.4 : la **famille** est lue de la bannière
       du serveur (`N-8`), jamais déduite. Un MariaDB et un MySQL sur le même port se distinguent.
       Puis le code.
-- [ ] **1.4** Test — la sonde n'exécute **rien d'autre** que sa requête de version : pas de
+- [x] **1.4** Test — la sonde n'exécute **rien d'autre** que sa requête de version : pas de
       `SHOW TABLES`, pas de dump. Vérifié en lisant les requêtes émises.
-- [ ] **1.5** `internal/domain/resolve/ports.go` : le port `ServerProbe` déclaré **par le domaine**,
+- [x] **1.5** `internal/domain/resolve/ports.go` : le port `ServerProbe` déclaré **par le domaine**,
       implémenté par `engine` (`N-2`). Un faux de test l'implémente, pour que la suite se teste sans
       base.
-- [ ] **1.6** Vague verte : `verify`, commit `feat(engine): probe a server for its version and family`.
+- [x] **1.6** Vague verte : `verify`, commit `feat(engine): probe a server for its version and family`.
 
 ### Vague 2 — Énumération des candidats (`lot1/wave-2-tool-discovery`)
 
@@ -302,3 +323,37 @@ Sur l'instance de recette, augmentée pour l'occasion :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-18 — vague 1, sondes des moteurs
+
+- **`AR-08` amendée** d'après ADR-0013, **une fixture par règle** plus une fixture `allowed.go` qui
+  prouve l'exception. `depguard` suit. Les deux tests ont été prouvés par suppression, faute de
+  rouge par antériorité.
+- **Sonde PostgreSQL** : la version vient des **paramètres annoncés à la connexion**, donc
+  **aucune requête** n'est émise — au-delà de ce que `1.4` demandait. Trois erreurs distinguées par
+  les codes `28P01`, `28000`, `3D000`.
+- **Sonde MySQL/MariaDB** : une requête, `SELECT VERSION()`, et la famille lue de la bannière. Un
+  MariaDB **déclaré `mysql` dans la configuration** est rapporté MariaDB : `E-041` tient dans les
+  deux sens, vérifié contre de vrais serveurs 11.4 et 8.4.
+- **La garde d'ADR-0013 est écrite et mord** : `queries_test.go` lit les littéraux SQL du paquet et
+  refuse tout ce qui n'est pas `SELECT VERSION()`. Remplacer la requête par `SHOW TABLES` fait
+  échouer le test. C'est ce qui remplace le lint là où il ne sait pas exprimer « pour les sondes ».
+- **`N-9` ajoutée**, et son détour : lire `KOFFR_REQUIRE_DOCKER` dans le test Go violait `AR-05`.
+  La décision est passée dans `scripts/run-tests.sh`, là où celle de `-race` vit déjà.
+- **Deux erreurs de ma part, corrigées** : `Version.IsZero` incluait `Raw`, ce qui rendait
+  inutilisable une version illisible mais citable ; et l'analyse prenait **tous** les nombres de la
+  chaîne, transformant `16.10 (Debian 16.10-1.pgdg13+1)` en 16.10.**16**. Les deux ont été trouvées
+  par des tests écrits avant le code.
+- **Piège de la pile** inscrit en § Conventions : `testcontainers-go` ne lit pas le contexte Docker
+  et exige `DOCKER_HOST` **et** `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` sur Colima ou Podman.
+- **Un commit a été fait avec `verify` rouge** (violation de `AR-05` non vue), puis amendé avant
+  toute poussée. La règle reste : lire le code de retour **avant** de commiter.
+- **La CI a rattrapé une régression que j'avais introduite et que je ne pouvais pas voir.** Après
+  avoir prouvé que la garde de requêtes mordait, j'ai restauré `mysql.go` par `git checkout` — or
+  le fichier n'avait **jamais été indexé** : la commande a remis le stub de 12 lignes à la place de
+  l'implémentation. Deux choses ont masqué la casse en local : le test concerné était **sauté**
+  dans le shell sans `DOCKER_HOST` (c'est le coût assumé de `N-9`), et **le cache de `go test`**
+  répondait `(cached)` dans l'autre. `KOFFR_REQUIRE_DOCKER=1` en CI a fait exactement ce pour quoi
+  il existe. Geste inscrit dans le skill `implementer` : pour retirer puis remettre, **copier le
+  fichier**, jamais `git checkout`, et relancer avec `-count=1`.
+- `mise run verify` : **0**. Suite complète avec conteneurs et `-race`, **sans cache** : **0**.

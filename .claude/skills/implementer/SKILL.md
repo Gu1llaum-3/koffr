@@ -49,6 +49,11 @@ ferait tomber — et le vérifier. Deux pièges vus en vrai :
 Le geste : une **fixture violante** quand c'est possible — `internal/arch/testdata/` en contient une
 par règle —, sinon retirer ce que le test vérifie et constater qu'il tombe.
 
+**Pour retirer puis remettre, copier le fichier, jamais `git checkout`.** `git checkout <fichier>`
+restaure depuis l'**index** : sur un fichier jamais indexé, il ne remet pas ce qu'on avait, il
+remet une version antérieure — ou rien. `cp fichier /tmp/x && … && cp /tmp/x fichier`.
+Et relancer avec **`-count=1`** : le cache de `go test` rend « ok » un paquet qu'on vient de casser.
+
 Ce qu'on ne fait pas : écrire le code puis « ajouter les tests » ; adapter le test au code quand il
 échoue ; passer un test en `t.Skip` pour merger.
 

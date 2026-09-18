@@ -102,11 +102,24 @@ var rules = []rule{
 	},
 	{
 		id:   "AR-08",
-		what: "only state touches the database",
+		what: "only state and engine open a SQL connection",
 		violated: func(pkg, imp string) bool {
-			forbidden := []string{"database/sql", "modernc.org/sqlite"}
+			// engine may open one to *probe* a server — reachability, version,
+			// family — and never to read the data it is there to dump, which
+			// stays a sub-process. No import rule can see that difference:
+			// a test on the queries the probe emits carries it (ADR-0013).
+			allowed := []string{"internal/state", "internal/engine"}
 
-			return slices.Contains(forbidden, imp) && !under(pkg, "internal/state")
+			return imp == "database/sql" &&
+				!slices.ContainsFunc(allowed, func(a string) bool { return under(pkg, a) })
+		},
+	},
+	{
+		id:   "AR-08b",
+		what: "only state touches the local SQLite state",
+		violated: func(pkg, imp string) bool {
+			// No exception here: the state of koffr belongs to one package.
+			return imp == "modernc.org/sqlite" && !under(pkg, "internal/state")
 		},
 	},
 	{
@@ -261,4 +274,16 @@ func domainModule(pkg string) string {
 	}
 
 	return strings.SplitN(rest, "/", 2)[0]
+}
+
+// A rule that is relaxed needs a fixture proving the exception holds, or the
+// relaxation is never checked again. Every file named allowed.go under the
+// fixtures is something the rules must accept.
+func TestTheCheckAcceptsWhatTheRulesAllow(t *testing.T) {
+	for _, found := range check(scan(t, fixtures)) {
+		if strings.HasSuffix(found.file, "allowed.go") {
+			t.Errorf("%s — %s\n  %s imports %q, which the rules allow",
+				found.rule, found.what, found.file, found.imp)
+		}
+	}
 }
