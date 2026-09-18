@@ -57,7 +57,7 @@ le second test s'exécute dans `internal/state`.
 | Marqueur de masquage | `[redacted]` | `N-15` | `redact_test.go` |
 | Répertoire des journaux | `/var/log/koffr` | `E-026`, `E-121` | `paths_test.go` |
 
-## Ce que `state` garantit, et qui n'est pas une règle de `config`
+## Ce que les adaptateurs garantissent, et qui n'est pas une règle de `config`
 
 `internal/state` est un adaptateur : ses invariants sont ceux d'ADR-0006, vérifiés par ses propres
 tests et par le schéma lui-même — tables `STRICT`, statuts contraints par `CHECK`, horodatages
@@ -65,3 +65,17 @@ RFC 3339 **UTC** imposés par un `GLOB`, tailles en octets et durées en millise
 `journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=5000`, `synchronous=NORMAL` posés sur
 **chaque** connexion du pool. Voir `internal/state/migrations/0001_initial.sql` et
 `internal/state/*_test.go`.
+
+`internal/obs` **complète `CFG-06` par-dessous** : le gestionnaire `slog` masque toute valeur dont
+la **clé** nomme un secret (`password`, `token`, `secret`, `access_key`, `private_key`,
+`credential`, `authorization`…), même passée en chaîne nue. `CFG-06` protège le type
+`config.Secret` ; ceci rattrape le mot de passe lu ailleurs et journalisé à la main, qu'aucun type
+ne peut empêcher. La valeur est **remplacée**, jamais supprimée : un journal qui cache qu'un champ
+existait est plus difficile à lire qu'un journal qui dit qu'un secret était là.
+Voir `internal/obs/redact_test.go`.
+
+`internal/egress` est la **porte unique** des sorties d'exploitation (ADR-0008). Le mode par défaut
+est le **puits** : il journalise et n'envoie pas, une configuration absente n'est jamais une erreur
+et ne pointe jamais vers une valeur réelle. `Gate.Dial` est le seul endroit du dépôt qui ouvre une
+connexion d'exploitation, et il refuse en mode puits **sans toucher au réseau**. Voir
+`internal/egress/sink_test.go`.
