@@ -10,6 +10,9 @@
 | A-06 | lot 0, 2026-09-18 | 3.5 — secret introuvable | Le scénario attend que `config validate` signale **tout de suite** un `password_file` pointant vers un fichier absent. Il répond **`ok`**. `CFG-03` est bien tenue, mais par `Load`, qu'**aucune commande n'appelle** au lot 0 ; `config validate` utilise `Parse`, qui ne vérifie que la forme. Voulu et écrit (`internal/config/rules.md` § Divergences) — mais la commande faite pour vérifier une configuration ne vérifie pas ce que l'exploitant croit qu'elle vérifie. | gênant | `config validate` **résout les secrets** ; `--offline` garde la vérification de forme seule | `lot0/wave-9-validate-and-messages` (PR #8) |
 | A-07 | lot 0, 2026-09-18 | 4.3 — fichier de journal | Le scénario demande de lancer `koffr version` puis de regarder le fichier de journal. **Aucune commande n'écrit de journal** : `internal/obs` est écrit et testé, mais n'est importé par aucun paquet hors du sien. Même constat pour `internal/state` et `internal/egress`. Parcours **injouable** en l'état. | gênant | **Câbler `obs` dans la racine** cobra, avec `--log-level` et le fichier de `E-026` | `lot0/wave-10-wire-logging` (PR #9) |
 | A-08 | lot 0, rejeu 2026-09-18 | 2.3, 3.x, 4.x — toute commande | Depuis la vague 3 des corrections, **chaque commande écrit une ligne `INFO command started` sur la sortie d'erreur**, visible dans le terminal : `koffr version` affiche du JSON avant sa réponse. Deux choses s'y mêlent. **(1) Du bruit** : un exploitant qui tape une commande n'a rien demandé de tel. **(2) Un écart à `E-121`**, qui dit « journaux structurés en JSON vers **la sortie standard** » — je les ai mis sur la sortie d'erreur, pour qu'un `koffr config show > fichier` ne les ramasse pas. L'écart se défend mais n'est écrit nulle part. **Régression introduite par le plan de corrections lui-même**, pas une anomalie du produit d'origine. | gênant | **ADR-0012** : le fichier reçoit tout, la console reçoit ce que son lecteur attend. Confirmé le 2026-09-18 | `lot0/wave-12-log-destinations` |
+| A-09 | lot 1, 2026-09-19 | 1, 2 — énumération des outils | Sur Debian et Ubuntu, `/usr/bin/pg_dump` est un **lien vers `/usr/share/postgresql-common/pg_wrapper`**, qui choisit la version à lancer d'après son `argv[0]`. koffr **résout les liens symboliques** (`filepath.EvalSymlinks`), donc il exécute le wrapper sous son propre nom : celui-ci répond `Can't exec "--version": No such file or directory at ... line 153`. **Et koffr y a lu « 153 » et en a fait une version 153.0**, alors que `RSV-02` dit qu'un candidat qui répond n'importe quoi est **écarté, pas deviné**. Deux défauts en un : la résolution des liens casse le `pg_dump` canonique de la distribution la plus répandue, et une version est fabriquée à partir d'un message d'erreur. N'a pas cassé la recette **par chance** : le glob a aussi trouvé `/usr/lib/postgresql/18/bin/pg_dump`, et `RSV-08` a préféré 18.6 à 153.0. | **bloquant** | à prendre | |
+| A-10 | lot 1, 2026-09-19 | 1, 4 — parc mixte | **Les clients MySQL et MariaDB ne peuvent pas coexister** sur Debian et Ubuntu : `mariadb-client-core : Conflicts: virtual-mysql-client-core`, et `apt` répond `Unable to satisfy dependencies`. Installer l'un **désinstalle** l'autre. Une machine koffr ne peut donc **pas** sauvegarder à la fois une MySQL et une MariaDB avec les seuls outils de l'hôte. Le raisonnement d'ADR-0014 — « qui héberge un serveur héberge son client » — est vrai **par base** et faux **pour un parc mixte sur une seule machine**, qui est pourtant la cible du § 1.1. Constaté : la MariaDB est sauvegardable, la MySQL ne l'est pas, sur la même machine. | **bloquant** | à prendre | |
+| A-11 | lot 1, 2026-09-19 | 7 — stratégie `exec` | Une base déclarant `tools: { strategy: exec, container: … }` obtient de `doctor` la ligne **`none`**, strictement indiscernable d'une vraie absence d'outil. `ContainerFinder` est écrit et testé mais **câblé dans aucune commande** — c'était annoncé comme voulu, la recette montre que ça ne l'est pas : combiné à `A-10`, c'est la **seule issue** pour un parc mixte, et elle n'est pas branchée. | **bloquant** | à prendre | |
 
 Toutes tranchées le **2026-09-18** par le propriétaire, en session interactive. Corrections
 regroupées dans **`docs/plans/lot-0-corrections.md`**, exécuté avant `/cloturer-lot`. `A-08`, trouvée
@@ -41,6 +44,28 @@ Session du 2026-09-18, instance Multipass `koffr` (Ubuntu 26.04 LTS, `arm64`, `m
 | 4.3 Journal | ❌ `A-07` |
 | 5 Spike | ✅ conclusion explicite et **positive** : `E-043` tenable, Alpine comprise. Aucun ADR d'amendement à écrire |
 | 6.1 Garde-fou d'architecture | ✅ un import de `internal/state` dans `internal/domain/backup` fait échouer le contrôle en nommant **`AR-01`**. Via `mise run verify`, l'échec survient mais **pour la mauvaise raison** : `A-01` frappe à l'étape précédente |
+
+## Session du lot 1 — 2026-09-19
+
+Instance Multipass `koffr` **reconstruite** par le propriétaire : Ubuntu 26.04 LTS `arm64`, 8 Go,
+4 cœurs, 25 Go, `mise` et Docker, **sans Go ni compilateur C**. Parc réel : PostgreSQL 16.15,
+MariaDB 11.4.13, MySQL 8.4.11 en conteneurs, plus une base éteinte. Dépôt cloné sur `main`
+(`a6071bf`).
+
+| Parcours | Résultat |
+| --- | --- |
+| 0 `mise install` puis `verify` | ✅ **code 0** en 2 min 15 à froid, dépendances et images comprises ; `race detector: off` annoncé, comme au lot 0 |
+| 1 `doctor` sur un parc réel | ✅ les **trois familles** correctement identifiées — `postgresql 16.15`, `mariadb 11.4.13`, `mysql 8.4.11` — et la base éteinte signalée sans interrompre les autres. Code de retour **1** |
+| 2 La version est prouvée | ✅ un binaire placé sous `…/postgresql/17/bin/` qui répond `15.4` est rapporté **15.4**. Le chemin ne vote pas (`A-09` sur un autre aspect) |
+| 3 **Le piège du § 5.2** | ✅ hôte 14, base 16, géré 16 → **le 16 géré est choisi**. C'est le critère de sortie n° 2, atteint sur une vraie machine |
+| 4 Les familles ne se croisent pas | ✅ **et le cas s'est présenté tout seul** : après le conflit de paquets, `/usr/bin/mysqldump` était celui de **MariaDB**. koffr a refusé de l'utiliser pour la base MySQL et a répondu « found none ». `E-041` tenue sur un cas réel, pas construit |
+| 5 Un échec dit quoi faire | ⚠️ le message nomme la famille, la version attendue et ce qui a été trouvé ; il ne donne **pas** de commande — voulu depuis ADR-0014, et `E-042` est inscrite partiellement couverte |
+| 6 `config validate` | ✅ signale le premier problème du parc, code de retour **1** ; `--offline` accepte la forme seule |
+| 7 Stratégie `exec` | ❌ `A-11`. Le refus d'`exec` sans `container` est **impeccable** (`tools.strategy "exec" needs the container it should dump through`), mais `doctor` ignore la stratégie |
+
+**Décision attendue et prise** : `D-01` — l'instance Multipass reste le dispositif de recette, et
+elle a été redimensionnée pour ce lot. Elle a de nouveau trouvé ce que ni le poste ni la CI ne
+voyaient.
 
 **Écart d'environnement, sans effet sur ce lot** : l'instance n'a pas Docker, que le scénario
 demande. Le lot 0 n'en a besoin que pour rejouer le spike (parcours 5 se contente de lire le
