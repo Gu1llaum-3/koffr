@@ -113,6 +113,13 @@ Constaté dans le code, pas supposé.
 - **N-6 `pipeline` assemble, `store` écrit, `engine` dumpe, `crypto` connaît les destinataires.**
   Le domaine `backup` orchestre par des ports et ne voit ni `io.Writer` de fichier, ni conteneur.
   *Raison* : ADR-0010. *Exclut* : un paquet `pipeline` qui connaîtrait les destinations.
+- **N-8 (2026-09-19) — la preuve d'interopérabilité `age` est un script, pas un test Go.**
+  *Raison* : `E-075` ne se démontre qu'en lançant le **vrai** binaire `age`, et `AR-07` réserve
+  `os/exec` à `internal/engine`. Le test Go écrit l'archive, la clé et le texte attendu dans un
+  répertoire donné par un **drapeau de test** — pas une variable d'environnement, qu'`AR-05`
+  réserve à `internal/config` — et `scripts/check-age-interop.sh` exécute `age` par-dessus.
+  Sauté bruyamment sans `age`, **exigé en CI** par `KOFFR_REQUIRE_AGE=1`. *Exclut* : prouver
+  `E-075` avec notre propre bibliothèque, ce qui ne prouverait qu'un aller-retour.
 - **N-7 L'empreinte `sha256_raw` est celle du flux *avant* compression, `sha256_stored` celle de ce
   qui est écrit.** *Raison* : le manifeste du § 5.3 porte les deux, et seule la seconde se vérifie
   sans déchiffrer. *Exclut* : une seule empreinte, qui rendrait `E-062` impossible au lot 3.
@@ -124,21 +131,21 @@ Constaté dans le code, pas supposé.
 Exigences : `E-072` à `E-076`, `E-132`, et `keygen` de `E-103b`. L'inconnue d'abord : si une archive
 `age` produite par koffr ne se déchiffre pas avec l'outil standard, tout le lot change de forme.
 
-- [ ] **1.1** Test d'abord `internal/domain/crypto/recipients_test.go` — **`CRY-01`** : une clé
+- [x] **1.1** Test d'abord `internal/domain/crypto/recipients_test.go` — **`CRY-01`** : une clé
       publique `age` valide est acceptée, une clé mal formée est **refusée en nommant la ligne** du
       fichier de destinataires ; un fichier vide est une erreur.
-- [ ] **1.2** Test — **`CRY-02`** : au moins **deux** destinataires sont exigés ; une seule clé
+- [x] **1.2** Test — **`CRY-02`** : au moins **deux** destinataires sont exigés ; une seule clé
       produit un **avertissement au démarrage** qui nomme le séquestre (`E-132`).
-- [ ] **1.3** Test `internal/pipeline/encrypt_test.go` — **`CRY-03`** : le chiffrement est **en
+- [x] **1.3** Test `internal/pipeline/encrypt_test.go` — **`CRY-03`** : le chiffrement est **en
       flux**, sans matérialiser l'entrée, et l'archive produite est **déchiffrable par la commande
       `age` réelle**, pas par notre propre code (`E-075`). Le test invoque le binaire `age` s'il est
       présent et **se saute bruyamment** sinon, comme les conteneurs.
-- [ ] **1.4** Test — **`CRY-04`** : l'archive est **illisible** avec une autre clé privée, et
+- [x] **1.4** Test — **`CRY-04`** : l'archive est **illisible** avec une autre clé privée, et
       déchiffrable par **chacun** des destinataires déclarés (`E-073`).
-- [ ] **1.5** Test `internal/cli/keygen_test.go` — `koffr keygen` affiche la paire, **n'écrit
+- [x] **1.5** Test `internal/cli/keygen_test.go` — `koffr keygen` affiche la paire, **n'écrit
       aucun fichier**, et le dit (`E-076`, ADR-0007).
-- [ ] **1.6** `internal/domain/crypto/rules.md` : `CRY-01` à `CRY-04`.
-- [ ] **1.7** Vague verte : `verify`, commit `feat(crypto): age recipients, streaming encryption and keygen`.
+- [x] **1.6** `internal/domain/crypto/rules.md` : `CRY-01` à `CRY-04`.
+- [x] **1.7** Vague verte : `verify`, commit `feat(crypto): age recipients, streaming encryption and keygen`.
 
 ### Vague 2 — La chaîne en flux (`lot2/wave-2-streaming-pipeline`)
 
@@ -264,3 +271,25 @@ Sur l'instance de recette, avec son parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-19 — vague 1, chiffrement et clés
+
+- `CRY-01` à `CRY-04` écrites **avant** le code. `internal/domain/crypto` ne chiffre pas : il
+  connaît les destinataires. `internal/pipeline` chiffre, en flux.
+- **L'inconnue du lot est retirée** : `scripts/check-age-interop.sh` a fait lire par **`age`
+  1.2.1**, sur l'instance, une archive écrite par koffr. `E-075` tient — aucun format maison.
+- **`N-8` ajoutée** : cette preuve est un script parce qu'un test Go qui lancerait `age`
+  violerait `AR-07`. Le test Go écrit les pièces, le script exécute. Troisième fois que ce schéma
+  sert — `-race`, Docker, et maintenant `age` — et il est devenu la façon de traiter un outil
+  externe dont l'absence ne doit ni bloquer ni mentir.
+- **`E-025` mesurée, pas affirmée** : un lecteur de test surveille l'écart entre ce qui est lu et
+  ce qui est sorti ; au-delà de 4 Mio d'avance sur 8 Mio d'entrée, le test échoue. Le flux ne se
+  matérialise pas.
+- `CRY-04` vérifiée dans les deux sens : **chacun** des destinataires ouvre l'archive, et une clé
+  étrangère n'ouvre rien.
+- `koffr keygen` affiche la paire, **n'écrit rien** — le test cherche la clé privée dans tous les
+  fichiers des répertoires d'état et de journal — et explique le séquestre.
+- **Divergence assumée et écrite** dans `rules.md` : une seule clé **avertit** sans empêcher. Le
+  § 11 dit « obligatoires », `E-132` dit « avertissement » ; c'est la seconde lecture qui est
+  retenue, et la recette tranchera (parcours 2).
+- `mise run verify` : **0**, `mise run interop` : **0** sur l'instance.

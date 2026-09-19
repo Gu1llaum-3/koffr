@@ -35,6 +35,10 @@ go build \
   -o dist/koffr ./cmd/koffr
 """
 
+[tasks.interop]
+description = "E-075: check that the standard age tool reads an archive koffr wrote"
+run = "./scripts/check-age-interop.sh"
+
 [tasks.release]
 description = "Build the three targets of ADR-0011 and check E-117: no cgo, static ELF, under 30 MB"
 run = "./scripts/check-release.sh"
@@ -45,5 +49,6 @@ run = [
   "mise run check",
   "mise run lint",
   "mise run test",
+  "mise run interop",
   "mise run build",
 ]
