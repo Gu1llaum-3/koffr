@@ -17,6 +17,17 @@ func newToolsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tools",
 		Short: "Inspect the dump and restore tools koffr can reach",
+		// A command with subcommands and no RunE prints its help and succeeds,
+		// even for a subcommand it does not have. `koffr tools install` would
+		// then look like it worked.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				return fmt.Errorf("koffr tools has no %q subcommand: koffr installs no tool, "+
+					"the dump and restore clients are a prerequisite (see the README)", args[0])
+			}
+
+			return cmd.Help() //nolint:wrapcheck // cobra's own error
+		},
 	}
 	cmd.AddCommand(newToolsListCommand())
 

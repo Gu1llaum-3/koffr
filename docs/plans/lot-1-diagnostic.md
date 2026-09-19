@@ -52,16 +52,16 @@ en l'exécutant.
    sans se tromper ;
 2. le **piège du § 5.2** est évité, et c'est un test qui le dit : hôte en 14, base en 16, outil
    géré en 16 → **c'est le 16 qui est choisi** ;
-3. **scénario 2 du § 8** : une base PostgreSQL 17 avec seulement le client 15 échoue en nommant la
-   version manquante **et la commande de correction** ;
-4. **scénario 3 du § 8** : `koffr tools install postgresql 17` fait réussir la même base **sans
-   toucher la configuration** ;
+3. ~~**scénario 2 du § 8**~~ — **amendé le 2026-09-19 (ADR-0014)** : l'échec nomme la version
+   manquante et les versions trouvées ; il ne donne **pas** de commande de correction, koffr
+   n'installant aucun outil ;
+4. ~~**scénario 3 du § 8**~~ — **sans objet (ADR-0014)** : `koffr tools install` n'existe pas ;
 5. `koffr config validate` signale une base injoignable et un outil manquant, **sans rien exécuter
    d'autre** ;
 6. jamais `mysqldump` d'Oracle pour une MariaDB, ni l'inverse — y compris quand c'est le seul outil
    présent.
 
-**Les critères 3 et 4 dépendent de la vague 6**, elle-même bloquée par `D-06` et `Q-15`.
+**Les critères 3 et 4 ont été amendés par ADR-0014** le 2026-09-19 : `D-06` tranchée, installation gérée hors MVP.
 
 ## État de départ (vérifié le 2026-09-18)
 
@@ -258,28 +258,25 @@ Exigences : `E-046`, et le troisième tiers de `E-013`.
 - [x] **5.4** Règle `RSV-10` dans `rules.md`.
 - [x] **5.5** Vague verte : `verify`, commit `feat(engine): resolve a tool inside the database container`.
 
-### Vague 6 — Installation gérée (`lot1/wave-6-managed-tools`) — **BLOQUÉE**
+### Vague 6 — Les outils sont un prérequis (`lot1/wave-6-host-tools-only`) — ADR-0014
 
-Exigences : `E-043`, `E-044`, `E-045`, `E-131`, et `tools install` / `remove` de `E-103a`.
+> **Amendée le 2026-09-19.** `D-06` a été tranchée : l'installation gérée **sort du MVP**
+> (ADR-0014), `Q-15` devient sans objet, et `E-043`, `E-044`, `E-045` et `E-131` sont reportées.
+> La vague qui devait les livrer devient celle qui **assume leur absence** proprement.
 
-> **Ne démarre pas** tant que `D-06` (qui construit, signe et héberge les binaires) et `Q-15`
-> (quelle signature, quelle clé) ne sont pas tranchées. Le reste du lot avance sans elles ; les
-> critères de sortie **3 et 4** en dépendent, et eux seuls.
-
-- [ ] **6.1** Test d'abord — `koffr tools install <engine> <version>` dépose un bundle dans
-      `/var/lib/koffr/tools/<engine>/<version>/`, exécutable **depuis ce chemin exact** — le spike a
-      montré que `PT_INTERP` est absolu.
-- [ ] **6.2** Test — l'empreinte SHA-256 épinglée est vérifiée, et une archive qui ne correspond pas
-      est **refusée et supprimée** (`E-044`).
-- [ ] **6.3** Test — la signature est vérifiée avant première exécution (`E-044`, forme fixée par
-      `Q-15`).
-- [ ] **6.4** Test — l'installation automatique est **désactivée par défaut** ; activée, elle est
-      bornée par liste blanche et **tracée comme événement** (`E-045`).
-- [ ] **6.5** Test — hors Linux, l'échec nomme les deux issues (`N-7`).
-- [ ] **6.6** Le téléchargement passe par `internal/egress` : hors production, il ne télécharge rien
-      et **le dit** (ADR-0008).
-- [ ] **6.7** Chaîne d'intégration de `E-131`, dans un dépôt ou un flux dédié selon `D-06`.
-- [ ] **6.8** Règles `RSV-11` à `RSV-13`. Vague verte : `verify`, commit `feat(resolve): install a managed tool, verified before first run`.
+- [x] **6.1** **ADR-0014** écrit et accepté : l'installation gérée sort du MVP ; les sources sont
+      l'hôte et le conteneur. `D-06` barrée, `Q-15` sans objet, `E-043`, `E-044`, `E-045` et
+      `E-131` reportées au registre et au backlog (`B-08`).
+- [x] **6.2** Test d'abord — le message d'échec de `RSV-09` **ne promet plus** `koffr tools install`
+      et nomme la famille, la version attendue, les versions trouvées et leur provenance.
+- [x] **6.3** Test d'abord — `koffr tools install` et `koffr tools remove` **n'existent pas**, et
+      l'échec explique pourquoi plutôt que d'afficher l'aide en réussissant.
+- [x] **6.4** `README.md` : les clients de dump et de restauration deviennent un **prérequis**
+      documenté, avec les paquets des trois familles de distributions et la sortie `exec` pour une
+      base en conteneur.
+- [x] **6.5** `E-042` passée à **partiellement couverte** au registre, avec la raison ; `E-103a`
+      amendée ; `E-013` couverte pour deux sources sur trois.
+- [x] **6.6** Vague verte : `verify`, commit `feat(resolve): tools are a prerequisite, not something koffr installs`.
 
 ## Vérification de bout en bout
 
@@ -323,6 +320,23 @@ Sur l'instance de recette, augmentée pour l'occasion :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-19 — vague 6, les outils deviennent un prérequis
+
+- **`D-06` tranchée par le propriétaire** : l'installation gérée sort du MVP. Raisonnement retenu —
+  une machine qui héberge un serveur de base héberge presque toujours son client, et les deux
+  autres sources de `E-013` sont déjà livrées. **ADR-0014** l'écrit ; `Q-15` devient sans objet.
+- **Ce que j'ai proposé et qui a été écarté** : nommer les paquets par distribution dans le message
+  d'échec, pour tenir `E-042` à la lettre. Le propriétaire l'a refusé — c'est une correspondance de
+  plus à maintenir, exactement la charge que la décision retire. Le prérequis part dans le
+  `README`, et `E-042` est inscrite **partiellement couverte**, avec sa raison.
+- Message final : `no compatible tool to dump postgresql 17.2: expected a postgresql client of`
+  `version 17 or later, found postgresql 15.4 (host)`. Il ne promet rien qu'il ne tienne.
+- **`koffr tools install` n'existe pas**, et l'échec le dit — une commande cobra sans `RunE` aurait
+  affiché son aide **en réussissant**, ce qui ressemble à un succès.
+- `README.md` porte désormais les paquets clients des trois familles de distributions, la
+  coexistence de plusieurs versions PostgreSQL, et la sortie `exec` pour une base en conteneur.
+- `mise run verify` : **0**.
 
 ### 2026-09-19 — vague 5, stratégie `exec`
 

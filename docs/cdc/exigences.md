@@ -47,7 +47,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | E-011 | Les moteurs supportés sont PostgreSQL 12 à 18, MySQL 8.x et MariaDB 10.6+. | § 3 | contrainte | doit | 1 | à faire (ADR-0004) |
 | E-012a | La destination « système de fichiers local » est supportée. | § 3 | contrainte | doit | 2 | à faire |
 | E-012b | Les destinations S3-compatible et SFTP sont supportées. | § 3 | contrainte | doit | 4 | à faire |
-| E-013 | Les sources d'outils de dump supportées sont la détection sur l'hôte, l'installation gérée par l'agent et `docker exec`. | § 3 | contrainte | doit | 1 | à faire |
+| E-013 | Les sources d'outils de dump supportées sont la détection sur l'hôte, l'installation gérée par l'agent et `docker exec`. | § 3 | contrainte | doit | 1 | couverte pour **deux** des trois sources — hôte (`RSV-01`) et conteneur (`RSV-10`) ; l'installation gérée est reportée (ADR-0014) |
 | E-014 | La vérification du MVP couvre l'empreinte et la relecture de structure d'archive. | § 3 | contrainte | doit | 3 | à faire |
 | E-015 | Les canaux d'alerte du MVP sont l'e-mail SMTP et le webhook JSON. | § 3, `F10.1` | contrainte | doit | 6 | à faire |
 | E-016 | Le MVP livre une interface web locale en lecture avec actions, et une CLI complète. | § 3 | contrainte | doit | 7 | à faire |
@@ -91,10 +91,10 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | E-039 | La version de chaque candidat est obtenue en l'exécutant (`pg_dump --version`), jamais en interprétant son chemin ; le résultat est mis en cache et invalidé au changement de mtime du binaire. | § 5.2 `F2.2`, `P3` | fonctionnel | doit | 1 | à faire |
 | E-040 | Les candidats sont filtrés par la règle de compatibilité de l'opération demandée, puis c'est la version la plus proche par le haut qui est retenue ; la provenance (hôte, puis outil géré, puis conteneur) ne sert qu'à départager à version égale. | § 5.2 `F2.3` (+ « piège à éviter ») | fonctionnel | doit | 1 | à faire |
 | E-041 | Les familles MySQL et MariaDB ne sont jamais croisées — `mysqldump` pour MySQL, `mariadb-dump` pour MariaDB — et la famille est détectée à la connexion, jamais déduite de la configuration. | § 5.2 `F2.4` | fonctionnel | doit | 1 | à faire |
-| E-042 | En l'absence de candidat compatible, le job échoue avec un message nommant la version attendue, les versions trouvées et la commande exacte pour corriger ; aucun repli sur un outil incompatible n'est possible. | § 5.2 `F2.5`, `P3` | fonctionnel | doit | 1 | à faire |
-| E-043 | `keeper tools install` installe un outil à la demande dans `/var/lib/keeper/tools/`, bibliothèques partagées embarquées et `RPATH` ajusté. | § 5.2 `F2.6`, § 11 | fonctionnel | doit | 1 | à faire |
-| E-044 | Toute archive d'outil téléchargée est vérifiée contre une empreinte SHA-256 épinglée dans la version de l'agent, et sa signature contrôlée avant première exécution. | § 5.2 `F2.7` | sécurité | doit | 1 | en question (Q-15) |
-| E-045 | L'installation automatique à la découverte d'une version inconnue est désactivée par défaut ; si elle est activée, elle est bornée par une liste blanche de versions et tracée comme événement. | § 5.2 `F2.8` | sécurité | doit | 1 | à faire |
+| E-042 | En l'absence de candidat compatible, le job échoue avec un message nommant la version attendue, les versions trouvées et la commande exacte pour corriger ; aucun repli sur un outil incompatible n'est possible. | § 5.2 `F2.5`, `P3` | fonctionnel | doit | 1 | **partiellement couverte** (`RSV-09`) : la version attendue et les versions trouvées y sont, **pas la commande de correction** — koffr n'installe aucun outil (ADR-0014). Les clients sont un prérequis du `README` |
+| E-043 | `keeper tools install` installe un outil à la demande dans `/var/lib/keeper/tools/`, bibliothèques partagées embarquées et `RPATH` ajusté. | § 5.2 `F2.6`, § 11 | fonctionnel | doit | 1 | **reportée** après la mise en service (ADR-0014) — le spike `E-130` reste valable |
+| E-044 | Toute archive d'outil téléchargée est vérifiée contre une empreinte SHA-256 épinglée dans la version de l'agent, et sa signature contrôlée avant première exécution. | § 5.2 `F2.7` | sécurité | doit | 1 | **reportée** avec `E-043` (ADR-0014) ; `Q-15` sans objet |
+| E-045 | L'installation automatique à la découverte d'une version inconnue est désactivée par défaut ; si elle est activée, elle est bornée par une liste blanche de versions et tracée comme événement. | § 5.2 `F2.8` | sécurité | doit | 1 | **reportée** avec `E-043` (ADR-0014) |
 | E-046 | La stratégie `exec` exige le socket Docker et se déclare par base, jamais globalement. | § 5.2 `F2.9` | sécurité | doit | 1 | à faire |
 | E-047 | PostgreSQL, dump : le candidat est compatible si `major(pg_dump) ≥ major(serveur)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | à faire |
 | E-048 | PostgreSQL, restauration : le candidat est compatible si `major(pg_restore) ≥ major(archive)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | à faire |
@@ -202,7 +202,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-103a | La CLI expose `version [--json]`, `config validate [--file]`, `config show [--redact]`, `doctor [--database]`, `tools list` / `install` / `remove`. | § 5.12 | fonctionnel | doit | 1 | à faire (ADR-0001 : commande `koffr`) |
+| E-103a | La CLI expose `version [--json]`, `config validate [--file]`, `config show [--redact]`, `doctor [--database]`, `tools list` / `install` / `remove`. | § 5.12 | fonctionnel | doit | 1 | couverte pour `version`, `config validate`, `config show`, `doctor` et `tools list` ; `tools install` et `tools remove` **n'existent pas** (ADR-0014) |
 | E-103b | La CLI expose `keygen` et `backup <db> [--dry-run]`. | § 5.12 | fonctionnel | doit | 2 | à faire (ADR-0001) |
 | E-103c | La CLI expose `list [<db>] [--destination]` et `verify <backup-id>`. | § 5.12 | fonctionnel | doit | 3 | à faire (ADR-0001) |
 | E-103d | La CLI expose `restore <db> --from <backup-id> [--into DSN] [--clean-mode MODE]`, avec `--identity` ajouté par ADR-0007. | § 5.12, ADR-0007 | fonctionnel | doit | 4 | à faire (ADR-0001, ADR-0007) |
@@ -261,7 +261,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
 | E-130 | L'embarquement des bibliothèques partagées et l'ajustement du `RPATH` des outils installés sont validés par un essai réel sur Debian, Rocky et Alpine **avant `L0`** : c'est le risque technique numéro un du document. | § 11 (risque 1) | technique | doit | 0 | couverte (`docs/inputs/spike-2026-09-rpath.md`, 18 exécutions) — conclusion **positive**, `E-043` non amendée |
-| E-131 | Une chaîne d'intégration dédiée construit et publie les binaires d'outils par versions figées, avec empreintes épinglées dans la version de l'agent, pour sept versions de PostgreSQL et trois de MariaDB sur deux architectures. | § 11 (risque 2), `F2.6`, `F2.7` | exploitation | doit | 1 | en question (D-06) |
+| E-131 | Une chaîne d'intégration dédiée construit et publie les binaires d'outils par versions figées, avec empreintes épinglées dans la version de l'agent, pour sept versions de PostgreSQL et trois de MariaDB sur deux architectures. | § 11 (risque 2), `F2.6`, `F2.7` | exploitation | doit | 1 | **reportée** avec `E-043` (ADR-0014) — plus d'archive à construire ni à héberger |
 | E-132 | Des destinataires multiples sont obligatoires dès la configuration initiale, la procédure de séquestre est documentée, et un avertissement est émis au premier démarrage tant qu'une seule clé est déclarée. | § 11 (risque 3), `F6.2` | sécurité | doit | 2 | en question (Q-04) |
 
 ---

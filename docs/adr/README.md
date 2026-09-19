@@ -22,3 +22,4 @@ que le propriétaire ne l'a pas passé en **accepté** ; on ne code pas dessus.
 | 0011 | Windows est hors périmètre, et c'est annoncé | accepté | 2026-09-18 |
 | 0012 | Le fichier reçoit tout, la console reçoit ce que son lecteur attend | accepté | 2026-09-18 |
 | 0013 | `internal/engine` peut ouvrir une connexion de base pour sonder, jamais pour lire | accepté | 2026-09-18 |
+| 0014 | L'installation gérée d'outils sort du MVP : l'hôte et le conteneur suffisent | accepté | 2026-09-19 |

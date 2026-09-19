@@ -71,3 +71,13 @@ func writeTool(t *testing.T, path, answer string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// ADR-0014 — the managed install is out of the MVP. `tools install` and
+// `tools remove` do not exist: koffr --help promises only what it holds.
+func TestToolsInstallDoesNotExist(t *testing.T) {
+	for _, gone := range []string{"install", "remove"} {
+		if _, err := failing(t, "tools", gone, "postgresql", "17"); err == nil {
+			t.Errorf("koffr tools %s exists, and ADR-0014 says it does not", gone)
+		}
+	}
+}

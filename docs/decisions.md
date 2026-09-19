@@ -23,7 +23,7 @@ Les quatre décisions que le CDC renvoie lui-même au propriétaire (§ 11.1) so
 | ~~D-03~~ | ~~Déduplication et sauvegarde incrémentale~~ | propriétaire | `E-129`, format d'archive, donc lot de la sauvegarde | 2026-09-18 | **2026-09-18 → ADR-0005** : écartée du produit |
 | ~~D-04~~ | ~~Portée de Windows~~ | propriétaire | `E-117`, `Q-20`, matrice de CI | 2026-09-18 | **2026-09-18 → ADR-0011** : hors périmètre, annoncé |
 | D-05 | Quand ouvrir le cahier des charges du serveur central | propriétaire | `Q-16`, lot de la liaison | 2026-09-18 | |
-| D-06 | Qui construit, signe et héberge les binaires d'outils, et à quel coût récurrent | propriétaire | `E-131`, `E-043`, `E-044`, `Q-15` | 2026-09-18 | |
+| ~~D-06~~ | Qui construit, signe et héberge les binaires d'outils, et à quel coût récurrent | propriétaire | `E-131`, `E-043`, `E-044`, `Q-15` | 2026-09-18 | **Tranchée le 2026-09-19 (ADR-0014)** : installation gérée hors MVP |
 | ~~D-07~~ | ~~Version de Go~~ | propriétaire | lot 0 (`go.mod`) | 2026-09-18 | **2026-09-18 → ADR-0002** : 1.27 partout |
 | ~~D-08~~ | ~~Le serveur central vit-il dans ce dépôt ou dans un autre ?~~ | propriétaire | organisation du dépôt dès le lot 0, `D-05` | 2026-09-18 | **2026-09-18 → ADR-0001** : dépôts séparés, protocole public |
 
@@ -101,7 +101,13 @@ Le § 11.1 : « son cahier des charges doit commencer dès que `L3` est engagé,
 stabilise avec un vrai consommateur en face ». C'est un engagement de calendrier à prendre ou à
 écarter ; il conditionne la réponse à `Q-16`.
 
-### D-06 — Construction et hébergement des binaires d'outils
+### ~~D-06~~ — Construction et hébergement des binaires d'outils — tranchée le 2026-09-19 (ADR-0014)
+
+**Tranchée** : troisième option. L'installation gérée sort du MVP ; les sources d'outils sont
+l'hôte et le conteneur de la base. Il n'y a plus d'archive à construire, à signer ni à héberger.
+
+**Contexte d'origine.**
+
 
 `F2.6` et `F2.7` supposent une infrastructure permanente : construire sept versions de PostgreSQL et
 trois de MariaDB, sur deux architectures, avec bibliothèques embarquées et `RPATH` ajusté, les

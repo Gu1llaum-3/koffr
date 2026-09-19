@@ -16,8 +16,33 @@ backup is taken yet. The `version` command is the only thing this binary does to
 
 - Linux (`amd64`, `arm64`) or macOS (`arm64`) — Windows is out of scope
 - Go 1.27 to build from source
-- The dump and restore tools of the engines you back up, either on the host, managed by koffr, or
-  reachable in a container
+### The dump and restore tools
+
+koffr calls `pg_dump`, `mysqldump` and `mariadb-dump`; it does not reimplement them, and **it does
+not install them**. Install the client package of each engine you back up, in a version **at least
+as recent as the server**:
+
+| Engine | Debian, Ubuntu | RHEL, Rocky, Fedora | Alpine |
+| --- | --- | --- | --- |
+| PostgreSQL | `postgresql-client-17` | `postgresql17` | `postgresql17-client` |
+| MySQL | `mysql-client` | `mysql` | `mysql-client` |
+| MariaDB | `mariadb-client` | `mariadb` | `mariadb-client` |
+
+Several PostgreSQL client versions can be installed side by side; koffr picks the closest one that
+is at least as recent as each server, and never crosses the MySQL and MariaDB families.
+
+For a database running in a container, you can skip all of this and let koffr use the client inside
+that container:
+
+```yaml
+databases:
+  - id: erp
+    engine: mariadb
+    tools: { strategy: exec, container: erp-mariadb }
+```
+
+`koffr doctor` tells you, for each database, which tool it would use — and says what is missing when
+there is none.
 
 ## Build
 

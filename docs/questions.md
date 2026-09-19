@@ -34,7 +34,7 @@ corriger avant de les envoyer.
 | Q-12 | La relecture à chaud est-elle obligatoire (§ 4.3) ou souhaitable (`F1.4`) ? | rédacteur | 2026-09-18 | `E-035` | |
 | Q-13 | Si l'armement (`F8.6`, souhaitable) est écarté, la restauration est-elle ouverte par défaut ? | rédacteur | 2026-09-18 | `E-087` | |
 | ~~Q-14~~ | ~~MySQL (Oracle) et PostgreSQL 12 sont-ils réellement supportés ?~~ | rédacteur | 2026-09-18 | `E-011`, `E-123` | **2026-09-18 → ADR-0004** |
-| Q-15 | Quelle signature protège les archives d'outils, et avec quelle clé ? | rédacteur | 2026-09-18 | `E-044` | |
+| ~~Q-15~~ | Quelle signature protège les archives d'outils, et avec quelle clé ? | rédacteur | 2026-09-18 | `E-044` | |
 | Q-16 | Quel protocole de liaison : fréquence, format, file locale, cycle de vie du jeton ? | rédacteur | 2026-09-18 | `E-106`, `E-107`, `E-111` | |
 | ~~Q-17~~ | ~~En quelle langue parlent la CLI, l'interface et les messages ?~~ | rédacteur | 2026-09-18 | ADR langues, `E-100` | **2026-09-18 → ADR-0003** |
 | Q-18 | Que fait le planificateur les nuits de changement d'heure ? | rédacteur | 2026-09-18 | `E-088` | |
@@ -255,7 +255,11 @@ retirer et le renvoyer en phase 2.
 matrice `N7` est incomplète ; les tests d'intégration sont écrits pour couvrir ce que le § 3
 annonce. C'est l'hypothèse la plus coûteuse : elle est à confirmer avant d'écrire la matrice de CI.
 
-### Q-15 — Quelle signature protège les archives d'outils, et avec quelle clé ?
+### ~~Q-15~~ — Quelle signature protège les archives d'outils, et avec quelle clé ? — **sans objet** depuis le 2026-09-19 (ADR-0014)
+
+**Sans objet** : l'installation gérée sort du MVP, il n'y a plus d'archive d'outil à signer. La
+question se rouvrira avec `E-043` si l'installation gérée revient.
+
 
 **Contexte** : `F2.7` exige que toute archive téléchargée soit vérifiée « contre une empreinte
 SHA-256 épinglée dans la version de l'agent, **et sa signature contrôlée** avant première
