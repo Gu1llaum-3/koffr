@@ -23,8 +23,13 @@ jobs:
       # Probes are tested against real servers. A runner without Docker would
       # skip them and leave a suite that is green and proves nothing.
       KOFFR_REQUIRE_DOCKER: "1"
+      # E-075 promises an archive opens without koffr. Only the real age binary
+      # can show that, so its absence is a failure here.
+      KOFFR_REQUIRE_AGE: "1"
 
     steps:
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+
       - uses: actions/checkout@v7
 
       # mise.toml is the single authority on tool versions, in CI as locally.
