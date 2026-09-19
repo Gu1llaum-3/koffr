@@ -50,8 +50,10 @@ func NewRoot() *cobra.Command {
 	root.PersistentFlags().String("state-dir", config.DefaultStateDir, "directory holding the local state")
 	root.PersistentFlags().String("log-dir", config.DefaultLogDir, "directory holding the log file")
 	root.PersistentFlags().String("log-level", "info", "debug, info, warn or error")
+	root.PersistentFlags().String("tools-dir", config.DefaultPaths().ToolsDir(),
+		"directory holding the tools koffr installed")
 
-	root.AddCommand(newVersionCommand(), newConfigCommand())
+	root.AddCommand(newVersionCommand(), newConfigCommand(), newToolsCommand())
 
 	return root
 }

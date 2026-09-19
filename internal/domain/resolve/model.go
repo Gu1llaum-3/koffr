@@ -31,12 +31,16 @@ type Version struct {
 	Raw string
 }
 
+// String renders the numbers, which is what a column and a comparison need.
+// What the tool actually announced is in Raw, for an error that wants to quote
+// it — "mariadb-dump from 12.0.2-MariaDB, client 10.19 for osx10.20 (arm64)"
+// belongs in a message, not in a table.
 func (v Version) String() string {
-	if v.Raw != "" {
-		return v.Raw
+	if v.Patch != 0 {
+		return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
 	}
 
-	return fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
+	return fmt.Sprintf("%d.%d", v.Major, v.Minor)
 }
 
 // IsZero reports whether no number could be read. Raw is not part of the
