@@ -1,6 +1,7 @@
 package engine_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -116,4 +117,28 @@ func mysqlTarget(t *testing.T, container testcontainers.Container, declared reso
 		User:     probeUser,
 		Password: probePassword,
 	}
+}
+
+// startMariaDBNamed starts a MariaDB and returns the name Docker knows it by,
+// which is what the exec strategy is given in the configuration.
+func startMariaDBNamed(t *testing.T, version string) string {
+	t.Helper()
+	needsContainers(t)
+
+	container, err := mariadb.Run(t.Context(), "mariadb:"+version,
+		mariadb.WithDatabase(probeDatabase),
+		mariadb.WithUsername(probeUser),
+		mariadb.WithPassword(probePassword),
+	)
+	if err != nil {
+		t.Fatalf("start mariadb:%s: %v", version, err)
+	}
+	testcontainers.CleanupContainer(t, container)
+
+	name, err := container.Name(t.Context())
+	if err != nil {
+		t.Fatalf("container name: %v", err)
+	}
+
+	return strings.TrimPrefix(name, "/")
 }

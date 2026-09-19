@@ -6,6 +6,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ExecStrategy dumps through the container of the database. It is the only
+// strategy § 5.2 F2.9 defines, and it is declared per database — never
+// globally, because it hands koffr the Docker socket (E-046).
+const ExecStrategy = "exec"
+
 // Tools says where the dump tool of a database comes from. The specification
 // § 5.1 writes it two ways: the word "auto", or a mapping that names an
 // explicit strategy.

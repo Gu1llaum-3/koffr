@@ -249,14 +249,14 @@ Exigences : `E-034`, `E-104a`, et `doctor` de `E-103a`. La commande la plus impo
 
 Exigences : `E-046`, et le troisième tiers de `E-013`.
 
-- [ ] **5.1** Test d'abord `internal/engine/exec_test.go` — la stratégie `exec` énumère l'outil
+- [x] **5.1** Test d'abord `internal/engine/exec_test.go` — la stratégie `exec` énumère l'outil
       **dans le conteneur de la base**, et sa version est obtenue en l'exécutant **là**.
-- [ ] **5.2** Test — sans socket Docket accessible, l'échec **nomme** le socket attendu ; la
+- [x] **5.2** Test — sans socket Docket accessible, l'échec **nomme** le socket attendu ; la
       stratégie n'est jamais activée globalement, seulement par base (`E-046`).
-- [ ] **5.3** Test — une base déclarant `strategy: exec` sans `container` est refusée **à la
+- [x] **5.3** Test — une base déclarant `strategy: exec` sans `container` est refusée **à la
       validation de configuration**, pas au premier job.
-- [ ] **5.4** Règle `RSV-10` dans `rules.md`.
-- [ ] **5.5** Vague verte : `verify`, commit `feat(engine): resolve a tool inside the database container`.
+- [x] **5.4** Règle `RSV-10` dans `rules.md`.
+- [x] **5.5** Vague verte : `verify`, commit `feat(engine): resolve a tool inside the database container`.
 
 ### Vague 6 — Installation gérée (`lot1/wave-6-managed-tools`) — **BLOQUÉE**
 
@@ -323,6 +323,28 @@ Sur l'instance de recette, augmentée pour l'occasion :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-19 — vague 5, stratégie `exec`
+
+- `RSV-10` écrite avant le code. `internal/config` refuse désormais `strategy: exec` **sans
+  `container`**, et une stratégie inconnue — `kubectl` par exemple — plutôt que de la traiter en
+  silence comme `auto`. L'échec arrive **à la validation**, pas au premier job.
+- `internal/engine/container.go` : l'outil est cherché **dans** le conteneur et sa version lue en
+  l'exécutant **là**. Vérifié contre un vrai conteneur MariaDB 11.4, provenance `container`.
+- **Sans socket Docker, l'échec nomme le socket** et le conteneur. Aucun repli sur un outil de
+  l'hôte : l'exploitant a demandé celui du conteneur pour une raison (`E-046`).
+- **Lecture d'ADR-0002 à noter** : l'ADR nomme `docker/docker/client`, qui est le chemin de module
+  historique. C'est bien celui-là qui est utilisé (`v28.5.2+incompatible`) ; il tire
+  `github.com/pkg/errors`, archivé mais exigé par le SDK.
+- **Mesure de `E-117`, et elle compte** : le client Docker coûte **+5,7 Mio**. Les trois cibles
+  passent de 4,3 à **10,0 / 9,3 / 9,5 Mio**. Marge restante : **20 Mio**, avant que `internal/state`
+  soit lié (+3,5 Mio mesurés au lot 0) et avant le SDK S3 du lot 4. Le seuil de 30 Mo cesse d'être
+  théorique.
+- **Écart signalé, non codé** : `ContainerFinder` n'est **câblé dans aucune commande**. Les tâches
+  de cette vague ne le demandent pas, et le faire changerait le comportement de `doctor`, qui
+  appartient à la vague 4. Conséquence à annoncer à la recette : la provenance `container`
+  n'apparaît pas encore dans `doctor`. À câbler au lot 2, quand la sauvegarde l'utilisera.
+- `mise run verify` : **0**.
 
 ### 2026-09-19 — vague 4, `doctor` et `config validate`
 

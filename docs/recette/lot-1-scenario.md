@@ -31,6 +31,7 @@ Durée attendue : quarante minutes, préparation des bases non comprise.
 | `koffr tools install` échoue sur macOS | ADR-0011 et `N-7` : le spike ne vaut que pour ELF |
 | `koffr tools list` montre des outils que koffr n'a pas installés | `N-6` : c'est ce qui rend `E-038` observable — l'énumération voit **toutes** les sources |
 | La détection MyISAM n'apparaît nulle part | Elle sert à la politique de tampon, au lot 2 |
+| `doctor` n'affiche jamais la provenance `container` | La stratégie `exec` est implémentée et testée, mais n'est câblée dans aucune commande : elle le sera au lot 2, quand la sauvegarde l'utilisera |
 
 ## Parcours
 
