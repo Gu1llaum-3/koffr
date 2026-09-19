@@ -1,6 +1,7 @@
 # Plan lot 1 — Diagnostic d'un parc réel
 
-> Statut : **validé par le propriétaire le 2026-09-18**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **terminé le 2026-09-19**. Six vagues mergées, `verify` et CI verts sur `main`.
+> Reste la recette (`docs/recette/lot-1-scenario.md`), puis `/cloturer-lot`. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 C'est le `L0` du cahier des charges : aucune sauvegarde, et c'est voulu. Le lot valide la thèse
