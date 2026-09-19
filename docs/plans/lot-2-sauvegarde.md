@@ -120,6 +120,13 @@ Constaté dans le code, pas supposé.
   réserve à `internal/config` — et `scripts/check-age-interop.sh` exécute `age` par-dessus.
   Sauté bruyamment sans `age`, **exigé en CI** par `KOFFR_REQUIRE_AGE=1`. *Exclut* : prouver
   `E-075` avec notre propre bibliothèque, ce qui ne prouverait qu'un aller-retour.
+- **N-9 (2026-09-19) — les garanties du pipeline sont des règles de `backup`, pas d'un code `PIP`.**
+  *Constat* : la tâche `2.5` écrit « `rules.md` du pipeline » et invente un code `PIP`. Or ADR-0010
+  fait de `internal/pipeline` un **adaptateur**, et `ARCHITECTURE.md` ne déclare pas de code `PIP` :
+  les codes existants sont `CFG`, `RSV`, `BKP`, `VRF`, `CAT`, `RET`, `RST`, `SCH`, `ALR`, `CRY`,
+  `UPL`. *Correction* : les trois règles deviennent **`BKP-07`, `BKP-08` et `BKP-09`** dans
+  `internal/domain/backup/rules.md`, `BKP-01` à `BKP-06` restant à la vague 5 comme prévu.
+  *Exclut* : un `rules.md` dans un adaptateur, et un douzième préfixe de registre non déclaré.
 - **N-7 L'empreinte `sha256_raw` est celle du flux *avant* compression, `sha256_stored` celle de ce
   qui est écrit.** *Raison* : le manifeste du § 5.3 porte les deux, et seule la seconde se vérifie
   sans déchiffrer. *Exclut* : une seule empreinte, qui rendrait `E-062` impossible au lot 3.
@@ -151,17 +158,17 @@ Exigences : `E-072` à `E-076`, `E-132`, et `keygen` de `E-103b`. L'inconnue d'a
 
 Exigences : `E-025`, et la moitié de `E-024`.
 
-- [ ] **2.1** Test d'abord `internal/pipeline/pipeline_test.go` — **le dump brut n'est jamais
+- [x] **2.1** Test d'abord `internal/pipeline/pipeline_test.go` — **le dump brut n'est jamais
       matérialisé** : un flux d'entrée de taille connue traverse zstd, `age` et l'empreinte **en une
       passe**, et la mémoire retenue reste bornée quelle que soit l'entrée.
-- [ ] **2.2** Test — les **deux** empreintes sont calculées au vol : `sha256_raw` avant
+- [x] **2.2** Test — les **deux** empreintes sont calculées au vol : `sha256_raw` avant
       compression, `sha256_stored` sur ce qui sort (`N-7`).
-- [ ] **2.3** Test — une erreur **au milieu** du flux — dump interrompu, disque plein — remonte
+- [x] **2.3** Test — une erreur **au milieu** du flux — dump interrompu, disque plein — remonte
       **typée**, et rien d'incomplet n'est laissé derrière.
-- [ ] **2.4** Test — la compression est `zstd:3` par défaut et réglable (`N-4`).
-- [ ] **2.5** `rules.md` du pipeline : **`PIP-01`** (une seule passe), **`PIP-02`** (deux
+- [x] **2.4** Test — la compression est `zstd:3` par défaut et réglable (`N-4`).
+- [x] **2.5** `rules.md` du pipeline : **`PIP-01`** (une seule passe), **`PIP-02`** (deux
       empreintes), **`PIP-03`** (erreur en cours de flux).
-- [ ] **2.6** Vague verte : `verify`, commit `feat(pipeline): stream a dump through zstd, age and two checksums`.
+- [x] **2.6** Vague verte : `verify`, commit `feat(pipeline): stream a dump through zstd, age and two checksums`.
 
 ### Vague 3 — Écrire quelque part (`lot2/wave-3-filesystem-store`)
 
@@ -293,3 +300,22 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   § 11 dit « obligatoires », `E-132` dit « avertissement » ; c'est la seconde lecture qui est
   retenue, et la recette tranchera (parcours 2).
 - `mise run verify` : **0**, `mise run interop` : **0** sur l'instance.
+
+### 2026-09-19 — vague 2, la chaîne en flux
+
+- `pipeline.Run` enchaîne dump → zstd → `age` → destination, **en une passe**, avec les deux
+  empreintes calculées au vol. L'ordre est celui du § 4.1 : compresser **puis** chiffrer — l'inverse
+  compresserait des octets d'apparence aléatoire et ne gagnerait rien.
+- **`N-9` ajoutée** : le plan demandait un `rules.md` pour `pipeline` et inventait un code `PIP`. Or
+  ADR-0010 en fait un adaptateur et `ARCHITECTURE.md` ne déclare pas ce préfixe. Les règles sont
+  devenues **`BKP-07` à `BKP-09`** dans `internal/domain/backup/rules.md`.
+- **Deux de mes tests mesuraient la mauvaise chose**, et le code était bon : des zéros et des `x`
+  répétés se compressent à presque rien, donc « l'écart entre ce qui est lu et ce qui est sorti »
+  mesurait le taux de compression. Refaits avec `crypto/rand`.
+- **Le détecteur de course a trouvé une vraie course** — dans le test : l'encodeur `zstd` écrit
+  depuis **sa propre goroutine**, et mon test lisait en parallèle le `bytes.Buffer` de destination.
+  Compté par un `atomic`. C'est la première fois que `-race` sert dans ce projet, et il a servi.
+- Les deux pièges sont inscrits en `CLAUDE.md` § Conventions.
+- `BKP-09` vérifiée dans les deux sens : un dump interrompu et un disque plein donnent une erreur
+  typée et **aucune empreinte** — rien qui puisse passer pour une sauvegarde.
+- `mise run verify` : **0**.

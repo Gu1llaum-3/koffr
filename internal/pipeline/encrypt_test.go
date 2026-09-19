@@ -2,8 +2,10 @@ package pipeline_test
 
 import (
 	"bytes"
+	"crypto/rand"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"filippo.io/age"
@@ -23,12 +25,14 @@ func TestCRY03NothingIsMaterialised(t *testing.T) {
 
 	var written bytes.Buffer
 
-	encrypt, err := pipeline.Encrypt(&written, recipients)
+	counted := &writtenCounter{into: &written}
+
+	encrypt, err := pipeline.Encrypt(counted, recipients)
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
 
-	source := &pacedReader{remaining: size, t: t, sink: &written}
+	source := &pacedReader{remaining: size, t: t, sink: counted}
 	if _, err := io.Copy(encrypt, source); err != nil {
 		t.Fatalf("copy: %v", err)
 	}
@@ -133,12 +137,37 @@ func pair(t *testing.T) crypto.Recipients {
 }
 
 // pacedReader hands out bytes and watches how far ahead of the output it gets.
+//
+// The output is counted by an atomic rather than read from a bytes.Buffer: the
+// zstd encoder writes from a goroutine of its own, so reading the buffer's
+// length from here is a data race — the detector says so, and it is right.
 type pacedReader struct {
 	remaining     int
 	peakUnwritten int
 	read          int
 	t             *testing.T
-	sink          *bytes.Buffer
+	sink          *writtenCounter
+
+	// random fills what it hands out, so that compression cannot hide how far
+	// ahead of the output the reader is being drained.
+	random bool
+}
+
+// writtenCounter counts what a writer received, safely across goroutines.
+type writtenCounter struct {
+	into  io.Writer
+	total atomic.Int64
+}
+
+func (w *writtenCounter) Write(p []byte) (int, error) {
+	n, err := w.into.Write(p)
+	w.total.Add(int64(n))
+
+	return n, err //nolint:wrapcheck // a pass-through of the wrapped writer
+}
+
+func (w *writtenCounter) Len() int64 {
+	return w.total.Load()
 }
 
 func (p *pacedReader) Read(into []byte) (int, error) {
@@ -147,10 +176,15 @@ func (p *pacedReader) Read(into []byte) (int, error) {
 	}
 
 	n := min(len(into), p.remaining)
+	if p.random {
+		if _, err := rand.Read(into[:n]); err != nil {
+			p.t.Fatalf("random: %v", err)
+		}
+	}
 	p.remaining -= n
 	p.read += n
 
-	if ahead := p.read - p.sink.Len(); ahead > p.peakUnwritten {
+	if ahead := p.read - int(p.sink.Len()); ahead > p.peakUnwritten {
 		p.peakUnwritten = ahead
 	}
 
