@@ -349,6 +349,15 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   erp-eteinte: the server did not answer: dial tcp 127.0.0.1:53306: connect: connection refused
   ```
   Code de retour **1**, comme `4.4` le demande.
+- **La CI a échoué après le merge, et j'avais mergé quand même.** Deux fautes distinctes :
+  1. **Le code.** `Diagnose` itérait une **map**, donc l'ordre des diagnostics était aléatoire :
+     `config validate` rendait un premier échec différent à chaque appel. Corrigé — `Diagnose`
+     prend une **liste** `[]Subject` et répond **dans l'ordre de la configuration**, celui que
+     l'exploitant a écrit. Vérifié 20 fois de suite.
+  2. **Mon geste.** Mon enchaînement de commandes plaçait `echo "CI = $?"` **avant** le `&&` du
+     merge : `echo` réussit toujours, donc le merge partait quel que soit le résultat de la CI.
+     C'est la deuxième fois dans ce projet ; le garde-fou est d'enchaîner le merge **directement**
+     sur `gh run watch --exit-status`, sans rien entre les deux.
 - `mise run verify` : **0**.
 
 ### 2026-09-19 — vague 3, matrice de compatibilité et choix

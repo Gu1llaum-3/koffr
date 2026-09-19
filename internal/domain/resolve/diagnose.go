@@ -26,17 +26,27 @@ func (d Diagnosis) Healthy() bool {
 	return d.Unreachable == nil && d.NoTool == nil
 }
 
+// Subject is one database to diagnose, with the identifier its operator gave
+// it. A slice rather than a map on purpose: the configuration has an order, and
+// a diagnosis that comes back shuffled is a diagnosis nobody can compare to the
+// last one — or to the file they wrote.
+type Subject struct {
+	ID     string
+	Target Target
+}
+
 // Diagnose walks a fleet and reports on every database, including the ones that
 // did not answer. It never stops at the first problem: a diagnosis that hides
-// the second failure is worth half of nothing.
+// the second failure is worth half of nothing. The order of the answers is the
+// order of the subjects.
 //
 // It opens no connection and runs no binary of its own: the probe and the
 // finder do, and they are ports (AR-01).
-func Diagnose(ctx context.Context, probe ServerProbe, finder ToolFinder, targets map[string]Target) []Diagnosis {
-	diagnoses := make([]Diagnosis, 0, len(targets))
+func Diagnose(ctx context.Context, probe ServerProbe, finder ToolFinder, subjects []Subject) []Diagnosis {
+	diagnoses := make([]Diagnosis, 0, len(subjects))
 
-	for id, target := range targets {
-		diagnoses = append(diagnoses, diagnoseOne(ctx, probe, finder, id, target))
+	for _, subject := range subjects {
+		diagnoses = append(diagnoses, diagnoseOne(ctx, probe, finder, subject.ID, subject.Target))
 	}
 
 	return diagnoses
