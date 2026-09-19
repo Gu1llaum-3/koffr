@@ -77,6 +77,10 @@ func (f *ContainerFinder) FindIn(ctx context.Context, name string, family resolv
 			continue
 		}
 
+		if !announcesItself(announced, binary) {
+			continue
+		}
+
 		toolFamily, named := toolFamily(announced)
 		if !named {
 			continue

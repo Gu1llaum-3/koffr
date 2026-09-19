@@ -320,11 +320,20 @@ func (f *Finder) run(ctx context.Context, path string, info os.FileInfo) cached 
 		return unusable
 	}
 
+	// A tool announcing its version says its own name first:
+	//   pg_dump (PostgreSQL) 18.6
+	//   mariadb-dump from 11.8.6-MariaDB, client 10.19
+	//   mysqldump  Ver 8.4.11 for Linux
+	// An error does not. Looking for a family marker anywhere in the answer is
+	// not enough: the wrapper's own failure quotes the path
+	// /usr/share/postgresql-common/pg_wrapper, which contains "postgresql"
+	// (A-09, seen twice on the acceptance instance).
+	if !announcesItself(announced, path) {
+		return unusable
+	}
+
 	family, named := toolFamily(announced)
 	if !named {
-		// The answer contains a number and nothing that says what answered.
-		// That is how "at ... line 153" became a version 153.0 (A-09): a
-		// candidate koffr cannot identify is dropped, never guessed at.
 		return unusable
 	}
 
@@ -335,6 +344,15 @@ func (f *Finder) run(ctx context.Context, path string, info os.FileInfo) cached 
 		version:  version,
 		usable:   true,
 	}
+}
+
+// announcesItself reports whether the answer begins with the name koffr
+// invoked. That is what tells a version line from anything else a binary may
+// print when it is unhappy.
+func announcesItself(announced, path string) bool {
+	first, _, _ := strings.Cut(strings.TrimSpace(announced), " ")
+
+	return strings.Contains(strings.ToLower(first), strings.ToLower(filepath.Base(path)))
 }
 
 // toolFamily reads the family out of what the tool said about **itself**, and

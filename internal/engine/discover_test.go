@@ -326,10 +326,15 @@ func discoverWith(t *testing.T, options engine.FinderOptions, family resolve.Fam
 // dropped unless its answer **names the tool or its family**.
 func TestACandidateThatNamesNothingIsDropped(t *testing.T) {
 	refused := []string{
+		// The exact answer the acceptance instance produced. Note that it
+		// contains the word "postgresql", inside the path of the wrapper:
+		// looking for a family marker anywhere in the answer is not enough.
 		`Can't exec "--version": No such file or directory at /usr/share/postgresql-common/pg_wrapper line 153`,
+		"Cannot exec at /usr/share/postgresql-common/pg_wrapper line 153",
 		"error: 42",
 		"Usage: foo [options]",
 		"1.2.3",
+		"bash: pg_dump: command not found",
 	}
 
 	for _, answer := range refused {
