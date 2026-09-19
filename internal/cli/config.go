@@ -89,7 +89,10 @@ func reachEverything(cmd *cobra.Command, parsed *config.Config, searchPath []str
 		return err
 	}
 
-	for _, diagnosis := range resolve.Diagnose(cmd.Context(), engine.New(), finderFor(cmd, searchPath), targets) {
+	diagnoses := resolve.Diagnose(cmd.Context(), engine.New(),
+		finderFor(cmd, searchPath), containerFinder(), targets)
+
+	for _, diagnosis := range diagnoses {
 		switch {
 		case diagnosis.Unreachable != nil:
 			return fmt.Errorf("database %s: %w", diagnosis.ID, diagnosis.Unreachable)

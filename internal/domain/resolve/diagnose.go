@@ -1,6 +1,9 @@
 package resolve
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Diagnosis is what koffr knows about one database before anything goes wrong.
 // § 5.12 makes this the point of doctor: today an operator discovers these
@@ -33,6 +36,12 @@ func (d Diagnosis) Healthy() bool {
 type Subject struct {
 	ID     string
 	Target Target
+
+	// Container, when set, means this database resolves its tool **inside**
+	// that container rather than on the host — the exec strategy, declared per
+	// database (E-046). A database that names one never falls back on a host
+	// tool: the operator asked for the container's for a reason.
+	Container string
 }
 
 // Diagnose walks a fleet and reports on every database, including the ones that
@@ -42,20 +51,61 @@ type Subject struct {
 //
 // It opens no connection and runs no binary of its own: the probe and the
 // finder do, and they are ports (AR-01).
-func Diagnose(ctx context.Context, probe ServerProbe, finder ToolFinder, subjects []Subject) []Diagnosis {
+func Diagnose(
+	ctx context.Context,
+	probe ServerProbe,
+	onHost ToolFinder,
+	inContainer ContainerToolFinder,
+	subjects []Subject,
+) []Diagnosis {
 	diagnoses := make([]Diagnosis, 0, len(subjects))
 
 	for _, subject := range subjects {
-		diagnoses = append(diagnoses, diagnoseOne(ctx, probe, finder, subject.ID, subject.Target))
+		diagnoses = append(diagnoses, diagnoseOne(ctx, probe, onHost, inContainer, subject))
 	}
 
 	return diagnoses
 }
 
-func diagnoseOne(ctx context.Context, probe ServerProbe, finder ToolFinder, id string, target Target) Diagnosis {
-	diagnosis := Diagnosis{ID: id, Target: target}
+// candidatesFor asks the source this database declared, and only that one. A
+// database on the exec strategy whose container does not answer gets a failure
+// naming the container, never a host tool nobody asked for (E-046, N-4).
+func candidatesFor(
+	ctx context.Context,
+	onHost ToolFinder,
+	inContainer ContainerToolFinder,
+	subject Subject,
+	family Family,
+) ([]Candidate, error) {
+	if subject.Container == "" {
+		found, err := onHost.Find(ctx, family, Dump)
+		if err != nil {
+			return nil, fmt.Errorf("look for a %s tool on the host: %w", family, err)
+		}
 
-	server, err := probe.Probe(ctx, target)
+		return found, nil
+	}
+
+	found, err := inContainer.FindIn(ctx, subject.Container, family, Dump)
+	if err != nil {
+		// The container is named here so that the failure says which one, and
+		// so that nobody mistakes it for an absence of tools on the host.
+		return nil, fmt.Errorf("look for a %s tool in the container %s: %w", family, subject.Container, err)
+	}
+
+	return found, nil
+}
+
+func diagnoseOne(
+	ctx context.Context,
+	probe ServerProbe,
+	onHost ToolFinder,
+	inContainer ContainerToolFinder,
+	subject Subject,
+) Diagnosis {
+	diagnosis := Diagnosis{ID: subject.ID, Target: subject.Target}
+
+	server, err := probe.Probe(ctx, subject.Target)
 	if err != nil {
 		diagnosis.Unreachable = err
 
@@ -65,7 +115,7 @@ func diagnoseOne(ctx context.Context, probe ServerProbe, finder ToolFinder, id s
 	}
 	diagnosis.Server = server
 
-	candidates, err := finder.Find(ctx, server.Family, Dump)
+	candidates, err := candidatesFor(ctx, onHost, inContainer, subject, server.Family)
 	if err != nil {
 		diagnosis.NoTool = err
 
