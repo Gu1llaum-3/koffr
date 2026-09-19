@@ -113,10 +113,10 @@ func compare(a, b Version) int {
 	return a.Patch - b.Patch
 }
 
-// noCompatibleTool builds the message E-042 describes: the version expected,
-// the versions found, and the exact command that fixes it. The text is the
-// requirement, not decoration around it — an operator pastes this into a
-// search engine or a ticket.
+// noCompatibleTool builds the message an operator reads when nothing can do the
+// job: what koffr expected, and what it found instead. It stops there — the
+// managed install is out of the MVP (ADR-0014), so koffr has no command to
+// offer, and installing a client is a prerequisite the README carries.
 func noCompatibleTool(candidates []Candidate, reference ServerInfo, tool Tool) error {
 	found := "none"
 	if versions := versionsOf(candidates); versions != "" {
@@ -124,12 +124,11 @@ func noCompatibleTool(candidates []Candidate, reference ServerInfo, tool Tool) e
 	}
 
 	return fmt.Errorf(
-		"%w to %s %s %s: expected a %s tool of version %d or later, found %s. Install one with: koffr tools install %s %d",
+		"%w to %s %s %s: expected a %s client of version %d or later, found %s",
 		ErrNoCompatibleTool,
 		tool, reference.Family, reference.Version,
 		reference.Family, reference.Version.Major,
 		found,
-		reference.Family, reference.Version.Major,
 	)
 }
 

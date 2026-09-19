@@ -150,9 +150,10 @@ func TestRSV08ProvenanceOnlyBreaksTies(t *testing.T) {
 	}
 }
 
-// RSV-09 — an impossible resolution is a message an operator can act on: the
-// version expected, what was found, and the command that fixes it. E-042 makes
-// the text part of the requirement, so the test spells it out.
+// RSV-09 — an impossible resolution says what koffr expected and what it found,
+// and never promises a command koffr does not have. The managed install is out
+// of the MVP (ADR-0014): installing a client is a prerequisite the README
+// carries, not something koffr does.
 func TestRSV09AnImpossibleResolutionSaysWhatToDo(t *testing.T) {
 	server := resolve.ServerInfo{Family: resolve.PostgreSQL, Version: resolve.ParseVersion("17.2"), Reachable: true}
 
@@ -168,17 +169,24 @@ func TestRSV09AnImpossibleResolutionSaysWhatToDo(t *testing.T) {
 
 	message := err.Error()
 	for _, want := range []string{
-		"17",                                // the version expected
-		"15.4",                              // what was found
-		"koffr tools install postgresql 17", // the exact command
+		"postgresql", // the family
+		"17",         // the version expected
+		"15.4",       // what was found
+		"host",       // and where it came from
 	} {
 		if !strings.Contains(message, want) {
 			t.Errorf("the message does not give %q:\n%s", want, message)
 		}
 	}
+
+	// ADR-0014 — koffr has no managed install, so it does not send an operator
+	// to a command it does not have.
+	if strings.Contains(message, "tools install") {
+		t.Errorf("the message promises a command that does not exist:\n%s", message)
+	}
 }
 
-// And with nothing at all found, the message still says what to install.
+// And with nothing at all found, the message still says what was expected.
 func TestRSV09NothingFoundAlsoSaysWhatToDo(t *testing.T) {
 	server := resolve.ServerInfo{Family: resolve.MariaDB, Version: resolve.ParseVersion("11.4.8"), Reachable: true}
 
@@ -186,7 +194,7 @@ func TestRSV09NothingFoundAlsoSaysWhatToDo(t *testing.T) {
 	if !errors.Is(err, resolve.ErrNoCompatibleTool) {
 		t.Fatalf("got %v, want %v", err, resolve.ErrNoCompatibleTool)
 	}
-	for _, want := range []string{"11.4", "none", "koffr tools install mariadb 11"} {
+	for _, want := range []string{"mariadb", "11", "none"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the message does not give %q:\n%s", want, err.Error())
 		}
