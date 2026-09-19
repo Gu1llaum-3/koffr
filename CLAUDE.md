@@ -115,6 +115,13 @@ déjà.
   un exploitant compare deux relevés, et une différence qui bouge toute seule ne se lit pas. Un
   parcours de `map` n'est **jamais** la source d'une sortie — Go randomise l'ordre, et le défaut ne
   se voit qu'en CI.
+- **L'encodeur `zstd` écrit depuis sa propre goroutine.** Le `io.Writer` qu'on lui donne est appelé
+  ailleurs que dans la goroutine qui appelle `Write` : un test qui lit en parallèle un
+  `bytes.Buffer` de destination est une **course**, et le détecteur la voit. Compter par un
+  `atomic`, pas par `Buffer.Len()`.
+- **Un test de compression doit utiliser des données incompressibles.** Des zéros ou un caractère
+  répété se réduisent à presque rien : on croit mesurer une mise en tampon et on mesure un taux de
+  compression. `crypto/rand` pour ce qui doit traverser.
 - **Sur Debian et Ubuntu, `/usr/bin/pg_dump` est un lien vers `pg_wrapper`**, qui choisit la version
   à lancer d'après son `argv[0]`. Résoudre le lien avant d'exécuter lui retire cette information :
   il répond `Can't exec "--version" … line 153`. Les liens se résolvent pour **dédupliquer**, jamais
