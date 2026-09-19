@@ -210,21 +210,21 @@ Exigences : `E-013`, `E-038`, `E-039`, et `tools list` de `E-103a`.
 Exigences : `E-007`, `E-040`, `E-042`, `E-047`, `E-048`, `E-049`, `E-050`. Le cœur du lot, et il se
 teste **entièrement sans base** grâce au port de la vague 1.
 
-- [ ] **3.1** Test d'abord `internal/domain/resolve/matrix_test.go` — les quatre règles de la
+- [x] **3.1** Test d'abord `internal/domain/resolve/matrix_test.go` — les quatre règles de la
       matrice, chacune avec son cas nominal, sa limite et son cas d'erreur : `E-047`, `E-048`,
       `E-050`, et `E-049` qui **signale sans bloquer**.
-- [ ] **3.2** Test — **le piège du § 5.2** : hôte en 14, base en 16, outil géré en 16 → **le 16 est
+- [x] **3.2** Test — **le piège du § 5.2** : hôte en 14, base en 16, outil géré en 16 → **le 16 est
       choisi**. La provenance ne départage que des candidats **également compatibles**, dans l'ordre
       hôte, géré, conteneur (`E-040`).
-- [ ] **3.3** Test — « la version la plus proche par le haut » : avec 16, 17 et 18 disponibles pour
+- [x] **3.3** Test — « la version la plus proche par le haut » : avec 16, 17 et 18 disponibles pour
       un serveur en 16, c'est **16** qui est retenu, pas 18.
-- [ ] **3.4** Test — **jamais de famille croisée** (`E-041`) : un `mysqldump` d'Oracle face à une
+- [x] **3.4** Test — **jamais de famille croisée** (`E-041`) : un `mysqldump` d'Oracle face à une
       MariaDB est écarté **même s'il est le seul candidat**, et l'échec le dit.
-- [ ] **3.5** Test — sans candidat compatible, l'erreur nomme **la version attendue, les versions
+- [x] **3.5** Test — sans candidat compatible, l'erreur nomme **la version attendue, les versions
       trouvées et la commande exacte** (`E-042`, `E-007`). Le texte fait partie de la règle : le test
       l'épelle.
-- [ ] **3.6** Règles `RSV-04` à `RSV-09` dans `rules.md`, avec leur source.
-- [ ] **3.7** Vague verte : `verify`, commit `feat(resolve): pick the closest compatible tool, never a crossed family`.
+- [x] **3.6** Règles `RSV-04` à `RSV-09` dans `rules.md`, avec leur source.
+- [x] **3.7** Vague verte : `verify`, commit `feat(resolve): pick the closest compatible tool, never a crossed family`.
 
 ### Vague 4 — `doctor` et `config validate` (`lot1/wave-4-doctor`)
 
@@ -323,6 +323,27 @@ Sur l'instance de recette, augmentée pour l'occasion :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-19 — vague 3, matrice de compatibilité et choix
+
+- `RSV-04` à `RSV-09` écrites **avant** le code. Le cœur du lot tient en 150 lignes de domaine et
+  se teste **sans une seule base** — c'est ce que le port de la vague 1 achetait.
+- **Le piège du § 5.2 est un test** : hôte en 14, base en 16, géré en 16 → le **16** est choisi.
+  À versions égales, et seulement là, la provenance départage : hôte, géré, conteneur.
+- **« La plus proche par le haut »** vérifié : avec 16, 17 et 18 pour un serveur en 16, c'est le
+  **16** qui sort, pas le 18.
+- **Les familles ne se croisent dans aucun sens** : `mysqldump` d'Oracle refusé pour MariaDB,
+  `mariadb-dump` refusé pour MySQL, **même seul candidat**. Côté MySQL la comparaison porte sur la
+  version complète, pas la majeure : un client 10.6 ne parle pas pour un serveur 10.11.
+- **`E-049` signale sans bloquer** : restaurer une archive 17 vers une cible 16 produit un
+  avertissement qui nomme les deux versions, et rien de plus.
+- Message d'`E-042` obtenu, tel qu'un exploitant le lira :
+  `no compatible tool to dump postgresql 17.2: expected a postgresql tool of version 17 or later,`
+  `found postgresql 15.4 (host), postgresql 14.11 (host). Install one with: koffr tools install postgresql 17`
+- **Une écriture du journal a échoué en silence** au premier essai (ancre introuvable) : le plan
+  n'avait **ni cases cochées ni journal**, alors que le commit était fait. Vérifier le fichier
+  après l'avoir modifié, pas seulement le code de retour du commit.
+- `mise run verify` : **0**.
 
 ### 2026-09-18 — vague 1, sondes des moteurs
 
