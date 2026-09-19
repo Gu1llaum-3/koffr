@@ -31,7 +31,7 @@ Durée attendue : quarante minutes, préparation des bases non comprise.
 | `koffr tools install` échoue sur macOS | ADR-0011 et `N-7` : le spike ne vaut que pour ELF |
 | `koffr tools list` montre des outils que koffr n'a pas installés | `N-6` : c'est ce qui rend `E-038` observable — l'énumération voit **toutes** les sources |
 | La détection MyISAM n'apparaît nulle part | Elle sert à la politique de tampon, au lot 2 |
-| `doctor` n'affiche jamais la provenance `container` | La stratégie `exec` est implémentée et testée, mais n'est câblée dans aucune commande : elle le sera au lot 2, quand la sauvegarde l'utilisera |
+| Une machine ne peut pas porter les clients MySQL **et** MariaDB | C'est la distribution qui l'interdit, pas koffr (`A-10`, ADR-0015). La stratégie `exec` est la réponse |
 
 ## Parcours
 
@@ -76,10 +76,15 @@ Le cahier des charges nomme ce bug parce que les outils concurrents le font.
 
 ### 4. Les familles ne se croisent jamais
 
-1. Sur une machine où seul `mysqldump` d'Oracle est présent, viser la **MariaDB** → **on doit voir**
-   un échec qui nomme la famille attendue. Un repli sur l'outil de l'autre famille est **bloquant**.
-2. Inversement, `mariadb-dump` seul face à la **MySQL** → même refus.
-3. Vérifier que la famille n'est **écrite nulle part** dans `koffr.yaml` : elle est détectée à la
+1. Installer les deux clients — `apt install mariadb-client mysql-client` → **on doit voir** `apt`
+   **refuser** : `mariadb-client-core : Conflicts: virtual-mysql-client-core`. C'est la contrainte
+   de la distribution, pas un défaut de koffr (ADR-0015), et le `README` la documente.
+2. Garder le client MariaDB, qui fournit aussi un `/usr/bin/mysqldump`, et viser la base **MySQL**
+   → **on doit voir** koffr **refuser** cet outil et répondre qu'il n'en a trouvé aucun. Un repli
+   sur l'outil de l'autre famille serait **bloquant**.
+3. Déclarer la base MySQL en `tools: { strategy: exec, container: … }` → **on doit voir** `doctor`
+   annoncer l'outil du conteneur, provenance `container`. C'est la sortie que désigne ADR-0015.
+4. Vérifier que la famille n'est **écrite nulle part** dans `koffr.yaml` : elle est détectée à la
    connexion (`E-041`).
 
 **Décision attendue** : aucune. C'est le critère de sortie n° 6.
@@ -114,7 +119,8 @@ faut-il que l'un renvoie à l'autre ?
 ### 7. La stratégie `exec`
 
 1. Déclarer une base avec `tools: {strategy: exec, container: <nom>}` → **on doit voir** `doctor`
-   annoncer l'outil trouvé **dans le conteneur**, avec la provenance `container`.
+   annoncer l'outil trouvé **dans le conteneur**, avec la provenance `container` **et la version du
+   serveur de ce conteneur**.
 2. Arrêter le socket Docker et relancer → **on doit voir** un échec qui **nomme le socket attendu**.
 3. Déclarer `strategy: exec` **sans** `container` → **on doit voir** le refus **à la validation de
    configuration**, pas au premier job.
