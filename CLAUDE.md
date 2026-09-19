@@ -111,6 +111,17 @@ déjà.
   `DOCKER_HOST`, **et** `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock` : le réapeur
   monte le socket **dans** un conteneur, et c'est le chemin vu de l'intérieur de la machine
   virtuelle qui compte. Sans la seconde, l'échec parle d'un `mkdir` sur le socket.
+- **Ce qu'une commande affiche est ordonné.** Deux exécutions identiques donnent la même sortie :
+  un exploitant compare deux relevés, et une différence qui bouge toute seule ne se lit pas. Un
+  parcours de `map` n'est **jamais** la source d'une sortie — Go randomise l'ordre, et le défaut ne
+  se voit qu'en CI.
+- **Sur Debian et Ubuntu, `/usr/bin/pg_dump` est un lien vers `pg_wrapper`**, qui choisit la version
+  à lancer d'après son `argv[0]`. Résoudre le lien avant d'exécuter lui retire cette information :
+  il répond `Can't exec "--version" … line 153`. Les liens se résolvent pour **dédupliquer**, jamais
+  pour exécuter.
+- **Les clients MySQL et MariaDB ne peuvent pas coexister** sur Debian et Ubuntu
+  (`Conflicts: virtual-mysql-client-core`) : installer l'un supprime l'autre, et `mysqldump`
+  appartient alors à celui qui reste. Un parc mixte passe par la stratégie `exec` (ADR-0015).
 - **Vérifier la version courante d'une action ou d'un outil avant de l'épingler.** Ce que le modèle
   « connaît » date de son entraînement : `actions/checkout@v5` et `jdx/mise-action@v3` étaient
   périmées (v7 et v4). Une requête à l'API du dépôt coûte deux secondes.

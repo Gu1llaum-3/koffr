@@ -35,7 +35,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | --- | --- | --- | --- | --- | --- | --- |
 | E-005 | Toute fonction du produit — planification, chiffrement, vérification, rétention, restauration, alerte, consultation — est utilisable sans serveur central. | § 2 `P1` | contrainte | doit | 8 | à faire |
 | E-006 | Aucun identifiant de base, aucune clé de stockage, aucune clé de chiffrement ne transite vers le serveur central ni n'y est stocké ; son seul pouvoir d'écriture est la modification d'un planning, validée par l'agent contre ses propres garde-fous. | § 2 `P2`, § 6.1 | sécurité | doit | 8 | à faire |
-| E-007 | La version de l'outil de dump est vérifiée en l'exécutant, jamais déduite d'un chemin ; à défaut d'outil compatible, le job échoue avec un message actionnable plutôt que de produire une archive douteuse. | § 2 `P3` | technique | doit | 1 | à faire |
+| E-007 | La version de l'outil de dump est vérifiée en l'exécutant, jamais déduite d'un chemin ; à défaut d'outil compatible, le job échoue avec un message actionnable plutôt que de produire une archive douteuse. | § 2 `P3` | technique | doit | 1 | couverte (`RSV-02`, `RSV-09`) — version prouvée en exécutant, échec plutôt qu'archive douteuse |
 | E-008 | Une archive n'est marquée valide qu'après contrôle d'intégrité **et** vérification qu'elle est structurellement relisible ; une sauvegarde non vérifiée est signalée comme telle dans l'interface. | § 2 `P4` | fonctionnel | doit | 3 | à faire |
 | E-009 | Le produit ne dépend d'aucun service tiers (ni Redis, ni base externe, ni runtime) : l'état tient dans un fichier SQLite et le binaire est statique, compilé sans CGO. | § 2 `P5`, `N3` | technique | doit | 0 | couverte (`mise run release` : aucun paquet cgo, ELF sans interpréteur ; état SQLite `internal/state`) |
 | E-010 | L'absence de sauvegarde réussie est un événement de premier ordre, au même titre qu'un échec. | § 2 `P6`, § 5.10 | fonctionnel | doit | 6 | à faire |
@@ -44,7 +44,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-011 | Les moteurs supportés sont PostgreSQL 12 à 18, MySQL 8.x et MariaDB 10.6+. | § 3 | contrainte | doit | 1 | à faire (ADR-0004) |
+| E-011 | Les moteurs supportés sont PostgreSQL 12 à 18, MySQL 8.x et MariaDB 10.6+. | § 3 | contrainte | doit | 1 | couverte (ADR-0004) — les trois familles sondées contre de vrais serveurs 16.15, 11.4.13 et 8.4.11 |
 | E-012a | La destination « système de fichiers local » est supportée. | § 3 | contrainte | doit | 2 | à faire |
 | E-012b | Les destinations S3-compatible et SFTP sont supportées. | § 3 | contrainte | doit | 4 | à faire |
 | E-013 | Les sources d'outils de dump supportées sont la détection sur l'hôte, l'installation gérée par l'agent et `docker exec`. | § 3 | contrainte | doit | 1 | couverte pour **deux** des trois sources — hôte (`RSV-01`) et conteneur (`RSV-10`) ; l'installation gérée est reportée (ADR-0014) |
@@ -78,7 +78,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | --- | --- | --- | --- | --- | --- | --- |
 | E-032 | La configuration tient dans un fichier YAML unique analysé strictement : toute clé inconnue est une erreur, jamais un avertissement. | § 5.1 `F1.1` | technique | doit | 0 | couverte (`CFG-01`) |
 | E-033 | Chaque champ sensible accepte trois formes : valeur littérale, `*_env` (variable d'environnement) et `*_file` (fichier, compatible `systemd` credentials et Vault Agent). | § 5.1 `F1.2` | sécurité | doit | 0 | couverte (`CFG-02`, `CFG-03`, `CFG-09`) |
-| E-034 | `keeper config validate` vérifie la syntaxe, la cohérence, la joignabilité des bases et l'existence des outils, sans rien exécuter d'autre. | § 5.1 `F1.3` | fonctionnel | doit | 1 | à faire |
+| E-034 | `keeper config validate` vérifie la syntaxe, la cohérence, la joignabilité des bases et l'existence des outils, sans rien exécuter d'autre. | § 5.1 `F1.3` | fonctionnel | doit | 1 | couverte (`CFG-09`) — `config validate` atteint les bases et les outils |
 | E-035 | La configuration est relue à chaud sur `SIGHUP` et sur changement de mtime ; une configuration invalide est rejetée, l'ancienne conservée, et une alerte émise. | § 5.1 `F1.4`, § 4.3 | fonctionnel | devrait | 5 | en question (Q-12) |
 | E-036 | Le fuseau horaire des plannings est déclaré explicitement dans la configuration, jamais hérité de l'environnement système. | § 5.1 `F1.5` | donnée | doit | 0 | couverte (`CFG-04`) |
 | E-037 | La configuration accepte la forme cible du § 5.1 : sections `agent`, `encryption`, `databases`, `destinations`, `alerts` (`channels`, `rules`) et `server`, avec les clés qui y figurent. | § 5.1 (forme cible) | donnée | doit | 0 | couverte (`CFG-05`, `CFG-10`) ; `Q-04` et `Q-06` **ajouteront** des clés, sans rupture (`N-7`) |
@@ -87,19 +87,19 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-038 | La résolution énumère toutes les sources d'outils sans préférence initiale : chemins système connus par distribution, `PATH`, répertoire géré par l'agent, sortie de `pg_lsclusters` si présente, et conteneur de la base si la stratégie `exec` est autorisée. | § 5.2 `F2.1` | fonctionnel | doit | 1 | à faire |
-| E-039 | La version de chaque candidat est obtenue en l'exécutant (`pg_dump --version`), jamais en interprétant son chemin ; le résultat est mis en cache et invalidé au changement de mtime du binaire. | § 5.2 `F2.2`, `P3` | fonctionnel | doit | 1 | à faire |
-| E-040 | Les candidats sont filtrés par la règle de compatibilité de l'opération demandée, puis c'est la version la plus proche par le haut qui est retenue ; la provenance (hôte, puis outil géré, puis conteneur) ne sert qu'à départager à version égale. | § 5.2 `F2.3` (+ « piège à éviter ») | fonctionnel | doit | 1 | à faire |
-| E-041 | Les familles MySQL et MariaDB ne sont jamais croisées — `mysqldump` pour MySQL, `mariadb-dump` pour MariaDB — et la famille est détectée à la connexion, jamais déduite de la configuration. | § 5.2 `F2.4` | fonctionnel | doit | 1 | à faire |
+| E-038 | La résolution énumère toutes les sources d'outils sans préférence initiale : chemins système connus par distribution, `PATH`, répertoire géré par l'agent, sortie de `pg_lsclusters` si présente, et conteneur de la base si la stratégie `exec` est autorisée. | § 5.2 `F2.1` | fonctionnel | doit | 1 | couverte (`RSV-01`) — quatre sources, sans préférence |
+| E-039 | La version de chaque candidat est obtenue en l'exécutant (`pg_dump --version`), jamais en interprétant son chemin ; le résultat est mis en cache et invalidé au changement de mtime du binaire. | § 5.2 `F2.2`, `P3` | fonctionnel | doit | 1 | couverte (`RSV-02`, `RSV-03`) — version par exécution, cache invalidé au `mtime` |
+| E-040 | Les candidats sont filtrés par la règle de compatibilité de l'opération demandée, puis c'est la version la plus proche par le haut qui est retenue ; la provenance (hôte, puis outil géré, puis conteneur) ne sert qu'à départager à version égale. | § 5.2 `F2.3` (+ « piège à éviter ») | fonctionnel | doit | 1 | couverte (`RSV-08`) — la plus proche par le haut ; la provenance ne départage que les ex æquo |
+| E-041 | Les familles MySQL et MariaDB ne sont jamais croisées — `mysqldump` pour MySQL, `mariadb-dump` pour MariaDB — et la famille est détectée à la connexion, jamais déduite de la configuration. | § 5.2 `F2.4` | fonctionnel | doit | 1 | couverte (`RSV-02`, `RSV-07`) — famille lue du serveur **et** de l'outil ; vérifiée sur un cas réel produit par un conflit de paquets |
 | E-042 | En l'absence de candidat compatible, le job échoue avec un message nommant la version attendue, les versions trouvées et la commande exacte pour corriger ; aucun repli sur un outil incompatible n'est possible. | § 5.2 `F2.5`, `P3` | fonctionnel | doit | 1 | **partiellement couverte** (`RSV-09`) : la version attendue et les versions trouvées y sont, **pas la commande de correction** — koffr n'installe aucun outil (ADR-0014). Les clients sont un prérequis du `README` |
 | E-043 | `keeper tools install` installe un outil à la demande dans `/var/lib/keeper/tools/`, bibliothèques partagées embarquées et `RPATH` ajusté. | § 5.2 `F2.6`, § 11 | fonctionnel | doit | 1 | **reportée** après la mise en service (ADR-0014) — le spike `E-130` reste valable |
 | E-044 | Toute archive d'outil téléchargée est vérifiée contre une empreinte SHA-256 épinglée dans la version de l'agent, et sa signature contrôlée avant première exécution. | § 5.2 `F2.7` | sécurité | doit | 1 | **reportée** avec `E-043` (ADR-0014) ; `Q-15` sans objet |
 | E-045 | L'installation automatique à la découverte d'une version inconnue est désactivée par défaut ; si elle est activée, elle est bornée par une liste blanche de versions et tracée comme événement. | § 5.2 `F2.8` | sécurité | doit | 1 | **reportée** avec `E-043` (ADR-0014) |
-| E-046 | La stratégie `exec` exige le socket Docker et se déclare par base, jamais globalement. | § 5.2 `F2.9` | sécurité | doit | 1 | à faire |
-| E-047 | PostgreSQL, dump : le candidat est compatible si `major(pg_dump) ≥ major(serveur)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | à faire |
-| E-048 | PostgreSQL, restauration : le candidat est compatible si `major(pg_restore) ≥ major(archive)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | à faire |
-| E-049 | PostgreSQL, cible de restauration : `major(cible) ≥ major(origine)` est conseillé ; une restauration descendante est **signalée, jamais bloquée**. | § 5.2 (matrice) | fonctionnel | doit | 1 | à faire |
-| E-050 | MySQL / MariaDB : le candidat est compatible si la famille est identique et si `version(client) ≥ version(serveur)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | à faire |
+| E-046 | La stratégie `exec` exige le socket Docker et se déclare par base, jamais globalement. | § 5.2 `F2.9` | sécurité | doit | 1 | couverte (`RSV-10`) — `exec` par base, socket exigé, refus à la validation sans `container` |
+| E-047 | PostgreSQL, dump : le candidat est compatible si `major(pg_dump) ≥ major(serveur)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | couverte (`RSV-04`) |
+| E-048 | PostgreSQL, restauration : le candidat est compatible si `major(pg_restore) ≥ major(archive)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | couverte (`RSV-05`) |
+| E-049 | PostgreSQL, cible de restauration : `major(cible) ≥ major(origine)` est conseillé ; une restauration descendante est **signalée, jamais bloquée**. | § 5.2 (matrice) | fonctionnel | doit | 1 | couverte (`RSV-06`) — signalée, jamais bloquante ; utilisée au lot 4 |
+| E-050 | MySQL / MariaDB : le candidat est compatible si la famille est identique et si `version(client) ≥ version(serveur)`. | § 5.2 (matrice) | fonctionnel | doit | 1 | couverte (`RSV-07`) |
 
 ## § 5.3 — Sauvegarde (`F3`)
 
@@ -208,7 +208,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | E-103d | La CLI expose `restore <db> --from <backup-id> [--into DSN] [--clean-mode MODE]`, avec `--identity` ajouté par ADR-0007. | § 5.12, ADR-0007 | fonctionnel | doit | 4 | à faire (ADR-0001, ADR-0007) |
 | E-103e | La CLI expose `retention apply [<db>] [--dry-run]` et `serve`. | § 5.12 | fonctionnel | doit | 5 | à faire (ADR-0001) |
 | E-103f | La CLI expose `ui [--listen]`. | § 5.12 | fonctionnel | doit | 7 | à faire (ADR-0001) |
-| E-104a | `doctor` affiche pour chaque base sa joignabilité, la version de son serveur, et l'outil retenu avec sa version et sa provenance. | § 5.12 | fonctionnel | doit | 1 | à faire |
+| E-104a | `doctor` affiche pour chaque base sa joignabilité, la version de son serveur, et l'outil retenu avec sa version et sa provenance. | § 5.12 | fonctionnel | doit | 1 | couverte (`resolve.Diagnose`, `cli/doctor_test.go`) — joignabilité, version du serveur, outil retenu avec version et provenance |
 | E-104b | `doctor` affiche en outre, pour chaque base, le mode de tampon qui sera appliqué, les destinations accessibles, la prochaine exécution et l'état de la dernière sauvegarde. | § 5.12, § 4.5 | fonctionnel | doit | 6 | à faire |
 
 ## § 5.13 — Liaison au serveur central (`F13`)

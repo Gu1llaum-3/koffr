@@ -112,6 +112,10 @@ il n'écrit que ce qui lui est propre.
    le dépôt distant est vide.
 6. **Un échec arrête la vague.** On rapporte, on note l'échec sous la tâche dans le plan, on
    attend. Une tâche ambiguë ou destructrice attend une confirmation.
+6. bis **Un correctif se reproduit avant d'être écrit**, et son test porte la **sortie exacte** de
+   la machine qui a montré le défaut, collée telle quelle. Une approximation du message laisse
+   passer ce qu'on croyait corriger : un message d'erreur contient souvent le mot qu'on cherchait,
+   pour une raison qui n'a rien à voir.
 7. **Une case se coche au moment où la tâche passe**, pas en bloc à la fin.
 8. **Ce qui sort du plan ne se code pas** : une idée va dans `docs/backlog.md`, une inconnue dans
    `docs/questions.md`, un arbitrage dans `docs/decisions.md`. Le plan est amendé par une décision

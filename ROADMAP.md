@@ -14,7 +14,7 @@ périmètre** (§ 3 et § 10 du CDC, reportées dans `docs/backlog.md`). Aucune 
 | --- | ------------------------------------------ | --------- | ------- | ---- | --- |
 | 0   | Squelette, outillage et spike des outils   | 13        | terminé | `docs/plans/lot-0-squelette.md` | 2026-09-18 |
 | 0c  | Corrections de recette du lot 0            | 8 `A-nn` | terminé | `docs/plans/lot-0-corrections.md` | 2026-09-18 |
-| 1   | Diagnostic d'un parc réel                  | 20        | en recette | `docs/plans/lot-1-diagnostic.md` | |
+| 1   | Diagnostic d'un parc réel                  | 20        | terminé | `docs/plans/lot-1-diagnostic.md` | 2026-09-19 |
 | 1c  | Corrections de recette du lot 1            | 3 `A-nn` | terminé | `docs/plans/lot-1-corrections.md` | 2026-09-19 |
 | 2   | Sauvegarder une base vers un fichier chiffré | 20      | à faire | | |
 | 3   | Manifeste, catalogue et vérification       | 11        | à faire | | |

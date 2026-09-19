@@ -46,6 +46,11 @@ ferait tomber — et le vérifier. Deux pièges vus en vrai :
 - le test garde un chemin que **personne n'emprunte** (« aucune connexion sortante » est vrai tant
   que rien n'ouvre de connexion). Câbler le chemin, ou dire que la garde est vide.
 
+**Une règle de lint qu'on assouplit s'accompagne de la garde qui la remplace, le jour même.**
+ADR-0013 a ouvert `database/sql` à `internal/engine` ; `internal/engine/queries_test.go` lit les
+littéraux SQL du paquet et refuse tout ce qui n'est pas la requête de version. Sans cela, on a
+retiré un garde-fou et écrit une phrase à la place.
+
 Le geste : une **fixture violante** quand c'est possible — `internal/arch/testdata/` en contient une
 par règle —, sinon retirer ce que le test vérifie et constater qu'il tombe.
 
@@ -161,6 +166,9 @@ chargement. `internal/httpd` **écoute** ; il n'appelle pas — un appel sortant
 La restauration n'y est pas déclenchable : ADR-0007 la réduit à l'affichage de la commande.
 
 ## Avant de dire « terminé »
+
+**Après avoir modifié un fichier par script, relire le fichier**, pas seulement le code de retour :
+un script d'édition qui échoue à mi-parcours n'écrit rien, et le commit part quand même.
 
 `mise run verify` **vert, code de retour lu** ; la règle est dans `rules.md` avec sa source et le
 nom de son test ; les frontières tiennent (`internal/arch` et le lint) ; la migration est relue ; le
