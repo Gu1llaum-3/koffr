@@ -44,6 +44,27 @@ databases:
 `koffr doctor` tells you, for each database, which tool it would use — and says what is missing when
 there is none.
 
+#### One machine cannot hold both MySQL and MariaDB clients
+
+On Debian, Ubuntu and their derivatives, the two conflict:
+
+```
+mariadb-client-core : Conflicts: virtual-mysql-client-core
+E: Unable to satisfy dependencies.
+```
+
+Installing one removes the other, and `/usr/bin/mysqldump` then belongs to whichever stayed. koffr
+**will not** use MariaDB's tool for a MySQL database, or the reverse — that would produce an archive
+nobody can restore — so on a mixed fleet one of the two is simply unserved.
+
+Three ways out, all of which koffr supports:
+
+- one koffr machine **per family**;
+- host clients for one family, and `tools: { strategy: exec, container: … }` for the other;
+- `exec` for everything, when the databases run in containers.
+
+See ADR-0015.
+
 ## Build
 
 ```sh

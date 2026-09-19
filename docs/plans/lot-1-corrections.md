@@ -1,6 +1,7 @@
 # Plan lot 1 — Corrections de recette
 
-> Statut : **validé par le propriétaire le 2026-09-19**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **terminé le 2026-09-19**. Trois vagues mergées, `verify` et CI verts, scénario rejoué
+> en entier sur l'instance. Reste `/cloturer-lot`. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 Travail transverse issu de la session de recette du lot 1 (2026-09-19, instance Multipass `koffr`,
@@ -132,15 +133,15 @@ Constaté sur l'instance, pas supposé.
 
 ### Vague 3 — Le parc mixte est dit (`lot1/wave-9-mixed-fleet`) — `A-10`
 
-- [ ] **3.1** **ADR-0015** : un parc mixte MySQL et MariaDB sur une même machine exige la stratégie
+- [x] **3.1** **ADR-0015** : un parc mixte MySQL et MariaDB sur une même machine exige la stratégie
       `exec`. Il **borne** ADR-0014 sans le rouvrir, cite le conflit de paquets constaté, et dit ce
       que cela impose à l'image conteneur du lot 7.
-- [ ] **3.2** `README.md` : le conflit de paquets, son message exact, et `exec` comme réponse.
-- [ ] **3.3** `docs/recette/lot-1-scenario.md` : le parcours 4 gagne le cas réel — `mysqldump` qui
+- [x] **3.2** `README.md` : le conflit de paquets, son message exact, et `exec` comme réponse.
+- [x] **3.3** `docs/recette/lot-1-scenario.md` : le parcours 4 gagne le cas réel — `mysqldump` qui
       est celui de MariaDB — et le parcours 7 devient vérifiable.
-- [ ] **3.4** `docs/recette/anomalies.md` : colonne « Corrigée » remplie pour les trois.
-- [ ] **3.5** **Rejouer le scénario entier sur l'instance**, sans contournement. Consigner.
-- [ ] **3.6** Vague verte : `verify`, commit `docs: a mixed MySQL and MariaDB fleet needs the exec strategy`.
+- [x] **3.4** `docs/recette/anomalies.md` : colonne « Corrigée » remplie pour les trois.
+- [x] **3.5** **Rejouer le scénario entier sur l'instance**, sans contournement. Consigner.
+- [x] **3.6** Vague verte : `verify`, commit `docs: a mixed MySQL and MariaDB fleet needs the exec strategy`.
 
 ## Vérification de bout en bout
 
@@ -169,6 +170,23 @@ Sur l'instance de recette, avec son parc réel :
 | Exiger que la réponse nomme l'outil écarte un outil légitime dont la sortie est inhabituelle | On mesure sur les binaires réels de l'instance — PostgreSQL, MariaDB, MySQL — avant de figer la liste des marqueurs. S'il en manque un, c'est une `N-n` datée |
 | Brancher l'énumérateur de conteneurs alourdit la signature de `Diagnose` | Assumé : `E-046` fait de `exec` une décision par base, et le domaine doit pouvoir l'exprimer. Deux ports valent mieux qu'un adaptateur importé |
 | Le rejeu révèle de **nouvelles** anomalies | Elles sont numérotées `A-12` et suivantes, et on décide alors — on ne les corrige pas dans la foulée |
+
+## Résultat
+
+Les **trois** anomalies sont corrigées et **vérifiées sur l'instance**. Critère de sortie :
+
+| # | Critère | État |
+| --- | --- | --- |
+| 1 | `tools list` rapporte `/usr/bin/pg_dump` à sa vraie version, aucun fantôme | ✅ 18.6, six candidats réels |
+| 2 | Une sortie qui ne nomme rien est écartée | ✅ le faux wrapper disparaît de la liste |
+| 3 | Une base en `exec` obtient l'outil de son conteneur | ✅ `mysqldump 8.4.11 container` |
+| 4 | Le `README` dit le conflit de paquets et sa sortie | ✅ avec le message exact d'`apt` |
+| 5 | Le scénario rejoué en entier, sans contournement | ✅ sept parcours |
+
+**Deux fois, c'est l'instance qui a tranché, pas mes tests.** `A-09` a résisté à une première
+correction qui passait sur mon poste : le message d'erreur du wrapper contient le mot `postgresql`,
+parce que le chemin du wrapper le contient. La règle retenue — **un outil qui annonce sa version dit
+son propre nom en premier** — vient de là.
 
 ## Journal d'exécution
 
@@ -212,3 +230,28 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   résolution. Le cas « conteneur muet, base joignable » n'est donc couvert que par le test unitaire
   avec un faux, et c'est écrit ici plutôt que passé sous silence.
 - `RSV-10` amendée. `mise run verify` : **0**.
+
+### 2026-09-19 — vague 3, `A-10`, et rejeu complet
+
+- **ADR-0015** : un parc mixte MySQL et MariaDB exige la stratégie `exec`. Il **borne** ADR-0014
+  sans le rouvrir — `A-10` ne montre pas que l'installation gérée manque, elle montre que `exec`
+  en est le complément nécessaire.
+- Le conflit a été **reconfirmé deux fois** sur l'instance : installer `mysql-client` **supprime**
+  deux paquets MariaDB, et demander les deux explicitement donne
+  `mariadb-client-core Conflicts virtual-mysql-client-core`.
+- `README` : le conflit, son message exact, et les **trois** configurations que koffr sert.
+- **Le rejeu, sur le parc réel** — c'est la démonstration de la décision :
+
+  | Base | Serveur | Outil retenu | Provenance |
+  | --- | --- | --- | --- |
+  | `boutique` | postgresql 16.15 | `/usr/bin/pg_dump` 18.6 | host |
+  | `erp` | mariadb 11.4.13 | `/usr/bin/mariadb-dump` 11.8.6 | host |
+  | `crm` | mysql 8.4.11 | `mysqldump` 8.4.11 | **container** |
+  | `eteinte` | — | — | injoignable |
+
+  Les trois familles servies **sur une seule machine**, malgré un conflit de paquets qui
+  l'interdisait il y a une heure.
+- Les sept parcours rejoués **sans contournement** : la version prouvée par exécution (chemin 17,
+  binaire 15.4 → **15.4**), le piège du § 5.2 (**16 géré** choisi), le message d'échec, les deux
+  modes de `config validate`, et le refus d'`exec` sans conteneur.
+- `mise run verify` : **0**.
