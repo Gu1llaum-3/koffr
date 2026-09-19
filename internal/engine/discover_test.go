@@ -315,3 +315,131 @@ func discoverWith(t *testing.T, options engine.FinderOptions, family resolve.Fam
 
 	return found
 }
+
+// RSV-02 amended, from the acceptance session — A-09. On Debian and Ubuntu,
+// /usr/bin/pg_dump is a symlink to pg_wrapper, which picks the version to run
+// from its own argv[0]. Called by its resolved path it answers:
+//
+//	Can't exec "--version": No such file or directory at …/pg_wrapper line 153
+//
+// and koffr read "153" out of that and called it version 153.0. A candidate is
+// dropped unless its answer **names the tool or its family**.
+func TestACandidateThatNamesNothingIsDropped(t *testing.T) {
+	refused := []string{
+		// The exact answer the acceptance instance produced. Note that it
+		// contains the word "postgresql", inside the path of the wrapper:
+		// looking for a family marker anywhere in the answer is not enough.
+		`Can't exec "--version": No such file or directory at /usr/share/postgresql-common/pg_wrapper line 153`,
+		"Cannot exec at /usr/share/postgresql-common/pg_wrapper line 153",
+		"error: 42",
+		"Usage: foo [options]",
+		"1.2.3",
+		"bash: pg_dump: command not found",
+	}
+
+	for _, answer := range refused {
+		t.Run(answer[:min(len(answer), 24)], func(t *testing.T) {
+			system := t.TempDir()
+			fakeTool(t, filepath.Join(system, "pg_dump"), answer)
+
+			found := discover(t, engine.FinderOptions{SystemPaths: []string{system}}, resolve.PostgreSQL, resolve.Dump)
+
+			if len(found) != 0 {
+				t.Errorf("a candidate that names nothing was kept: %+v", found)
+			}
+		})
+	}
+}
+
+// And the answers of the real tools are still accepted — measured on the
+// acceptance instance, not imagined.
+func TestTheRealAnswersAreStillAccepted(t *testing.T) {
+	accepted := map[string]struct {
+		answer string
+		family resolve.Family
+		major  int
+	}{
+		"pg_dump":      {"pg_dump (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1)", resolve.PostgreSQL, 18},
+		"mariadb-dump": {"mariadb-dump from 11.8.6-MariaDB, client 10.19 for debian-linux-gnu (aarch64)", resolve.MariaDB, 11},
+		"mysqldump":    {"mysqldump  Ver 8.4.11 for Linux on aarch64 (MySQL Community Server - GPL)", resolve.MySQL, 8},
+	}
+
+	for binary, want := range accepted {
+		t.Run(binary, func(t *testing.T) {
+			system := t.TempDir()
+			fakeTool(t, filepath.Join(system, binary), want.answer)
+
+			found := discover(t, engine.FinderOptions{SystemPaths: []string{system}}, want.family, resolve.Dump)
+
+			if len(found) != 1 {
+				t.Fatalf("the answer of a real %s was refused: %+v", binary, found)
+			}
+			if found[0].Version.Major != want.major {
+				t.Errorf("version = %s, want %d.x", found[0].Version, want.major)
+			}
+		})
+	}
+}
+
+// N-1 — a tool reached through a symlink is run **by the path it was found at**,
+// because that is the name a wrapper dispatches on, and reported under it.
+func TestAToolIsRunByThePathItWasFoundAt(t *testing.T) {
+	machine := t.TempDir()
+
+	// A wrapper like Debian's: it answers according to how it was called.
+	wrapper := filepath.Join(machine, "wrapper")
+	script := "#!/bin/sh\n" +
+		"case \"$(basename \"$0\")\" in\n" +
+		"  pg_dump) echo 'pg_dump (PostgreSQL) 18.6' ;;\n" +
+		"  *) echo 'Cannot exec at line 153' ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil { //nolint:gosec // a fixture
+		t.Fatalf("write the wrapper: %v", err)
+	}
+
+	bin := filepath.Join(machine, "bin")
+	if err := os.MkdirAll(bin, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	link := filepath.Join(bin, "pg_dump")
+	if err := os.Symlink(wrapper, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	found := discover(t, engine.FinderOptions{SystemPaths: []string{bin}}, resolve.PostgreSQL, resolve.Dump)
+
+	if len(found) != 1 {
+		t.Fatalf("the wrapper was not read through its link: %+v", found)
+	}
+	if found[0].Version.Major != 18 {
+		t.Errorf("version = %s, want 18.6 — the wrapper was run under the wrong name", found[0].Version)
+	}
+	if found[0].Path != link {
+		t.Errorf("path = %s, want %s — an operator recognises the path they installed", found[0].Path, link)
+	}
+}
+
+// N-1 — and two paths to the same binary are still one candidate.
+func TestTwoPathsToTheSameBinaryAreOneCandidate(t *testing.T) {
+	machine := t.TempDir()
+
+	first := filepath.Join(machine, "a")
+	second := filepath.Join(machine, "b")
+	for _, dir := range []string{first, second} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
+	real := filepath.Join(first, "pg_dump")
+	fakeTool(t, real, "pg_dump (PostgreSQL) 16.10")
+	if err := os.Symlink(real, filepath.Join(second, "pg_dump")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	found := discover(t, engine.FinderOptions{SystemPaths: []string{first, second}}, resolve.PostgreSQL, resolve.Dump)
+
+	if len(found) != 1 {
+		t.Errorf("the same binary was counted twice: %+v", found)
+	}
+}

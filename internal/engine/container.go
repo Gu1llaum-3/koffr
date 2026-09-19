@@ -77,8 +77,17 @@ func (f *ContainerFinder) FindIn(ctx context.Context, name string, family resolv
 			continue
 		}
 
+		if !announcesItself(announced, binary) {
+			continue
+		}
+
+		toolFamily, named := toolFamily(announced)
+		if !named {
+			continue
+		}
+
 		found = append(found, resolve.Candidate{
-			Family:  toolFamily(announced, binary),
+			Family:  toolFamily,
 			Tool:    tool,
 			Path:    binary,
 			Version: version,

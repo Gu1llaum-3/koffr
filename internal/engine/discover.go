@@ -148,14 +148,22 @@ func (f *Finder) Find(ctx context.Context, family resolve.Family, tool resolve.T
 func (f *Finder) locations(names []string) map[string]resolve.Source {
 	locations := map[string]resolve.Source{}
 
+	// Deduplicated by the resolved path — the same binary reached two ways is
+	// one candidate — but kept and executed under the path it was **found** at.
+	// Debian's pg_wrapper picks the version to run from its own argv[0]:
+	// resolving the link takes away the only thing it goes by (N-1, A-09).
+	seen := map[string]bool{}
+
 	add := func(path string, source resolve.Source) {
 		resolved, err := filepath.EvalSymlinks(path)
 		if err != nil {
 			return
 		}
-		if _, seen := locations[resolved]; !seen {
-			locations[resolved] = source
+		if seen[resolved] {
+			return
 		}
+		seen[resolved] = true
+		locations[path] = source
 	}
 
 	for _, name := range names {
@@ -312,35 +320,68 @@ func (f *Finder) run(ctx context.Context, path string, info os.FileInfo) cached 
 		return unusable
 	}
 
+	// A tool announcing its version says its own name first:
+	//   pg_dump (PostgreSQL) 18.6
+	//   mariadb-dump from 11.8.6-MariaDB, client 10.19
+	//   mysqldump  Ver 8.4.11 for Linux
+	// An error does not. Looking for a family marker anywhere in the answer is
+	// not enough: the wrapper's own failure quotes the path
+	// /usr/share/postgresql-common/pg_wrapper, which contains "postgresql"
+	// (A-09, seen twice on the acceptance instance).
+	if !announcesItself(announced, path) {
+		return unusable
+	}
+
+	family, named := toolFamily(announced)
+	if !named {
+		return unusable
+	}
+
 	return cached{
 		modified: info.ModTime(),
 		size:     info.Size(),
-		family:   toolFamily(announced, path),
+		family:   family,
 		version:  version,
 		usable:   true,
 	}
 }
 
-// toolFamily reads the family out of what the tool said. MariaDB writes its
-// name in its version line; PostgreSQL writes its own. Only when the answer
-// says nothing does the binary name get a vote — and then only to tell
-// PostgreSQL from the MySQL side, never MySQL from MariaDB, which E-041 makes
-// the one confusion koffr must never commit.
-func toolFamily(announced, path string) resolve.Family {
+// announcesItself reports whether the answer begins with the name koffr
+// invoked. That is what tells a version line from anything else a binary may
+// print when it is unhappy.
+func announcesItself(announced, path string) bool {
+	first, _, _ := strings.Cut(strings.TrimSpace(announced), " ")
+
+	return strings.Contains(strings.ToLower(first), strings.ToLower(filepath.Base(path)))
+}
+
+// toolFamily reads the family out of what the tool said about **itself**, and
+// says so when it could not. The binary name gets no vote at all: it is what
+// turned pg_wrapper into a PostgreSQL candidate (A-09), and believing a name
+// called mysqldump would hand a MariaDB dump to Oracle's tool, which E-041
+// forbids.
+//
+// The markers are the ones the real tools print, measured on the acceptance
+// instance:
+//
+//	pg_dump (PostgreSQL) 18.6
+//	mariadb-dump from 11.8.6-MariaDB, client 10.19
+//	mysqldump  Ver 8.4.11 for Linux (MySQL Community Server - GPL)
+func toolFamily(announced string) (resolve.Family, bool) {
 	lowered := strings.ToLower(announced)
 
 	switch {
 	case strings.Contains(lowered, "mariadb"):
-		return resolve.MariaDB
+		return resolve.MariaDB, true
 
-	case strings.Contains(lowered, "postgresql"), strings.Contains(lowered, "pg_dump"),
-		strings.Contains(lowered, "pg_restore"):
-		return resolve.PostgreSQL
+	case strings.Contains(lowered, "postgresql"),
+		strings.Contains(lowered, "pg_dump"), strings.Contains(lowered, "pg_restore"):
+		return resolve.PostgreSQL, true
 
-	case strings.Contains(filepath.Base(path), "pg_"):
-		return resolve.PostgreSQL
+	case strings.Contains(lowered, "mysql"):
+		return resolve.MySQL, true
 
 	default:
-		return resolve.MySQL
+		return "", false
 	}
 }
