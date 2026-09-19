@@ -175,17 +175,25 @@ func TestCFG09OfflineAcceptsWhatItCannotResolve(t *testing.T) {
 	}
 }
 
-// CFG-09 — a configuration whose secrets are all readable passes without a flag.
+// CFG-09 — a secret koffr can read is not what stops it. Since E-034, validate
+// also reaches the fleet, and this fixture has no server listening: what the
+// test says is that the failure is about the database, never about the secret.
 func TestCFG09ValidateAcceptsSecretsItCanRead(t *testing.T) {
 	secret := filepath.Join(t.TempDir(), "password")
 	if err := os.WriteFile(secret, []byte("s3cr3t\n"), 0o600); err != nil {
 		t.Fatalf("write the secret: %v", err)
 	}
 
-	out := run(t, "config", "validate", "--config", writeConfig(t, "    password_file: "+secret+"\n"))
+	_, err := failing(t, "config", "validate", "--config", writeConfig(t, "    password_file: "+secret+"\n"))
+	if err == nil {
+		t.Fatal("a configuration naming a database nothing answers was accepted")
+	}
 
-	if !strings.Contains(out, "ok") {
-		t.Errorf("a readable secret was refused:\n%s", out)
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "password_file") {
+		t.Errorf("the readable secret was blamed:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), "database shop") {
+		t.Errorf("the error does not name the database that failed:\n%v", err)
 	}
 }
 
@@ -211,4 +219,44 @@ func writeConfig(t *testing.T, databaseLines string) string {
 	}
 
 	return path
+}
+
+// E-034 — `config validate` checks the syntax, the coherence, **the
+// reachability of the databases and the existence of the tools**, and nothing
+// else. Until now it stopped at the shape; § 5.1 F1.3 asks for more.
+func TestE034ValidateReachesTheDatabasesAndTheTools(t *testing.T) {
+	fleet := newFleet(t)
+
+	out, err := failing(t, "config", "validate", "--config", fleet.config, "--search-path", fleet.tools)
+	if err == nil {
+		t.Fatalf("a fleet whose databases do not answer was declared valid:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "shop") {
+		t.Errorf("the error does not name the database that failed:\n%v", err)
+	}
+}
+
+// E-034 — and it still does nothing else. --offline keeps the shape-only check
+// for a machine that holds neither the fleet nor its credentials.
+func TestE034OfflineStillChecksTheShapeAlone(t *testing.T) {
+	fleet := newFleet(t)
+
+	out := run(t, "config", "validate", "--offline", "--config", fleet.config)
+
+	if !strings.Contains(out, "ok") {
+		t.Errorf("--offline refused a well-formed configuration:\n%s", out)
+	}
+}
+
+// A fleet that answers is valid. Here nothing listens, so the closest we get
+// without a server is: the tool exists, and the failure is about the database
+// and not about the tool.
+func TestE034TheToolIsCheckedToo(t *testing.T) {
+	fleet := newFleet(t)
+
+	_, err := failing(t, "config", "validate", "--config", fleet.config,
+		"--search-path", filepath.Join(t.TempDir(), "no-tool-here"))
+	if err == nil {
+		t.Fatal("a fleet with neither database nor tool was declared valid")
+	}
 }

@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Gu1llaum-3/koffr/internal/config"
+	"github.com/Gu1llaum-3/koffr/internal/domain/resolve"
+	"github.com/Gu1llaum-3/koffr/internal/engine"
 )
 
 func newConfigCommand() *cobra.Command {
@@ -21,7 +23,10 @@ func newConfigCommand() *cobra.Command {
 }
 
 func newConfigValidateCommand() *cobra.Command {
-	var offline bool
+	var (
+		offline    bool
+		searchPath []string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "validate",
@@ -45,6 +50,16 @@ func newConfigValidateCommand() *cobra.Command {
 				}
 			}
 
+			// E-034 — the shape is not the whole question: a configuration
+			// that names a database nothing answers, or a tool nobody has, is
+			// coherent and useless. § 5.1 F1.3 asks to check both, and to do
+			// nothing else: no dump, no write, no schema read.
+			if !offline {
+				if err := reachEverything(cmd, parsed, searchPath); err != nil {
+					return err
+				}
+			}
+
 			cmd.Printf("ok %s: %d databases, %d destinations, %d alert channels, timezone %s%s\n",
 				path,
 				len(parsed.Databases),
@@ -58,9 +73,33 @@ func newConfigValidateCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&offline, "offline", false,
-		"check the shape only, without reading the secrets the file points at")
+		"check the shape only, without reading the secrets or reaching the fleet")
+	cmd.Flags().StringSliceVar(&searchPath, "search-path", nil,
+		"directories to look for tools in instead of the ones koffr knows about")
 
 	return cmd
+}
+
+// reachEverything reports the first database that cannot be backed up right
+// now. validate answers "is this configuration usable?", so one failure is
+// enough; doctor is the command that walks the whole fleet.
+func reachEverything(cmd *cobra.Command, parsed *config.Config, searchPath []string) error {
+	targets, err := targetsOf(parsed, "")
+	if err != nil {
+		return err
+	}
+
+	for _, diagnosis := range resolve.Diagnose(cmd.Context(), engine.New(), finderFor(cmd, searchPath), targets) {
+		switch {
+		case diagnosis.Unreachable != nil:
+			return fmt.Errorf("database %s: %w", diagnosis.ID, diagnosis.Unreachable)
+
+		case diagnosis.NoTool != nil:
+			return fmt.Errorf("database %s: %w", diagnosis.ID, diagnosis.NoTool)
+		}
+	}
+
+	return nil
 }
 
 func offlineNote(offline bool) string {
