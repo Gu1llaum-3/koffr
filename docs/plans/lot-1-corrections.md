@@ -100,19 +100,19 @@ Constaté sur l'instance, pas supposé.
 
 ### Vague 1 — Lire les outils tels qu'ils sont (`lot1/wave-7-read-tools-as-they-are`) — `A-09`
 
-- [ ] **1.1** Test d'abord `internal/engine/discover_test.go` — **`RSV-02` amendée** : une réponse
+- [x] **1.1** Test d'abord `internal/engine/discover_test.go` — **`RSV-02` amendée** : une réponse
       qui ne nomme ni l'outil ni sa famille est **écartée**, même si elle contient un nombre. Cas
       tiré de la recette : `Can't exec "--version": No such file or directory at … line 153`.
-- [ ] **1.2** Test — un candidat atteint par un **lien symbolique** est exécuté **par le chemin du
+- [x] **1.2** Test — un candidat atteint par un **lien symbolique** est exécuté **par le chemin du
       lien** et rapporté sous ce chemin (`N-1`). Fixture : un lien vers un script qui répond
       différemment selon son `argv[0]`, comme le fait `pg_wrapper`.
-- [ ] **1.3** Test — deux chemins menant au **même binaire** restent **un** candidat : la
+- [x] **1.3** Test — deux chemins menant au **même binaire** restent **un** candidat : la
       déduplication survit au changement.
-- [ ] **1.4** Le code. `toolFamily` cesse de deviner depuis le nom du fichier (`N-2`).
-- [ ] **1.5** `internal/domain/resolve/rules.md` : `RSV-02` amendée, avec le cas réel en exemple.
-- [ ] **1.6** **Vérifié sur l'instance** : `koffr tools list` rapporte `/usr/bin/pg_dump` en 18.6 et
+- [x] **1.4** Le code. `toolFamily` cesse de deviner depuis le nom du fichier (`N-2`).
+- [x] **1.5** `internal/domain/resolve/rules.md` : `RSV-02` amendée, avec le cas réel en exemple.
+- [x] **1.6** **Vérifié sur l'instance** : `koffr tools list` rapporte `/usr/bin/pg_dump` en 18.6 et
       **aucun** candidat en 153.0.
-- [ ] **1.7** Vague verte : `verify`, commit `fix(engine): run a tool by the path it was found at, and refuse a version nobody announced`.
+- [x] **1.7** Vague verte : `verify`, commit `fix(engine): run a tool by the path it was found at, and refuse a version nobody announced`.
 
 ### Vague 2 — La stratégie `exec` est branchée (`lot1/wave-8-wire-exec-strategy`) — `A-11`
 
@@ -173,3 +173,25 @@ Sur l'instance de recette, avec son parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-19 — vague 1, `A-09`
+
+- `N-1` appliquée : les liens sont résolus **pour dédupliquer**, jamais pour exécuter. Un candidat
+  atteint par un lien est lancé et rapporté **sous le chemin où il a été trouvé**.
+- `N-2` appliquée, puis **renforcée en cours de route** : ma première version exigeait que la
+  réponse **contienne** un marqueur de famille. L'instance l'a défaite immédiatement — le message
+  d'erreur du wrapper cite `/usr/share/postgresql-common/pg_wrapper`, **qui contient le mot
+  `postgresql`**. Le fantôme 153.0 est réapparu.
+- **Règle retenue** : un outil qui annonce sa version **dit son propre nom en premier**
+  (`pg_dump (PostgreSQL) 18.6`, `mariadb-dump from …`, `mysqldump  Ver …`), une erreur non. La
+  famille doit **en plus** être nommée. Le nom du fichier n'a plus aucune voix — c'est lui qui
+  faisait de `pg_wrapper` un candidat PostgreSQL.
+- **Deux fois de suite, c'est l'instance qui a tranché**, pas mes tests : la première correction
+  passait chez moi et échouait là-bas. Le test porte désormais le message **exact** de la machine,
+  pas une approximation.
+- **Vérifié sur l'instance** : `/usr/bin/pg_dump` lit **18.6**, six candidats réels, **aucun**
+  en 153.0, et le faux wrapper est écarté.
+- **Constat sans gravité** : `/usr/bin/pg_dump` et `/usr/lib/postgresql/18/bin/pg_dump` sont deux
+  fichiers distincts — le wrapper et le binaire — donc deux candidats, tous deux en 18.6. C'est
+  exact : ce sont bien deux chemins qui fonctionnent.
+- `mise run verify` : **0**.
