@@ -36,6 +36,10 @@ func Parse(raw []byte, name string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 
+	if err := config.checkTools(); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+
 	return &config, nil
 }
 

@@ -29,6 +29,12 @@ La matrice du § 5.2, et la phrase qui la gouverne : **la compatibilité prime s
 | RSV-08 | Parmi les candidats **compatibles**, c'est la version **la plus proche par le haut** qui est retenue. La provenance — hôte, puis géré, puis conteneur — ne départage que des candidats de version égale. C'est le « piège à éviter » du § 5.2, nommé par le CDC parce que les outils concurrents y tombent. | `E-040`, § 5.2 `F2.3` | `matrix_test.go › TestRSV08TheClosestCompatibleVersionWins`, `› TestRSV08ProvenanceOnlyBreaksTies` |
 | RSV-09 | Sans candidat compatible, la résolution échoue avec un message qui nomme **la version attendue**, **les versions trouvées** et **la commande exacte** pour corriger. Aucun repli sur un outil incompatible n'existe : le texte fait partie de la règle. | `E-007`, `E-042`, § 5.2 `F2.5` | `matrix_test.go › TestRSV09AnImpossibleResolutionSaysWhatToDo` |
 
+## Stratégie `exec`
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| RSV-10 | La stratégie `exec` se déclare **par base**, jamais globalement, et exige le **socket Docker** : sans lui, l'échec **nomme le socket attendu** plutôt que de se rabattre en silence sur un outil de l'hôte. Une base qui déclare `strategy: exec` **sans `container`** est refusée **à la validation de la configuration**, pas au premier job. L'outil trouvé dans le conteneur a la provenance `container`, et sa version est obtenue **en l'exécutant là**. | `E-013`, `E-046`, § 5.2 `F2.9` | `engine/exec_test.go › TestRSV10TheContainerToolIsFoundAndRunThere`, `› TestRSV10WithoutADockerSocketTheFailureNamesIt`, `config/exec_test.go › TestRSV10ExecWithoutAContainerIsRefusedAtValidation` |
+
 ## Divergences avec le cahier des charges
 
 - **`PATH` est interrogé par `exec.LookPath`, pas en lisant la variable.** `AR-05` réserve la
@@ -40,8 +46,6 @@ La matrice du § 5.2, et la phrase qui la gouverne : **la compatibilité prime s
 
 - **L'installation gérée** (`E-043`, `E-044`, `E-045`, `E-131`) : vague 6, bloquée par `D-06` et
   `Q-15`. L'énumération regarde déjà `/var/lib/koffr/tools/`, qui est simplement vide.
-- **La stratégie `exec`** (`E-046`) : vague 5. La provenance `container` existe dans le modèle et
-  n'est encore produite par personne.
 
 ## Constantes et seuils
 
