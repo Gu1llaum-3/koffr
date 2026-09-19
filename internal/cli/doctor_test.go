@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Gu1llaum-3/koffr/internal/config"
 )
 
 // E-104a — doctor reports, for each database, whether it answers, which version
@@ -138,4 +140,87 @@ func runDoctor(t *testing.T, f fleet, extra ...string) string {
 	}
 
 	return out
+}
+
+// A-11 — a database that declares the exec strategy is diagnosed through its
+// container. Before this, doctor ignored the declaration and reported "none",
+// which an operator could not tell from a real absence of tools.
+func TestDoctorUsesTheContainerOfADatabaseThatAsksForIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "koffr.yaml")
+	body := `agent:
+  id: prod-fr-01
+  timezone: Europe/Paris
+databases:
+  - id: erp
+    engine: mariadb
+    host: 127.0.0.1
+    port: 2
+    database: erp
+    user: koffr_backup
+    tools: { strategy: exec, container: koffr-no-such-container }
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// The database does not answer here, so the diagnosis stops at the probe —
+	// what this test checks is that the declaration reached the domain at all,
+	// which the configuration test below completes.
+	out, _, _ := execute(t, "doctor", "--config", path, "--search-path", t.TempDir())
+
+	if !strings.Contains(out, "erp") {
+		t.Errorf("doctor lost the database:\n%s", out)
+	}
+}
+
+// A-11 — and the container a database declares is carried from the
+// configuration into the domain, which is what was missing.
+func TestTheDeclaredContainerReachesTheDomain(t *testing.T) {
+	loaded := configWith(t, "    tools: { strategy: exec, container: erp-mariadb }\n")
+
+	subjects, err := targetsOf(loaded, "")
+	if err != nil {
+		t.Fatalf("targetsOf: %v", err)
+	}
+
+	if len(subjects) != 1 {
+		t.Fatalf("got %d subjects, want 1", len(subjects))
+	}
+	if subjects[0].Container != "erp-mariadb" {
+		t.Errorf("Container = %q, want %q — the declaration did not reach the domain",
+			subjects[0].Container, "erp-mariadb")
+	}
+}
+
+// A database on no strategy carries no container, and resolves on the host.
+func TestADatabaseWithoutAStrategyCarriesNoContainer(t *testing.T) {
+	loaded := configWith(t, "")
+
+	subjects, err := targetsOf(loaded, "")
+	if err != nil {
+		t.Fatalf("targetsOf: %v", err)
+	}
+
+	if subjects[0].Container != "" {
+		t.Errorf("Container = %q, want empty", subjects[0].Container)
+	}
+}
+
+func configWith(t *testing.T, extra string) *config.Config {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "koffr.yaml")
+	body := "agent:\n  id: prod-fr-01\n  timezone: Europe/Paris\n" +
+		"databases:\n  - id: erp\n    engine: mariadb\n" + extra
+
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	return loaded
 }

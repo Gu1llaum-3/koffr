@@ -42,7 +42,8 @@ func newDoctorCommand() *cobra.Command {
 
 			// In the order of the configuration: an operator reads this next
 			// to the file they wrote.
-			diagnoses := resolve.Diagnose(cmd.Context(), engine.New(), finderFor(cmd, searchPath), targets)
+			diagnoses := resolve.Diagnose(cmd.Context(), engine.New(),
+				finderFor(cmd, searchPath), containerFinder(), targets)
 
 			renderDiagnoses(cmd, diagnoses)
 
@@ -79,6 +80,9 @@ func targetsOf(loaded *config.Config, only string) ([]resolve.Subject, error) {
 
 		targets = append(targets, resolve.Subject{
 			ID: database.ID,
+			// A database on the exec strategy resolves inside its container,
+			// and never on the host (E-046, A-11).
+			Container: database.Tools.Container,
 			Target: resolve.Target{
 				Engine:   resolve.Family(database.Engine),
 				Host:     database.Host,
@@ -169,6 +173,12 @@ func sourceOf(d resolve.Diagnosis) string {
 	}
 
 	return string(d.Tool.Source)
+}
+
+// containerFinder builds the exec-strategy adapter. It is created even when no
+// database asks for it: it opens nothing until FindIn is called.
+func containerFinder() resolve.ContainerToolFinder {
+	return engine.NewContainerFinder(engine.ContainerOptions{})
 }
 
 // finderFor builds tool discovery for a command. --search-path means "instead

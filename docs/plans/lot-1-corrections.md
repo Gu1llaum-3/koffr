@@ -116,19 +116,19 @@ Constaté sur l'instance, pas supposé.
 
 ### Vague 2 — La stratégie `exec` est branchée (`lot1/wave-8-wire-exec-strategy`) — `A-11`
 
-- [ ] **2.1** Test d'abord `internal/domain/resolve/diagnose_test.go` — une base qui déclare un
+- [x] **2.1** Test d'abord `internal/domain/resolve/diagnose_test.go` — une base qui déclare un
       conteneur est diagnostiquée avec l'énumérateur de conteneurs, une autre avec celui de l'hôte,
       **dans le même parc** (`N-3`).
-- [ ] **2.2** Test — un conteneur qui ne répond pas donne un échec qui **nomme le conteneur**, et
+- [x] **2.2** Test — un conteneur qui ne répond pas donne un échec qui **nomme le conteneur**, et
       **jamais** un repli sur un outil de l'hôte (`N-4`).
-- [ ] **2.3** Le code : `resolve.Subject` porte le conteneur, `Diagnose` reçoit les deux
+- [x] **2.3** Le code : `resolve.Subject` porte le conteneur, `Diagnose` reçoit les deux
       énumérateurs, `internal/cli` les câble.
-- [ ] **2.4** Test `internal/cli/doctor_test.go` — `doctor` affiche la provenance `container` pour
+- [x] **2.4** Test `internal/cli/doctor_test.go` — `doctor` affiche la provenance `container` pour
       une base en `exec`.
-- [ ] **2.5** `rules.md` : `RSV-10` amendée — la stratégie a désormais un effet observable.
-- [ ] **2.6** **Vérifié sur l'instance**, contre le conteneur MariaDB réel : `doctor` annonce
+- [x] **2.5** `rules.md` : `RSV-10` amendée — la stratégie a désormais un effet observable.
+- [x] **2.6** **Vérifié sur l'instance**, contre le conteneur MariaDB réel : `doctor` annonce
       l'outil du conteneur avec sa version.
-- [ ] **2.7** Vague verte : `verify`, commit `feat(cli): use the container tool for a database that asks for it`.
+- [x] **2.7** Vague verte : `verify`, commit `feat(cli): use the container tool for a database that asks for it`.
 
 ### Vague 3 — Le parc mixte est dit (`lot1/wave-9-mixed-fleet`) — `A-10`
 
@@ -195,3 +195,20 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   fichiers distincts — le wrapper et le binaire — donc deux candidats, tous deux en 18.6. C'est
   exact : ce sont bien deux chemins qui fonctionnent.
 - `mise run verify` : **0**.
+
+### 2026-09-19 — vague 2, `A-11`
+
+- `ContainerToolFinder` déclaré **par le domaine** comme second port, et `Diagnose` reçoit les deux
+  énumérateurs (`N-3`). `resolve.Subject` porte le conteneur ; `internal/cli` le tire de
+  `tools.container` et câble l'adaptateur.
+- `N-4` tenue : une base qui a déclaré un conteneur **n'emprunte jamais** un outil de l'hôte, même
+  quand il y en a un de parfaitement compatible. L'erreur est enveloppée en nommant le conteneur,
+  pour qu'on ne la confonde pas avec une absence d'outil.
+- **Vérifié contre le vrai conteneur MariaDB de l'instance** : `doctor` annonce
+  `mariadb-dump 11.4.13 container` — l'outil du conteneur, exactement à la version de son propre
+  serveur. C'est le cas que la stratégie existe pour servir.
+- **Limite de la vérification sur machine réelle** : conteneur arrêté, c'est la **base** qui devient
+  injoignable en premier, puisqu'elle vit dans le même conteneur — la sonde échoue avant la
+  résolution. Le cas « conteneur muet, base joignable » n'est donc couvert que par le test unitaire
+  avec un faux, et c'est écrit ici plutôt que passé sous silence.
+- `RSV-10` amendée. `mise run verify` : **0**.

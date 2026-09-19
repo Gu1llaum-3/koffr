@@ -49,3 +49,12 @@ func (c Candidate) String() string {
 type ToolFinder interface {
 	Find(ctx context.Context, family Family, tool Tool) ([]Candidate, error)
 }
+
+// ContainerToolFinder enumerates the tools inside the container of a database —
+// the exec strategy of § 5.2 F2.9. It is a port of its own because E-046 makes
+// exec a decision **per database**: some databases in a fleet resolve on the
+// host and others inside their container, and the domain has to express that
+// without knowing what a container is.
+type ContainerToolFinder interface {
+	FindIn(ctx context.Context, container string, family Family, tool Tool) ([]Candidate, error)
+}
