@@ -190,20 +190,20 @@ test ne tiennent pas, tout le lot change de forme.
 
 Exigences : `E-013`, `E-038`, `E-039`, et `tools list` de `E-103a`.
 
-- [ ] **2.1** Test d'abord `internal/engine/discover_test.go` — l'énumération visite **toutes** les
+- [x] **2.1** Test d'abord `internal/engine/discover_test.go` — l'énumération visite **toutes** les
       sources : chemins système connus par distribution, `PATH`, `/var/lib/koffr/tools/`, sortie de
       `pg_lsclusters` si présente. **Aucune préférence** à ce stade : l'ordre de sortie ne porte pas
       de sens (`E-038`).
-- [ ] **2.2** Test — la version d'un candidat est obtenue **en l'exécutant** (`--version`), jamais
+- [x] **2.2** Test — la version d'un candidat est obtenue **en l'exécutant** (`--version`), jamais
       par son chemin : un binaire nommé `pg_dump-16` qui répond `15.4` est en **15.4** (`E-039`).
       Cas d'erreur : binaire non exécutable, sortie illisible, délai dépassé.
-- [ ] **2.3** Test — le cache rend la seconde interrogation **sans exécution**, et un `mtime` qui
+- [x] **2.3** Test — le cache rend la seconde interrogation **sans exécution**, et un `mtime` qui
       change la **réinvalide** (`E-039`, `N-4`).
-- [ ] **2.4** Test `internal/cli/tools_test.go` — `koffr tools list` montre tous les candidats avec
+- [x] **2.4** Test `internal/cli/tools_test.go` — `koffr tools list` montre tous les candidats avec
       leur provenance (`N-6`) ; sortie stable et triée.
-- [ ] **2.5** Règles `RSV-01` (énumération exhaustive), `RSV-02` (version prouvée par exécution),
+- [x] **2.5** Règles `RSV-01` (énumération exhaustive), `RSV-02` (version prouvée par exécution),
       `RSV-03` (cache et invalidation) dans `internal/domain/resolve/rules.md`.
-- [ ] **2.6** Vague verte : `verify`, commit `feat(resolve): enumerate every tool source and prove each version`.
+- [x] **2.6** Vague verte : `verify`, commit `feat(resolve): enumerate every tool source and prove each version`.
 
 ### Vague 3 — Matrice de compatibilité et choix (`lot1/wave-3-compatibility-matrix`)
 
@@ -357,3 +357,27 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   il existe. Geste inscrit dans le skill `implementer` : pour retirer puis remettre, **copier le
   fichier**, jamais `git checkout`, et relancer avec `-count=1`.
 - `mise run verify` : **0**. Suite complète avec conteneurs et `-race`, **sans cache** : **0**.
+
+### 2026-09-19 — vague 2, énumération des candidats
+
+- `RSV-01` à `RSV-03` écrites dans `internal/domain/resolve/rules.md` **avant** le code.
+- Quatre sources visitées : chemins système avec globs par distribution, `PATH`, répertoire géré,
+  et **`pg_lsclusters`** quand la machine l'a. Une source vide n'est pas une erreur.
+- **La famille d'un *outil* est lue de son exécution**, comme celle d'un serveur : un binaire nommé
+  `mysqldump` qui répond `10.6.21-MariaDB` appartient à MariaDB. Sans cela, `E-041` serait tenue
+  côté serveur et trahie côté outil.
+- **`N-10` implicite devenue explicite** : un candidat qu'on ne peut pas exécuter, qui répond
+  n'importe quoi ou qui dépasse 5 s est **écarté**, jamais deviné.
+- **Trois défauts de mon fait, trouvés par les tests** :
+  1. mes tests trouvaient les vrais outils du poste via `PATH` — le code avait raison, le test
+     était sous-spécifié. `LookPath` est désormais **injecté**, et `engine.NoPath` décrit une
+     machine sans outil ;
+  2. `exec.CommandContext` tue le shell mais pas le `sleep` qu'il a lancé : `Run` attendait 30 s
+     au lieu de 500 ms. Corrigé par `WaitDelay` ;
+  3. `Version.String()` rendait l'annonce entière, ce qui donnait une colonne de tableau illisible.
+     Elle rend les nombres ; `Raw` garde l'annonce pour les messages.
+- **`--search-path` veut dire « à la place de »** : quand l'exploitant nomme les répertoires, `PATH`
+  n'est plus consulté. L'aide le disait déjà, le code ne le faisait pas.
+- **Vérifié sur une machine réelle** : `koffr tools list` distingue MariaDB 12.0.2 de MySQL 9.0.1,
+  tous deux installés côte à côte, et donne pour chacun sa version et son chemin.
+- `mise run verify` : **0**.
