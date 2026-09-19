@@ -14,7 +14,7 @@ pas supprimée.
 | CFG-04 | `agent.timezone` est **obligatoire** et validé par `time.LoadLocation`. La variable `TZ` du système n'a aucun effet : elle ne remplace pas une déclaration manquante et ne prime pas sur celle qui est écrite. La base de fuseaux est **embarquée** dans le binaire. | `E-036`, § 5.1 `F1.5`, `N-6` | `timezone_test.go › TestCFG04TimezoneIsRequiredAndValidated`, `› TestCFG04TheSystemTimezoneHasNoEffect`, `› TestCFG04ASetTZDoesNotExcuseAMissingDeclaration`, `› TestCFG04TheZoneDatabaseIsEmbedded` |
 | CFG-05 | La **forme cible du § 5.1**, copiée du cahier des charges, est acceptée telle quelle, et chaque clé atterrit dans le champ que le reste de koffr ira lire — y compris les deux écritures de `tools` (`auto` et la stratégie explicite). | `E-037`, § 5.1 | `reference_test.go › TestCFG05TheTargetFormOfTheSpecificationIsAccepted` |
 | CFG-06 | Une valeur sensible **ne s'imprime jamais** : ni par `%v`, `%+v`, `%#v` ou `%s`, ni par `slog`, ni par la sérialisation YAML de `config show`. Elle ne sort que par `Expose()`. Un champ sensible non renseigné n'apparaît pas du tout. | `E-115`, § 6 | `redact_test.go › TestCFG06AConfigurationNeverPrintsItsSecrets`, `› TestCFG06SlogNeverPrintsASecret`, `› TestCFG06ASecretIsReachableThroughExposeOnly`, `› TestCFG06RedactedRendersTheTopologyWithoutASecret` |
-| CFG-09 | `config validate` **résout les secrets** que la configuration désigne : un `*_file` illisible ou un `*_env` non défini fait échouer la commande, en le nommant. `--offline` vérifie la forme seule et le **dit** dans sa sortie. `config show` ne résout jamais rien. Ni l'une ni l'autre n'ouvre de connexion — c'est `E-034`, au lot 1. | `E-033`, `E-115`, § 5.1 `F1.3`, `A-06`, `N-1` du plan de corrections | `cli/config_test.go › TestCFG09ValidateFailsOnASecretItCannotRead`, `› TestCFG09OfflineAcceptsWhatItCannotResolve`, `› TestCFG09ValidateAcceptsSecretsItCanRead`, `› TestCFG09ShowNeverNeedsToResolveASecret` |
+| CFG-09 | `config validate` **résout les secrets** que la configuration désigne, puis **atteint le parc** : joignabilité de chaque base et existence d'un outil compatible (`E-034`). Un `*_file` illisible, un `*_env` non défini, une base qui ne répond pas ou un outil manquant font échouer la commande, en le nommant. Elle **ne fait rien d'autre** : pas de dump, pas d'écriture, pas de lecture de schéma. `--offline` vérifie la forme seule et le **dit**. `config show` ne résout ni n'atteint jamais rien. | `E-033`, `E-034`, `E-115`, § 5.1 `F1.3`, `A-06`, `N-1` du plan de corrections | `cli/config_test.go › TestCFG09ValidateFailsOnASecretItCannotRead`, `› TestCFG09OfflineAcceptsWhatItCannotResolve`, `› TestCFG09ValidateAcceptsSecretsItCanRead`, `› TestCFG09ShowNeverNeedsToResolveASecret`, `› TestE034ValidateReachesTheDatabasesAndTheTools`, `› TestE034OfflineStillChecksTheShapeAlone`, `› TestE034TheToolIsCheckedToo` |
 | CFG-10 | `examples/koffr.yaml` est livré pour qu'un exploitant parte de quelque chose, et c'est **le document que les tests lisent** : s'il cessait d'être accepté, ou s'il divergeait de la copie de test, la construction échoue. | `E-037`, `E-116`, `A-03`, `N-4` du plan de corrections | `example_test.go › TestCFG10TheShippedExampleIsAccepted`, `› TestCFG10TheExampleAndTheTestReferenceAreTheSameDocument` |
 
 ## Chemins et espace de travail
@@ -44,9 +44,9 @@ le second test s'exécute dans `internal/state`.
 
 ## Non porté
 
-- **`E-034`** — `config validate` ne vérifie **ni la joignabilité des bases ni l'existence des
-  outils**. C'est le lot 1 : cela suppose les sondes et le résolveur. Le lot 0 ne valide que la
-  forme (plan du lot 0, § Périmètre).
+- ~~**`E-034`** — `config validate` ne vérifie ni la joignabilité des bases ni l'existence des
+  outils.~~ **Levé le 2026-09-19**, vague 4 du lot 1 : il vérifie désormais les deux. Voir
+  `CFG-09`.
 - **`F1.4`** — relecture à chaud sur `SIGHUP` et sur changement de `mtime`. Classée *souhaitable*
   par le CDC, renvoyée au lot 5, et le § 4.3 la contredit (`Q-12`).
 - **`Q-04`** (destinataires de chiffrement par base) et **`Q-06`** (identifiants de restauration

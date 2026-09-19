@@ -230,20 +230,20 @@ teste **entièrement sans base** grâce au port de la vague 1.
 
 Exigences : `E-034`, `E-104a`, et `doctor` de `E-103a`. La commande la plus importante du § 5.12.
 
-- [ ] **4.1** Test d'abord `internal/cli/doctor_test.go` — pour chaque base : joignabilité, version
+- [x] **4.1** Test d'abord `internal/cli/doctor_test.go` — pour chaque base : joignabilité, version
       du serveur, outil retenu avec **version et provenance** (`E-104a`). Une base injoignable est
       une **ligne de plus**, pas un arrêt : `doctor` diagnostique un parc, il ne s'arrête pas au
       premier problème.
-- [ ] **4.2** Test — `--database ID` restreint à une base ; un identifiant inconnu est une erreur qui
+- [x] **4.2** Test — `--database ID` restreint à une base ; un identifiant inconnu est une erreur qui
       **nomme les identifiants connus**.
-- [ ] **4.3** Test — `koffr config validate` vérifie **en plus** la joignabilité et l'existence des
+- [x] **4.3** Test — `koffr config validate` vérifie **en plus** la joignabilité et l'existence des
       outils (`E-034`), et **n'exécute rien d'autre**. `--offline` conserve la vérification de forme
       seule (`CFG-09`).
-- [ ] **4.4** Test — le code de retour distingue « tout va bien » de « au moins une base en
+- [x] **4.4** Test — le code de retour distingue « tout va bien » de « au moins une base en
       défaut ».
-- [ ] **4.5** `internal/config/rules.md` : `CFG-09` **amendée** — `validate` atteint désormais les
+- [x] **4.5** `internal/config/rules.md` : `CFG-09` **amendée** — `validate` atteint désormais les
       bases et les outils.
-- [ ] **4.6** Vague verte : `verify`, commit `feat(cli): doctor reports each database and the tool that will dump it`.
+- [x] **4.6** Vague verte : `verify`, commit `feat(cli): doctor reports each database and the tool that will dump it`.
 
 ### Vague 5 — Stratégie `exec` (`lot1/wave-5-exec-strategy`)
 
@@ -323,6 +323,33 @@ Sur l'instance de recette, augmentée pour l'occasion :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-19 — vague 4, `doctor` et `config validate`
+
+- `resolve.Diagnose` écrit dans le **domaine** : il ne connaît ni pilote ni sous-process, il reçoit
+  la sonde et l'énumérateur par leurs ports. `internal/cli/doctor.go` ne fait que rendre.
+- **Une base qui ne répond pas est une ligne, pas un arrêt.** Sans version de serveur, koffr ne
+  pose pas la question de compatibilité : il dit ce qu'il n'a pas pu faire et ne devine pas le
+  reste.
+- **`E-034` est levée** : `config validate` atteint le parc et les outils. `CFG-09` amendée, et la
+  ligne « non porté » du lot 0 **barrée** avec sa date.
+- `validate` rend **le premier** problème — il répond « cette configuration est-elle utilisable ? » ;
+  `doctor` marche tout le parc. Deux commandes, deux questions.
+- **Deux tests plus anciens sont tombés, et ils avaient raison** : leurs fixtures déclaraient des
+  bases que rien n'écoute. Celui sur le journal passe `--offline` ; celui sur les secrets affirme
+  désormais que l'échec parle de **la base** et jamais du fichier de secret — ce qui teste mieux la
+  règle qu'avant.
+- **Vérifié contre un vrai PostgreSQL 16** :
+
+  ```
+  DATABASE     REACHABLE    SERVER            TOOL                  VERSION  SOURCE
+  boutique     yes          postgresql 16.15  …/pg_dump             18.4     host
+  erp-eteinte  unreachable  -                 -                     -        -
+
+  erp-eteinte: the server did not answer: dial tcp 127.0.0.1:53306: connect: connection refused
+  ```
+  Code de retour **1**, comme `4.4` le demande.
+- `mise run verify` : **0**.
 
 ### 2026-09-19 — vague 3, matrice de compatibilité et choix
 

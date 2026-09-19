@@ -81,7 +81,9 @@ func TestTheLogFileCarriesNoSecret(t *testing.T) {
 	dir := t.TempDir()
 	config := writeConfig(t, "    password: "+secret+"\n")
 
-	run(t, "config", "validate", "--config", config, "--log-dir", dir)
+	// --offline because this test is about the log, not about a fleet: since
+	// E-034, validate reaches the databases, and none is listening here.
+	run(t, "config", "validate", "--offline", "--config", config, "--log-dir", dir)
 
 	written, err := os.ReadFile(filepath.Join(dir, "koffr.log"))
 	if err != nil {
