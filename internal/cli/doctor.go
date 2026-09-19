@@ -40,10 +40,9 @@ func newDoctorCommand() *cobra.Command {
 				return err
 			}
 
+			// In the order of the configuration: an operator reads this next
+			// to the file they wrote.
 			diagnoses := resolve.Diagnose(cmd.Context(), engine.New(), finderFor(cmd, searchPath), targets)
-			slices.SortFunc(diagnoses, func(a, b resolve.Diagnosis) int {
-				return strings.Compare(a.ID, b.ID)
-			})
 
 			renderDiagnoses(cmd, diagnoses)
 
@@ -66,8 +65,9 @@ func newDoctorCommand() *cobra.Command {
 // targetsOf turns the configuration into what the domain reasons about. An
 // identifier nobody declared names the ones that exist: a typo is the likeliest
 // reason to be here.
-func targetsOf(loaded *config.Config, only string) (map[string]resolve.Target, error) {
-	targets := map[string]resolve.Target{}
+func targetsOf(loaded *config.Config, only string) ([]resolve.Subject, error) {
+	var targets []resolve.Subject
+
 	known := make([]string, 0, len(loaded.Databases))
 
 	for _, database := range loaded.Databases {
@@ -77,14 +77,17 @@ func targetsOf(loaded *config.Config, only string) (map[string]resolve.Target, e
 			continue
 		}
 
-		targets[database.ID] = resolve.Target{
-			Engine:   resolve.Family(database.Engine),
-			Host:     database.Host,
-			Port:     database.Port,
-			Database: database.Database,
-			User:     database.User,
-			Password: database.Password.Expose(),
-		}
+		targets = append(targets, resolve.Subject{
+			ID: database.ID,
+			Target: resolve.Target{
+				Engine:   resolve.Family(database.Engine),
+				Host:     database.Host,
+				Port:     database.Port,
+				Database: database.Database,
+				User:     database.User,
+				Password: database.Password.Expose(),
+			},
+		})
 	}
 
 	if only != "" && len(targets) == 0 {
