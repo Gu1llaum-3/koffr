@@ -232,7 +232,7 @@ func (d *databaseAccess) FreeBytes(context.Context) (int64, error) {
 		return 0, fmt.Errorf("measure the free space of %s: %w", d.stagingDir, err)
 	}
 
-	return int64(volume.Bavail) * int64(volume.Bsize), nil //nolint:gosec // block counts, not user input
+	return bytesFree(volume), nil
 }
 
 func extensionFor(family resolve.Family) string {
