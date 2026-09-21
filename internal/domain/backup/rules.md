@@ -20,6 +20,14 @@ adaptateur n'a pas de `rules.md` (ADR-0010) et qu'`ARCHITECTURE.md` ne déclare 
 | BKP-08 | **Deux** empreintes sont calculées au vol : `sha256_raw` sur le dump **avant** compression, `sha256_stored` sur ce qui est réellement écrit. Seule la seconde se vérifie sans déchiffrer, et le lot 3 en dépend. | `E-024`, `N-7` | `pipeline/pipeline_test.go › TestBKP08BothChecksumsAreComputedOnTheWay` |
 | BKP-09 | Une erreur **au milieu** du flux — dump interrompu, disque plein, destinataire refusé — remonte **typée** et ne produit **jamais** un résultat qui ressemble à un succès. Un octet écrit n'est pas une sauvegarde. | `E-024`, § 2 `P3` | `pipeline/pipeline_test.go › TestBKP09AFailureMidStreamIsNeverASuccess` |
 
+## Où l'archive est écrite
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| BKP-10 | Le chemin d'une archive est **déterministe et lisible par un humain** : `<base>/<AAAA>/<MM>/<base>_<horodatage>_<id>.<ext>`. Il se reconstruit **sans la base locale**, pour qu'un dépôt reste exploitable si l'agent disparaît — et il ne contient jamais d'identifiant de connexion. | `E-070`, § 5.5 `F5.5` | `backup/path_test.go › TestBKP10TheArchivePathIsDeterministicAndReadable` |
+| BKP-11 | Une écriture interrompue **ne laisse pas d'archive partielle visible** : on écrit à côté, puis on renomme. Un fichier qui porte le nom d'une archive est une archive entière. | `E-066`, § 2 `P3` | `store/storetest › an interrupted write leaves nothing visible` |
+| BKP-12 | Tester l'accès à une destination **dit pourquoi** il échoue — répertoire absent, droits, disque plein — et n'écrit rien de durable. | `E-066`, § 5.5 `F5.1` | `store/storetest › checking access` |
+
 ## Constantes et seuils
 
 | Nom | Valeur | Source | Confirmé par |
