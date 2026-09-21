@@ -8,6 +8,17 @@ Ce module orchestre une sauvegarde. Il ne dumpe pas — c'est `engine` —, il n
 `store` —, il n'assemble pas le flux — c'est `pipeline`. Il décide **dans quel ordre**, **si on peut
 commencer**, et **ce qu'on fait quand ça casse**.
 
+## Le déroulement d'un job
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| BKP-01 | Un seul job est actif **par base** à tout instant, tenu par un **fichier de verrou** ; une seconde demande est **refusée** en nommant le job en cours, **jamais mise en file**. Un verrou laissé par un processus qui n'existe plus — ou illisible — **ne bloque pas** : il est repris. Le fichier dit qui le tient, en clair, pour qu'on le débloque à la main à 3 h du matin. | `E-051`, § 5.3 `F3.1`, `N-5` | `backup/lock_test.go › TestBKP01ASecondJobOnTheSameDatabaseIsRefused`, `› TestBKP01ALockWhoseProcessIsGoneIsTakenOver`, `› TestBKP01ALockFileThatCannotBeReadIsTakenOver`, `› TestBKP01TheLockSaysWhoHoldsIt`, `backup/service_test.go › TestASecondJobOnTheSameDatabaseIsRefusedByTheUseCase` |
+| BKP-02 | Les **trois modes** de tampon existent et se déclarent **par base**. Une décision ne rend **jamais** `auto` : `auto` est une question, un job a besoin de la réponse — et de la **raison**, qui part au manifeste. | `E-029`, § 4.5 | `backup/staging_test.go › TestBKP02TheThreeModesAreSelectablePerDatabase` |
+| BKP-03 | Le mode `stage` est **imposé** dans les trois cas du § 4.5 — format répertoire, plus d'une destination, vérification structurelle sans egress — **par-dessus** un `stream` explicite, et la décision **dit lequel** l'a imposé. Ce sont des situations où le flux direct ne marche pas, pas des préférences. | `E-030`, § 4.5 | `backup/staging_test.go › TestBKP03StageIsImposedByTheThreeCasesOfTheSpecification` |
+| BKP-04 | En `auto`, l'arbitrage se fait sur l'**espace libre** avec la marge **× 1,5** du § 4.5, et le mode **effectivement appliqué** est enregistré. Deux exécutions de la même base peuvent légitimement différer ; un manifeste qui ne dit pas laquelle est illisible. | `E-053`, `N-1`, `N-4` | `backup/staging_test.go › TestBKP04AutoChoosesOnTheFreeSpaceAndSaysWhatItChose` |
+| BKP-05 | L'espace est vérifié **avant** de commencer. La taille attendue vient de la **dernière sauvegarde réussie**, à défaut de la **taille de la base** rapportée par la sonde, divisée par 4 (`N-12`). Un job qui remplirait le disque **bascule en `stream`**, ou est **refusé** quand `stage` est imposé et qu'il n'y a nulle part où se rabattre. | `E-061`, § 5.3 `F3.10`, `N-12` | `backup/staging_test.go › TestBKP05TheExpectedSizeComesFromTheLastBackupFirst`, `› TestBKP05AJobThatWouldFillTheDiskFallsBackOrIsRefused`, `› TestBKP05AnUnknownFreeSpaceDoesNotPassSilently` |
+| BKP-06 | Les **sept étapes** de `E-024` s'enchaînent **dans cet ordre**, et le résultat les porte toutes les sept, faites ou non. Une étape qui échoue **arrête** le job et celles d'après ne sont **pas** déclarées faites. Vérification et manifeste sont **absentes et déclarées telles** jusqu'au lot 3 : un job qui prétendrait avoir vérifié est exactement ce que `P3` interdit. | `E-024`, § 4.1, § 2 `P3` | `backup/service_test.go › TestBKP06TheSevenStepsHappenInTheOrderOfTheSpecification`, `› TestBKP06AFailedStepStopsTheJob` |
+
 ## La chaîne en flux
 
 Ces trois règles portent sur ce que `internal/pipeline` garantit. Elles vivent ici parce qu'un
@@ -45,3 +56,7 @@ la raison de `N-9` : un adaptateur n'a pas de `rules.md`.
 | Nom | Valeur | Source | Confirmé par |
 | --- | --- | --- | --- |
 | Niveau de compression | `zstd:3` | `N-4` (hypothèse de `Q-08`) | `pipeline/pipeline_test.go` |
+| Marge d'espace disque | × 1,5 | § 4.5, `N-4` | `backup/staging_test.go` |
+| Compression supposée sans historique | ÷ 4 | § 4.5 (10 % à 25 %), `N-12` | `backup/staging_test.go` |
+| Répertoire des verrous | `<état>/locks/` | `N-5` | `backup/lock_test.go` |
+| Répertoire de tampon | `<état>/tmp/` | `E-026`, § 4.5 | `backup/service_test.go` |

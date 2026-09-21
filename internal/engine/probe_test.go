@@ -180,3 +180,36 @@ func TestTheProbeSaysNothingOfAFullyTransactionalDatabase(t *testing.T) {
 		t.Errorf("an InnoDB-only database warned anyway: %s", got)
 	}
 }
+
+// E-061 — the probe reports how big the database is. It is the fallback of the
+// disk-space check: with no previous backup to extrapolate from, this is all
+// koffr has to decide whether staging would fill the volume.
+func TestTheProbeReportsTheSizeOfTheDatabase(t *testing.T) {
+	for _, family := range []struct {
+		name  string
+		start func(*testing.T) server
+		seed  func(*testing.T, server)
+	}{
+		{"postgresql", func(t *testing.T) server { return startPostgres(t, "16") }, seedPostgres},
+		{"mariadb", func(t *testing.T) server { return startMariaDB(t, "11.4") }, func(t *testing.T, s server) {
+			seedMySQLFamily(t, s.target, false)
+		}},
+	} {
+		t.Run(family.name, func(t *testing.T) {
+			t.Parallel()
+
+			started := family.start(t)
+			family.seed(t, started)
+
+			info, err := engine.New().Probe(t.Context(), started.target)
+			if err != nil {
+				t.Fatalf("Probe: %v", err)
+			}
+
+			if info.DatabaseBytes <= 0 {
+				t.Errorf("DatabaseBytes = %d, want the real size of a database that holds a table",
+					info.DatabaseBytes)
+			}
+		})
+	}
+}

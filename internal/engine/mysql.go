@@ -43,8 +43,25 @@ func probeMySQLFamily(ctx context.Context, target resolve.Target) (resolve.Serve
 		Version:   resolve.ParseVersion(announced),
 	}
 	info.MyISAMTables, info.MyISAMUnknown = myISAMTables(ctx, database)
+	info.DatabaseBytes = databaseBytes(ctx, database)
 
 	return info, nil
+}
+
+// mysqlSizeQuery asks how much this database occupies. Like the MyISAM query it
+// reads the catalogue, never a table koffr backs up (ADR-0013).
+const mysqlSizeQuery = "SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = DATABASE()"
+
+// databaseBytes returns the size of the database, or zero when koffr could not
+// tell. A probe that cannot measure still succeeds: E-061 falls back on the
+// margin, not on refusing to back up.
+func databaseBytes(ctx context.Context, database *sql.DB) int64 {
+	var size int64
+	if err := database.QueryRowContext(ctx, mysqlSizeQuery).Scan(&size); err != nil {
+		return 0
+	}
+
+	return size
 }
 
 // myISAMQuery asks the catalogue which tables of this database are not

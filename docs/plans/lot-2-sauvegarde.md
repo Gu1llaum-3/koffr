@@ -140,6 +140,19 @@ Constaté dans le code, pas supposé.
   répertoire avec deux erreurs typées qui disent laquelle des deux raisons s'applique, et la vague 5
   ajoutera l'écriture en répertoire avec le tampon. *Exclut* : une implémentation à moitié qui
   écrirait un répertoire sans savoir où le mettre.
+- **N-12 (2026-09-22) — sans historique, la taille attendue d'une archive est le quart de la base.**
+  *Raison* : le § 4.5 donne une fourchette de 10 % à 25 % après zstd ; koffr prend l'extrémité
+  **pessimiste**, parce que sous-estimer remplit un disque et que surestimer ne fait que basculer en
+  `stream`. La taille de la base vient de la sonde (`RSV-12`), qui a gagné une requête pour cela —
+  délibérément, après refus de la garde. *Exclut* : un taux moyen inventé, et un contrôle d'espace
+  qui passerait toujours faute de chiffre.
+- **N-13 (2026-09-22) — il n'y a pas d'historique des sauvegardes dans ce lot.** *Constat* : le
+  catalogue s'écrit au lot 3 ; le port `History` existe, son adaptateur rend « aucune ». *Effet* :
+  toute estimation passe par le repli de `N-12`. *Exclut* : écrire dans `backups` au lot 2 sans les
+  exigences `E-028` et `E-057` qui le cadrent.
+- **N-14 (2026-09-22) — la tâche `5.6` demandait `STO-01`, qui n'existe pas.** Même raison que
+  `N-9` : `internal/store` est un adaptateur et `ARCHITECTURE.md` ne déclare pas ce préfixe. Les
+  règles de destination sont `BKP-11` et `BKP-12`, écrites à la vague 3. Rien à ajouter.
 - **N-7 L'empreinte `sha256_raw` est celle du flux *avant* compression, `sha256_stored` celle de ce
   qui est écrit.** *Raison* : le manifeste du § 5.3 porte les deux, et seule la seconde se vérifie
   sans déchiffrer. *Exclut* : une seule empreinte, qui rendrait `E-062` impossible au lot 3.
@@ -222,23 +235,23 @@ Exigences : `E-054`, `E-055`, `E-056`, et la stratégie `exec` **appliquée au d
 
 Exigences : `E-024`, `E-029`, `E-030`, `E-051`, `E-053`, `E-061`, et `backup` de `E-103b`.
 
-- [ ] **5.1** Test d'abord `internal/domain/backup/lock_test.go` — **`BKP-01`** : un seul job par
+- [x] **5.1** Test d'abord `internal/domain/backup/lock_test.go` — **`BKP-01`** : un seul job par
       base ; une seconde demande est **refusée** en nommant le job en cours, jamais mise en file
       (`E-051`, `N-5`). Un verrou dont le processus est mort **ne bloque pas** éternellement.
-- [ ] **5.2** Test `internal/domain/backup/staging_test.go` — **`BKP-02`** : les trois modes ;
+- [x] **5.2** Test `internal/domain/backup/staging_test.go` — **`BKP-02`** : les trois modes ;
       **`BKP-03`** : `stage` est **imposé** par `-Fd`, par plus d'une destination, ou par la
       vérification (`E-030`) ; **`BKP-04`** : `auto` choisit selon l'espace libre et **enregistre le
       mode appliqué** (`E-053`, `N-1`).
-- [ ] **5.3** Test — **`BKP-05`** : l'espace disque est estimé **avant** de commencer, extrapolé de
+- [x] **5.3** Test — **`BKP-05`** : l'espace disque est estimé **avant** de commencer, extrapolé de
       la dernière sauvegarde réussie ou à défaut de la taille de la base, avec la marge de `N-4` ;
       un job qui remplirait le disque **bascule en `stream` ou est refusé** (`E-061`).
-- [ ] **5.4** Test — **`BKP-06`** : les sept étapes de `E-024` s'enchaînent **dans l'ordre**, et le
+- [x] **5.4** Test — **`BKP-06`** : les sept étapes de `E-024` s'enchaînent **dans l'ordre**, et le
       job échoue si l'une manque. Les deux dernières — vérification et manifeste — sont **absentes
       et déclarées telles** jusqu'au lot 3.
-- [ ] **5.5** Test `internal/cli/backup_test.go` — `koffr backup <db>` et `--dry-run`, qui **dit ce
+- [x] **5.5** Test `internal/cli/backup_test.go` — `koffr backup <db>` et `--dry-run`, qui **dit ce
       qu'il ferait** sans rien écrire.
-- [ ] **5.6** `internal/domain/backup/rules.md` : `BKP-01` à `BKP-06`, plus `STO-01`.
-- [ ] **5.7** Vague verte : `verify`, commit `feat(backup): back up a database to an encrypted archive`.
+- [x] **5.6** `internal/domain/backup/rules.md` : `BKP-01` à `BKP-06`, plus `STO-01`.
+- [x] **5.7** Vague verte : `verify`, commit `feat(backup): back up a database to an encrypted archive`.
 
 ### Vague 6 — De bout en bout, sur un vrai parc (`lot2/wave-6-end-to-end`)
 
@@ -291,6 +304,35 @@ Sur l'instance de recette, avec son parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 5, le cas d'usage de sauvegarde
+
+- **`BKP-01` à `BKP-06` écrites avant le code**, et le verrou est un fichier lisible à l'œil
+  (`N-5`) : un verrou laissé par un processus mort — ou tronqué par une coupure — **est repris**,
+  parce qu'une machine qui perd le courant à 3 h doit se sauvegarder la nuit suivante sans que
+  personne ne se connecte pour effacer un fichier.
+- **La décision de tampon est pure** : `DecideStaging` ne touche ni disque ni horloge, ce qui la
+  rend montrable par `doctor` sans lancer de sauvegarde. Les trois cas d'imposition du § 4.5 passent
+  **par-dessus** un `stream` explicite, et la décision **dit lequel** a décidé.
+- **Aucun flottant ne décide si un disque a de la place** : la marge × 1,5 est une fraction
+  (ADR-0006).
+- **`E-055` est tenue par la structure du code**, pas par une intention : en `stage`, `dump.Close()`
+  est appelé **avant** la première écriture vers une destination, et le `defer` qui ferme le fichier
+  tampon vient après. Un test le constate sur l'ordre.
+- **`N-12` et `RSV-12` ajoutées** : `E-061` a besoin de la taille de la base, donc la sonde a gagné
+  une requête par famille. La garde de `queries_test.go` **les a refusées toutes les deux** avant
+  qu'elles ne soient inscrites. La sonde PostgreSQL n'envoyait **aucune** requête jusqu'ici ; elle en
+  envoie une maintenant, et c'est une perte qu'il vaut mieux nommer que découvrir.
+- **`N-13`** : pas d'historique des sauvegardes dans ce lot — le catalogue est au lot 3. Le port
+  existe, l'adaptateur rend « aucune », et l'estimation passe donc toujours par le repli.
+- **`N-14`** : la tâche `5.6` demandait un `STO-01` qui n'existe pas, pour la même raison que `N-9`.
+- **Un test m'a repris** : j'avais écrit qu'un `--dry-run` en échec devait quand même afficher
+  quelque chose. Il n'affiche rien, et c'est correct — l'erreur nomme la base. L'assertion a été
+  réécrite pour dire la règle réelle, pas celle que j'avais supposée.
+- **Ce qui manque et qui est dit** : le dry-run d'une base **joignable** et la sauvegarde complète
+  ne sont pas prouvés ici — `internal/cli` n'a pas de fixtures de conteneurs. C'est la vague 6, sur
+  un vrai parc.
+- `mise run verify` : **0**.
 
 ### 2026-09-22 — vague 4, dumper pour de vrai
 

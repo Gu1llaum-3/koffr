@@ -40,6 +40,7 @@ La matrice du § 5.2, et la phrase qui la gouverne : **la compatibilité prime s
 | # | Règle (une phrase, vérifiable) | Source | Test |
 | --- | --- | --- | --- |
 | RSV-11 | La sonde d'une base MySQL ou MariaDB **nomme les tables MyISAM** qu'elle trouve : `--single-transaction` ne les couvre pas, donc l'archive peut les attraper en cours de modification. Une base entièrement transactionnelle **n'avertit de rien**. Si koffr **n'a pas pu regarder** — droits insuffisants sur le catalogue —, il le **dit** au lieu de rapporter une absence qu'il n'a pas vérifiée. La sonde reste réussie dans ce cas : un compte restreint se sauvegarde quand même. | `E-056`, § 5.3 `F3.7` | `resolve/myisam_test.go › TestRSV11MyISAMTablesAreNamedInTheWarning`, `› TestRSV11AFullyTransactionalDatabaseWarnsAboutNothing`, `› TestRSV11NotBeingAbleToTellIsSaid`, `engine/probe_test.go › TestTheProbeNamesTheMyISAMTables` |
+| RSV-12 | La sonde rapporte la **taille de la base** telle que le serveur la donne. C'est le repli de `E-061` : sans sauvegarde précédente dont extrapoler, c'est tout ce dont le contrôle d'espace dispose. Une sonde qui ne peut pas mesurer **réussit quand même** et rend zéro — on ne refuse pas de sauvegarder parce qu'on n'a pas su mesurer. | `E-061`, § 5.3 `F3.10` | `engine/probe_test.go › TestTheProbeReportsTheSizeOfTheDatabase`, `backup/staging_test.go › TestBKP05TheExpectedSizeComesFromTheLastBackupFirst` |
 
 ## Divergences avec le cahier des charges
 
