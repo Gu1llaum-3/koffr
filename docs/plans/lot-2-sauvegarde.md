@@ -318,6 +318,12 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   **catalogue**, pas une table sauvegardée — c'est la ligne que trace ADR-0013.
 - `RSV-11` : une base entièrement InnoDB **n'avertit de rien**, et un compte qui ne peut pas lire le
   catalogue produit « koffr n'a pas pu vérifier », jamais « il n'y en a pas ».
+- **La CI a échoué sur un test qui n'est pas de cette vague**, et c'était un vrai défaut :
+  `internal/obs` utilisait `t.TempDir()` pour la rotation, alors que `lumberjack` supprime ses
+  vieilles archives depuis une goroutine qui **survit à `Close`**. Le ménage échouait par
+  intermittence sur « directory not empty ». Le test a maintenant son répertoire à lui, retiré avec
+  un peu de patience. Le défaut existait depuis le lot 0 ; ce sont les conteneurs de cette vague,
+  qui chargent la machine, qui l'ont rendu visible.
 - Joué sur l'instance Multipass avec de **vrais serveurs** : 16 tests, tous verts, dont
   `pg_restore --list` sur l'archive produite. `mise run verify` : **0**.
 
