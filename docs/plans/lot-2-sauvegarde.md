@@ -126,6 +126,8 @@ Constaté dans le code, pas supposé.
   les codes existants sont `CFG`, `RSV`, `BKP`, `VRF`, `CAT`, `RET`, `RST`, `SCH`, `ALR`, `CRY`,
   `UPL`. *Correction* : les trois règles deviennent **`BKP-07`, `BKP-08` et `BKP-09`** dans
   `internal/domain/backup/rules.md`, `BKP-01` à `BKP-06` restant à la vague 5 comme prévu.
+  **Étendue le 2026-09-21** : la tâche `3.5` invente de même un code `STO`, qui n'est pas davantage
+  déclaré. La règle de chemin devient **`BKP-10`**, au même endroit et pour la même raison.
   *Exclut* : un `rules.md` dans un adaptateur, et un douzième préfixe de registre non déclaré.
 - **N-7 L'empreinte `sha256_raw` est celle du flux *avant* compression, `sha256_stored` celle de ce
   qui est écrit.** *Raison* : le manifeste du § 5.3 porte les deux, et seule la seconde se vérifie
@@ -174,19 +176,19 @@ Exigences : `E-025`, et la moitié de `E-024`.
 
 Exigences : `E-012a`, `E-066`, `E-070`.
 
-- [ ] **3.1** Test d'abord `internal/store/store_test.go` — **l'interface unique** de `E-066` :
+- [x] **3.1** Test d'abord `internal/store/store_test.go` — **l'interface unique** de `E-066` :
       écrire en flux, lire en flux, lister, supprimer, tester l'accès. Le test est écrit **contre
       l'interface**, pas contre `filesystem`, pour que S3 et SFTP le rejouent au lot 4.
-- [ ] **3.2** Test — **`STO-01`** : le chemin est déterministe et lisible —
+- [x] **3.2** Test — **`STO-01`** : le chemin est déterministe et lisible —
       `<base>/<AAAA>/<MM>/<base>_<horodatage>_<id>.<ext>` — et se reconstruit sans la base locale
       (`E-070`).
-- [ ] **3.3** Test — une écriture interrompue **ne laisse pas d'archive partielle** visible :
+- [x] **3.3** Test — une écriture interrompue **ne laisse pas d'archive partielle** visible :
       fichier temporaire puis renommage atomique.
-- [ ] **3.4** Test — tester l'accès dit **pourquoi** il échoue : répertoire absent, droits, disque
+- [x] **3.4** Test — tester l'accès dit **pourquoi** il échoue : répertoire absent, droits, disque
       plein.
-- [ ] **3.5** `internal/store/rules.md` n'existe pas — `store` est un adaptateur (ADR-0010) :
+- [x] **3.5** `internal/store/rules.md` n'existe pas — `store` est un adaptateur (ADR-0010) :
       `STO-01` va dans `internal/domain/backup/rules.md`, avec sa raison.
-- [ ] **3.6** Vague verte : `verify`, commit `feat(store): the single destination interface, and the filesystem one`.
+- [x] **3.6** Vague verte : `verify`, commit `feat(store): the single destination interface, and the filesystem one`.
 
 ### Vague 4 — Dumper pour de vrai (`lot2/wave-4-dump`)
 
@@ -278,6 +280,29 @@ Sur l'instance de recette, avec son parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-21 — vague 3, écrire quelque part
+
+- **`internal/store/storetest`** porte la suite de conformité d'`E-066` : **huit promesses**, écrites
+  une fois, contre l'**interface**. `filesystem` les passe ; S3 et SFTP les rejoueront au lot 4 sans
+  qu'on réécrive une ligne. Une interface que chaque implémentation lit à sa façon n'est pas une
+  interface.
+- `BKP-10` à `BKP-12` écrites avant le code. **`N-9` étendue** : la tâche `3.5` inventait un code
+  `STO`, pas plus déclaré que `PIP` ; la règle de chemin est devenue `BKP-10`.
+- **Écriture atomique** : on écrit à côté, on synchronise, on renomme. Un chemin qui porte le nom
+  d'une archive porte une archive **entière** — une moitié est pire que rien, parce qu'elle a l'air
+  restaurable.
+- `BKP-10` teste aussi ce que le CDC ne dit pas : un identifiant de base contenant
+  `../../etc/passwd` **ne sort pas** de son répertoire. Une configuration est un fichier qu'on
+  édite ; un chemin qui grimpe est une sauvegarde qui écrase autre chose.
+- **Le lint a signalé une entorse à nos propres règles** : mes noms de sous-tests étaient en
+  **français**, ce que `CLAUDE.md` réserve au pilotage. `misspell` s'en est plaint — il lisait du
+  français comme de l'anglais fautif. Traduits.
+- **Et j'ai refait la faute du lot 1** : le script d'écriture du journal a échoué sur une ancre
+  introuvable, donc ni les cases ni le journal n'étaient écrits, et le commit est parti quand même.
+  La leçon était dans le skill `implementer` depuis la clôture du lot 1 — **relire le fichier**, pas
+  le code de retour. Rattrapé par amendement du commit.
+- `mise run verify` : **0**.
 
 ### 2026-09-19 — vague 1, chiffrement et clés
 
