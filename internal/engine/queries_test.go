@@ -20,7 +20,14 @@ import (
 // Adding to it is a decision, not an edit: the dump stays a sub-process, and
 // reading the data to back up through a driver is what E-001 forbids.
 var allowedStatements = []string{
+	// What the server is, for E-041 and the compatibility matrix.
 	"SELECT VERSION()",
+
+	// Which tables are not transactional, for E-056. This reads the
+	// **catalogue**, never a table koffr backs up: the difference between
+	// metadata and data is the line ADR-0013 draws, and it holds here.
+	// Added at the lot 2, wave 4 — deliberately, after this guard refused it.
+	"SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND engine = 'MyISAM' ORDER BY table_name",
 }
 
 // looksLikeSQL matches a string literal that would reach a server.

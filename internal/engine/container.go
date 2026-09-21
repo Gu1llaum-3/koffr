@@ -98,34 +98,44 @@ func (f *ContainerFinder) FindIn(ctx context.Context, name string, family resolv
 	return found, nil
 }
 
-// connect opens the Docker client. When a socket is named, koffr uses that one
-// and nothing else, so that an error can say which socket it wanted.
+// connect opens the Docker client of this finder.
 func (f *ContainerFinder) connect() (*client.Client, error) {
+	return dockerAccess{socket: f.options.Socket}.connect()
+}
+
+// dockerAccess is the one place koffr opens a Docker socket. Both the
+// resolution of a tool inside a container and the dump that runs there go
+// through it, so that a failure always names the socket koffr wanted.
+type dockerAccess struct {
+	socket string
+}
+
+func (d dockerAccess) connect() (*client.Client, error) {
 	options := []client.Opt{client.WithAPIVersionNegotiation()}
 
-	if f.options.Socket != "" {
-		options = append(options, client.WithHost("unix://"+f.options.Socket))
+	if d.socket != "" {
+		options = append(options, client.WithHost("unix://"+d.socket))
 	} else {
 		options = append(options, client.FromEnv)
 	}
 
 	docker, err := client.NewClientWithOpts(options...)
 	if err != nil {
-		return nil, fmt.Errorf("the Docker socket %s: %w", f.socketName(), err)
+		return nil, fmt.Errorf("the Docker socket %s: %w", d.name(), err)
 	}
 
 	if _, err := docker.Ping(context.Background()); err != nil {
 		_ = docker.Close()
 
-		return nil, fmt.Errorf("the Docker socket %s did not answer: %w", f.socketName(), err)
+		return nil, fmt.Errorf("the Docker socket %s did not answer: %w", d.name(), err)
 	}
 
 	return docker, nil
 }
 
-func (f *ContainerFinder) socketName() string {
-	if f.options.Socket != "" {
-		return f.options.Socket
+func (d dockerAccess) name() string {
+	if d.socket != "" {
+		return d.socket
 	}
 
 	return "of this machine"

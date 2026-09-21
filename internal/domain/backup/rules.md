@@ -28,6 +28,18 @@ adaptateur n'a pas de `rules.md` (ADR-0010) et qu'`ARCHITECTURE.md` ne déclare 
 | BKP-11 | Une écriture interrompue **ne laisse pas d'archive partielle visible** : on écrit à côté, puis on renomme. Un fichier qui porte le nom d'une archive est une archive entière. | `E-066`, § 2 `P3` | `store/storetest › an interrupted write leaves nothing visible` |
 | BKP-12 | Tester l'accès à une destination **dit pourquoi** il échoue — répertoire absent, droits, disque plein — et n'écrit rien de durable. | `E-066`, § 5.5 `F5.1` | `store/storetest › checking access` |
 
+## Le dump
+
+Ces règles portent sur ce que `internal/engine` garantit en lançant l'outil. Elles vivent ici pour
+la raison de `N-9` : un adaptateur n'a pas de `rules.md`.
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| BKP-13 | Le dump sort **sur un flux**, jamais dans un fichier intermédiaire : PostgreSQL en `-Fc` avec `--no-owner --no-privileges`, MySQL et MariaDB avec `--single-transaction`, routines, déclencheurs et événements. Le mot de passe voyage par **l'environnement**, jamais sur la ligne de commande. | `E-054`, `E-056`, `E-115`, `N-3` | `engine/dump_test.go › TestADumpOfPostgreSQLIsAnArchivePgRestoreReads`, `› TestThePostgreSQLDumpCarriesTheOptionsOfTheSpecification`, `› TestTheMySQLFamilyDumpIsTransactionalAndComplete` |
+| BKP-14 | **Fermer le dump attend le sous-process** et remonte ce qu'il a dit : un dump dont le process a échoué produit une archive parfaitement formée de rien, et seul le code de retour les distingue. Un dump **abandonné en cours de lecture est arrêté**, pas laissé tourner. C'est aussi ce qui ferme la connexion à la base **avant** que le moindre envoi ne commence. | `E-055`, § 2 `P3` | `engine/dump_test.go › TestADumpThatFailsIsAFailure`, `› TestClosingTheDumpEndsTheConnection`, `› TestClosingAHalfReadDumpStopsIt` |
+| BKP-15 | Le format répertoire `-Fd` est **refusé dans la stratégie `exec`**, avec un message qui nomme le conteneur et la sortie — koffr ne sait pas relire un répertoire rempli dans un conteneur comme une archive. Hors conteneur, il **n'est pas un flux** non plus : il s'écrit dans un répertoire de tampon, ce qui est la raison pour laquelle le CDC lui impose le mode `stage`. | `E-054`, ADR-0015, § 5.3 `F3.5` | `engine/dump_test.go › TestTheDirectoryFormatIsRefusedInTheExecStrategy`, `› TestTheDirectoryFormatSaysItNeedsStaging` |
+| BKP-16 | Quand une base déclare la stratégie `exec`, **le dump lui-même** passe dans son conteneur, avec le client de son image, et le flux en ressort. La résolution seule ne suffit pas : c'est ce qu'ADR-0015 exige pour un parc mixte MySQL / MariaDB. | `E-046`, ADR-0015 | `engine/dump_test.go › TestAMariaDBIsDumpedByTheClientOfItsOwnContainer`, `› TestAPostgreSQLIsDumpedInsideItsOwnContainer` |
+
 ## Constantes et seuils
 
 | Nom | Valeur | Source | Confirmé par |

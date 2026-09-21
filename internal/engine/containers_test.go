@@ -17,6 +17,10 @@ import (
 // fake driver would agree with whatever the code believes (N-3).
 type server struct {
 	target resolve.Target
+
+	// name is what Docker knows the container by — what the exec strategy is
+	// given in the configuration.
+	name string
 }
 
 // The same credentials everywhere: what is under test is the probe, not the
@@ -51,14 +55,17 @@ func startPostgres(t *testing.T, version string) server {
 		t.Fatalf("container port: %v", err)
 	}
 
-	return server{target: resolve.Target{
-		Engine:   resolve.PostgreSQL,
-		Host:     host,
-		Port:     int(port.Num()),
-		Database: probeDatabase,
-		User:     probeUser,
-		Password: probePassword,
-	}}
+	return server{
+		target: resolve.Target{
+			Engine:   resolve.PostgreSQL,
+			Host:     host,
+			Port:     int(port.Num()),
+			Database: probeDatabase,
+			User:     probeUser,
+			Password: probePassword,
+		},
+		name: containerName(t, container),
+	}
 }
 
 func startMariaDB(t *testing.T, version string) server {
@@ -75,7 +82,7 @@ func startMariaDB(t *testing.T, version string) server {
 	}
 	testcontainers.CleanupContainer(t, container)
 
-	return server{target: mysqlTarget(t, container, resolve.MariaDB)}
+	return server{target: mysqlTarget(t, container, resolve.MariaDB), name: containerName(t, container)}
 }
 
 func startMySQL(t *testing.T, version string) server {
@@ -92,7 +99,7 @@ func startMySQL(t *testing.T, version string) server {
 	}
 	testcontainers.CleanupContainer(t, container)
 
-	return server{target: mysqlTarget(t, container, resolve.MySQL)}
+	return server{target: mysqlTarget(t, container, resolve.MySQL), name: containerName(t, container)}
 }
 
 // mysqlTarget reads the address of a started container. The family passed here
@@ -123,19 +130,16 @@ func mysqlTarget(t *testing.T, container testcontainers.Container, declared reso
 // which is what the exec strategy is given in the configuration.
 func startMariaDBNamed(t *testing.T, version string) string {
 	t.Helper()
-	needsContainers(t)
 
-	container, err := mariadb.Run(t.Context(), "mariadb:"+version,
-		mariadb.WithDatabase(probeDatabase),
-		mariadb.WithUsername(probeUser),
-		mariadb.WithPassword(probePassword),
-	)
-	if err != nil {
-		t.Fatalf("start mariadb:%s: %v", version, err)
-	}
-	testcontainers.CleanupContainer(t, container)
+	return startMariaDB(t, version).name
+}
 
-	name, err := container.Name(t.Context())
+// containerName reads the name Docker gave a container, without the slash the
+// API puts in front of it.
+func containerName(t *testing.T, started testcontainers.Container) string {
+	t.Helper()
+
+	name, err := started.Name(t.Context())
 	if err != nil {
 		t.Fatalf("container name: %v", err)
 	}
