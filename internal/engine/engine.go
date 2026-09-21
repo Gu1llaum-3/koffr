@@ -15,12 +15,23 @@ import (
 )
 
 // Engine implements the ports the domain declares for reaching a server.
-type Engine struct{}
+type Engine struct {
+	// docker is used only by the exec strategy: a fleet whose databases all run
+	// on the host never opens a socket.
+	docker dockerAccess
+}
 
 // New builds the adapter. It holds no connection: a probe opens one, asks its
 // question and closes it.
 func New() *Engine {
 	return &Engine{}
+}
+
+// NewWithDocker builds an adapter that can also dump inside a container — the
+// exec strategy, which ADR-0015 turns from a convenience into the answer for a
+// mixed MySQL and MariaDB fleet.
+func NewWithDocker(options ContainerOptions) *Engine {
+	return &Engine{docker: dockerAccess{socket: options.Socket}}
 }
 
 // Probe asks a server whether it answers, what family it belongs to and what

@@ -129,6 +129,17 @@ Constaté dans le code, pas supposé.
   **Étendue le 2026-09-21** : la tâche `3.5` invente de même un code `STO`, qui n'est pas davantage
   déclaré. La règle de chemin devient **`BKP-10`**, au même endroit et pour la même raison.
   *Exclut* : un `rules.md` dans un adaptateur, et un douzième préfixe de registre non déclaré.
+- **N-10 (2026-09-22) — en stratégie `exec`, le dump se connecte à `127.0.0.1` sur le port standard
+  du moteur.** *Raison* : l'outil s'exécute **dans le conteneur de la base** ; l'adresse que koffr
+  utilise de l'extérieur est un port publié qui n'y veut rien dire. *Exclut* : transmettre l'hôte et
+  le port de la configuration à un processus qui ne les voit pas de la même façon — ce qui aurait
+  marché sur un poste en réseau `host` et échoué partout ailleurs.
+- **N-11 (2026-09-22) — la vague 4 livre le *refus* de `-Fd`, pas le dump répertoire.** *Constat* :
+  `-Fd` n'est **pas un flux** — pg_dump remplit un répertoire —, et `E-054` lui impose pour cette
+  raison le mode `stage`, qui est la tâche **5.2** (`BKP-03`). *Correction* : `Dump` refuse le format
+  répertoire avec deux erreurs typées qui disent laquelle des deux raisons s'applique, et la vague 5
+  ajoutera l'écriture en répertoire avec le tampon. *Exclut* : une implémentation à moitié qui
+  écrirait un répertoire sans savoir où le mettre.
 - **N-7 L'empreinte `sha256_raw` est celle du flux *avant* compression, `sha256_stored` celle de ce
   qui est écrit.** *Raison* : le manifeste du § 5.3 porte les deux, et seule la seconde se vérifie
   sans déchiffrer. *Exclut* : une seule empreinte, qui rendrait `E-062` impossible au lot 3.
@@ -194,18 +205,18 @@ Exigences : `E-012a`, `E-066`, `E-070`.
 
 Exigences : `E-054`, `E-055`, `E-056`, et la stratégie `exec` **appliquée au dump**.
 
-- [ ] **4.1** Test d'abord `internal/engine/dump_test.go` — contre un **vrai** PostgreSQL : le dump
+- [x] **4.1** Test d'abord `internal/engine/dump_test.go` — contre un **vrai** PostgreSQL : le dump
       sort sur `stdout`, en `-Fc`, avec `--no-owner --no-privileges` (`N-3`), et l'archive obtenue
       est relisible par `pg_restore --list`.
-- [ ] **4.2** Test — contre une **vraie** MariaDB : `--single-transaction`, routines, déclencheurs
+- [x] **4.2** Test — contre une **vraie** MariaDB : `--single-transaction`, routines, déclencheurs
       et événements (`E-056`).
-- [ ] **4.3** Test — **MyISAM détecté** et signalé : une table MyISAM plantée dans la base rend un
+- [x] **4.3** Test — **MyISAM détecté** et signalé : une table MyISAM plantée dans la base rend un
       avertissement que le job porte (`E-056`).
-- [ ] **4.4** Test — le dump passe par la stratégie `exec` quand la base la déclare, **et `-Fd` y
+- [x] **4.4** Test — le dump passe par la stratégie `exec` quand la base la déclare, **et `-Fd` y
       est refusé avec un message qui le dit** (`E-054`, ADR-0015).
-- [ ] **4.5** Test — `E-055` : en `stage`, le sous-process est **terminé et la connexion fermée**
+- [x] **4.5** Test — `E-055` : en `stage`, le sous-process est **terminé et la connexion fermée**
       avant que l'envoi ne commence. Vérifié en observant l'ordre, pas en le supposant.
-- [ ] **4.6** Vague verte : `verify`, commit `feat(engine): dump a database to a stream, per family`.
+- [x] **4.6** Vague verte : `verify`, commit `feat(engine): dump a database to a stream, per family`.
 
 ### Vague 5 — Le cas d'usage de sauvegarde (`lot2/wave-5-backup-use-case`)
 
@@ -280,6 +291,41 @@ Sur l'instance de recette, avec son parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 4, dumper pour de vrai
+
+- **`engine.Dump` rend un flux**, jamais un fichier : la sortie standard du sous-process, telle
+  quelle. `DumpCommand` est exportée parce qu'un dump qui échoue se diagnostique en relançant la
+  commande à la main — et parce qu'un test peut la lire sans démarrer un serveur.
+- **Le mot de passe passe par l'environnement du sous-process**, jamais sur la ligne de commande
+  (`E-115`), et le sous-process **n'hérite de rien** : `os.Environ()` a été **refusé par le lint**
+  (`AR-05`), ce qui était juste. Un `PGPASSWORD` ou un `~/.my.cnf` hérités changeraient en silence
+  ce que contient une archive.
+- **`Close` attend le process et remonte ce qu'il a dit.** C'est `BKP-14` et ce n'est pas de
+  l'hygiène : un dump dont le process meurt en route produit une archive parfaitement formée de
+  rien. Un dump abandonné en cours de lecture est **arrêté**, pas laissé tourner sur une base de
+  production pendant qu'on téléverse.
+- **`E-055` observée, pas supposée** : après `Close`, le test interroge `pg_stat_activity` jusqu'à
+  ce que le backend de `pg_dump` ait disparu. Deux cas : lu jusqu'au bout, et abandonné après huit
+  octets.
+- **La stratégie `exec` porte maintenant le dump lui-même** (ADR-0015) : une MariaDB 11.4 est
+  dumpée par le client de sa propre image, une PostgreSQL 16 aussi, et le flux sort du conteneur
+  démultiplexé. `N-10` ajoutée pour l'adresse utilisée là-dedans.
+- **`-Fd` est refusé deux fois, avec deux messages différents** — dans un conteneur, et en flux —
+  et `N-11` dit pourquoi l'écriture en répertoire attend la vague 5.
+- **La garde de `queries_test.go` a mordu**, comme prévu : la requête MyISAM de `E-056` a été
+  **refusée** avant d'être ajoutée à la liste, délibérément et avec sa raison. Elle lit le
+  **catalogue**, pas une table sauvegardée — c'est la ligne que trace ADR-0013.
+- `RSV-11` : une base entièrement InnoDB **n'avertit de rien**, et un compte qui ne peut pas lire le
+  catalogue produit « koffr n'a pas pu vérifier », jamais « il n'y en a pas ».
+- **La CI a échoué sur un test qui n'est pas de cette vague**, et c'était un vrai défaut :
+  `internal/obs` utilisait `t.TempDir()` pour la rotation, alors que `lumberjack` supprime ses
+  vieilles archives depuis une goroutine qui **survit à `Close`**. Le ménage échouait par
+  intermittence sur « directory not empty ». Le test a maintenant son répertoire à lui, retiré avec
+  un peu de patience. Le défaut existait depuis le lot 0 ; ce sont les conteneurs de cette vague,
+  qui chargent la machine, qui l'ont rendu visible.
+- Joué sur l'instance Multipass avec de **vrais serveurs** : 16 tests, tous verts, dont
+  `pg_restore --list` sur l'archive produite. `mise run verify` : **0**.
 
 ### 2026-09-21 — vague 3, écrire quelque part
 

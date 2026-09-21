@@ -105,4 +105,33 @@ type ServerInfo struct {
 	Reachable bool
 	Family    Family
 	Version   Version
+
+	// MyISAMTables are the tables of this database that MyISAM holds.
+	// --single-transaction promises nothing about them: they are dumped
+	// outside the snapshot, so the archive can be inconsistent (E-056).
+	MyISAMTables []string
+
+	// MyISAMUnknown says why koffr could not tell, when it could not — an
+	// account that cannot read the catalogue, say. Silence about a question
+	// koffr failed to ask is not an answer.
+	MyISAMUnknown string
+}
+
+// MyISAMWarning is what an operator has to be told about the consistency of the
+// archives of this database, and the empty string when there is nothing to
+// tell. A warning that is always there is a warning nobody reads.
+func (s ServerInfo) MyISAMWarning() string {
+	switch {
+	case s.MyISAMUnknown != "":
+		return "koffr could not check this database for MyISAM tables, so the consistency of " +
+			"its archives is unknown: " + s.MyISAMUnknown
+
+	case len(s.MyISAMTables) > 0:
+		return fmt.Sprintf("%d table(s) of this database use MyISAM (%s): --single-transaction "+
+			"does not cover them, so an archive may catch them mid-change",
+			len(s.MyISAMTables), strings.Join(s.MyISAMTables, ", "))
+
+	default:
+		return ""
+	}
 }

@@ -40,7 +40,7 @@ func TestTheLogFileIsWrittenAlongsideStandardOutput(t *testing.T) {
 // The file rotates at the size it was given, and only the configured number of
 // archives is kept.
 func TestTheLogFileRotatesAndKeepsTheConfiguredNumberOfArchives(t *testing.T) {
-	dir := t.TempDir()
+	dir := rotationDir(t)
 	path := filepath.Join(dir, "koffr.log")
 
 	logger, closeLogger := newTestLogger(t, &bytes.Buffer{}, Options{
@@ -78,6 +78,42 @@ func TestTheLogFileRotatesAndKeepsTheConfiguredNumberOfArchives(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// rotationDir gives this test a directory of its own, removed on the way out
+// with a little patience.
+//
+// t.TempDir would be the obvious choice and is the wrong one here: lumberjack
+// drops its oldest archives from a goroutine that outlives Close, so a file can
+// still appear or vanish under the cleanup, which then fails the test with
+// "directory not empty". The race is the library's to have, not this test's to
+// fail on — what is under test is the rotation, and it is asserted above.
+func rotationDir(t *testing.T) string {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "koffr-rotation-")
+	if err != nil {
+		t.Fatalf("make a directory to rotate in: %v", err)
+	}
+
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+
+		for {
+			if err := os.RemoveAll(dir); err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Logf("could not remove %s: a background goroutine is still writing there", dir)
+
+				return
+			}
+
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+
+	return dir
 }
 
 // countLogs returns how many current log files and how many archives sit in dir.

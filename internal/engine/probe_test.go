@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Gu1llaum-3/koffr/internal/domain/resolve"
@@ -139,5 +140,43 @@ func TestTheConfigurationDoesNotDecideTheFamily(t *testing.T) {
 	if got.Family != resolve.MariaDB {
 		t.Errorf("Family = %q, want %q — the configuration was believed over the server",
 			got.Family, resolve.MariaDB)
+	}
+}
+
+// E-056 — the probe finds the MyISAM tables of the database and names them.
+// --single-transaction promises nothing about them: they are dumped outside the
+// snapshot, so the manifest and the interface have to say so.
+func TestTheProbeNamesTheMyISAMTables(t *testing.T) {
+	server := startMariaDB(t, "11.4")
+	seedMySQLFamily(t, server.target, true)
+
+	info, err := engine.New().Probe(t.Context(), server.target)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if info.MyISAMUnknown != "" {
+		t.Fatalf("the probe could not look: %s", info.MyISAMUnknown)
+	}
+
+	if len(info.MyISAMTables) != 1 || info.MyISAMTables[0] != "legacy_ledger" {
+		t.Fatalf("MyISAMTables = %v, want [legacy_ledger]", info.MyISAMTables)
+	}
+	if !strings.Contains(info.MyISAMWarning(), "legacy_ledger") {
+		t.Errorf("the warning does not name the table:\n%s", info.MyISAMWarning())
+	}
+}
+
+// E-056 — and a database that is entirely InnoDB warns about nothing.
+func TestTheProbeSaysNothingOfAFullyTransactionalDatabase(t *testing.T) {
+	server := startMariaDB(t, "11.4")
+	seedMySQLFamily(t, server.target, false)
+
+	info, err := engine.New().Probe(t.Context(), server.target)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+
+	if got := info.MyISAMWarning(); got != "" {
+		t.Errorf("an InnoDB-only database warned anyway: %s", got)
 	}
 }

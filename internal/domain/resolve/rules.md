@@ -35,6 +35,12 @@ La matrice du § 5.2, et la phrase qui la gouverne : **la compatibilité prime s
 | --- | --- | --- | --- |
 | RSV-10 | La stratégie `exec` se déclare **par base**, jamais globalement, et exige le **socket Docker** : sans lui, l'échec **nomme le socket attendu**. Une base qui déclare `strategy: exec` **sans `container`** est refusée **à la validation de la configuration**, pas au premier job. L'outil trouvé dans le conteneur a la provenance `container` et sa version est obtenue **en l'exécutant là**. Une base qui a déclaré un conteneur **n'utilise jamais** un outil de l'hôte : si le conteneur ne répond pas, l'échec **le nomme** — l'exploitant a demandé celui-là pour une raison. Dans un même parc, les deux modes coexistent, base par base. | `E-013`, `E-046`, § 5.2 `F2.9`, `A-11`, `N-3` et `N-4` du plan de corrections | `engine/exec_test.go › TestRSV10TheContainerToolIsFoundAndRunThere`, `› TestRSV10WithoutADockerSocketTheFailureNamesIt`, `config/exec_test.go › TestRSV10ExecWithoutAContainerIsRefusedAtValidation`, `resolve/diagnose_test.go › TestEachDatabaseResolvesWhereItSaysTo`, `› TestAContainerThatDoesNotAnswerIsNamedAndNotWorkedAround`, `cli/doctor_test.go › TestTheDeclaredContainerReachesTheDomain` |
 
+## Ce que la sonde rapporte en plus de la version
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| RSV-11 | La sonde d'une base MySQL ou MariaDB **nomme les tables MyISAM** qu'elle trouve : `--single-transaction` ne les couvre pas, donc l'archive peut les attraper en cours de modification. Une base entièrement transactionnelle **n'avertit de rien**. Si koffr **n'a pas pu regarder** — droits insuffisants sur le catalogue —, il le **dit** au lieu de rapporter une absence qu'il n'a pas vérifiée. La sonde reste réussie dans ce cas : un compte restreint se sauvegarde quand même. | `E-056`, § 5.3 `F3.7` | `resolve/myisam_test.go › TestRSV11MyISAMTablesAreNamedInTheWarning`, `› TestRSV11AFullyTransactionalDatabaseWarnsAboutNothing`, `› TestRSV11NotBeingAbleToTellIsSaid`, `engine/probe_test.go › TestTheProbeNamesTheMyISAMTables` |
+
 ## Divergences avec le cahier des charges
 
 - **`PATH` est interrogé par `exec.LookPath`, pas en lisant la variable.** `AR-05` réserve la

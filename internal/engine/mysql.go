@@ -37,11 +37,50 @@ func probeMySQLFamily(ctx context.Context, target resolve.Target) (resolve.Serve
 		return resolve.ServerInfo{}, mysqlFailure(err)
 	}
 
-	return resolve.ServerInfo{
+	info := resolve.ServerInfo{
 		Reachable: true,
 		Family:    familyOf(announced),
 		Version:   resolve.ParseVersion(announced),
-	}, nil
+	}
+	info.MyISAMTables, info.MyISAMUnknown = myISAMTables(ctx, database)
+
+	return info, nil
+}
+
+// myISAMQuery asks the catalogue which tables of this database are not
+// transactional. It is written on one line because the guard in
+// queries_test.go reads string literals, and a query split across two of them
+// would be a query it cannot see.
+const myISAMQuery = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND engine = 'MyISAM' ORDER BY table_name"
+
+// myISAMTables returns the tables MyISAM holds, or why koffr could not tell.
+//
+// A failure here is not a failure of the probe: an account that cannot read the
+// catalogue can still be backed up, and doctor must still be able to walk a
+// fleet. What koffr refuses is to report an absence it never verified (E-056).
+func myISAMTables(ctx context.Context, database *sql.DB) ([]string, string) {
+	rows, err := database.QueryContext(ctx, myISAMQuery)
+	if err != nil {
+		return nil, err.Error()
+	}
+	defer func() { _ = rows.Close() }()
+
+	var found []string
+
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err.Error()
+		}
+
+		found = append(found, name)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err.Error()
+	}
+
+	return found, ""
 }
 
 // familyOf reads the family out of the version banner. MariaDB writes its name
