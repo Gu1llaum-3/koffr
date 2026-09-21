@@ -53,7 +53,10 @@ func NewRoot() *cobra.Command {
 	root.PersistentFlags().String("tools-dir", config.DefaultPaths().ToolsDir(),
 		"directory holding the tools koffr installed")
 
-	root.AddCommand(newVersionCommand(), newConfigCommand(), newToolsCommand(), newDoctorCommand(), newKeygenCommand())
+	root.AddCommand(
+		newVersionCommand(), newConfigCommand(), newToolsCommand(),
+		newDoctorCommand(), newKeygenCommand(), newBackupCommand(),
+	)
 
 	return root
 }

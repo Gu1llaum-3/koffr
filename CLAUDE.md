@@ -129,6 +129,10 @@ déjà.
 - **Les clients MySQL et MariaDB ne peuvent pas coexister** sur Debian et Ubuntu
   (`Conflicts: virtual-mysql-client-core`) : installer l'un supprime l'autre, et `mysqldump`
   appartient alors à celui qui reste. Un parc mixte passe par la stratégie `exec` (ADR-0015).
+- **`syscall.Statfs_t.Bsize` n'a pas le même type selon la plateforme** : `int64` sur Linux,
+  `uint32` sur macOS. Une conversion juste sur l'une est signalée « inutile » par `unconvert` sur
+  l'autre, et le lint local passe pendant que celui de la CI échoue. Un fichier par plateforme avec
+  sa balise de construction, pas une conversion qui ne peut pas être juste partout.
 - **Vérifier la version courante d'une action ou d'un outil avant de l'épingler.** Ce que le modèle
   « connaît » date de son entraînement : `actions/checkout@v5` et `jdx/mise-action@v3` étaient
   périmées (v7 et v4). Une requête à l'API du dépôt coûte deux secondes.

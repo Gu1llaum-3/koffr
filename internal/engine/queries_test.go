@@ -28,6 +28,13 @@ var allowedStatements = []string{
 	// metadata and data is the line ADR-0013 draws, and it holds here.
 	// Added at the lot 2, wave 4 — deliberately, after this guard refused it.
 	"SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND engine = 'MyISAM' ORDER BY table_name",
+
+	// How big the database is, for E-061. With no previous backup to
+	// extrapolate from, this is all the disk-space check has to work with.
+	// Catalogue again, never a table koffr backs up.
+	// Added at the lot 2, wave 5 — deliberately, after this guard refused them.
+	"SELECT pg_database_size(current_database())",
+	"SELECT COALESCE(SUM(data_length + index_length), 0) FROM information_schema.tables WHERE table_schema = DATABASE()",
 }
 
 // looksLikeSQL matches a string literal that would reach a server.

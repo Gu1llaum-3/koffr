@@ -111,6 +111,12 @@ type ServerInfo struct {
 	// outside the snapshot, so the archive can be inconsistent (E-056).
 	MyISAMTables []string
 
+	// DatabaseBytes is how much this database occupies on the server, as the
+	// server reports it. It is the fallback of E-061: with no previous backup
+	// to extrapolate from, it is all koffr has to decide whether staging would
+	// fill the volume. Zero means koffr could not tell.
+	DatabaseBytes int64
+
 	// MyISAMUnknown says why koffr could not tell, when it could not — an
 	// account that cannot read the catalogue, say. Silence about a question
 	// koffr failed to ask is not an answer.

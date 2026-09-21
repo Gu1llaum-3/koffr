@@ -32,12 +32,26 @@ func probePostgreSQL(ctx context.Context, target resolve.Target) (resolve.Server
 
 	announced := connection.PgConn().ParameterStatus("server_version")
 
-	return resolve.ServerInfo{
+	info := resolve.ServerInfo{
 		Reachable: true,
 		Family:    resolve.PostgreSQL,
 		Version:   resolve.ParseVersion(announced),
-	}, nil
+	}
+
+	// One query, for the size E-061 falls back on. A probe that sent none was
+	// a nice property to have; a disk-space check that has nothing to work with
+	// on a first backup is a worse one to lose.
+	var size int64
+	if err := connection.QueryRow(ctx, postgresSizeQuery).Scan(&size); err == nil {
+		info.DatabaseBytes = size
+	}
+
+	return info, nil
 }
+
+// postgresSizeQuery asks how much this database occupies. It reads the
+// catalogue, never a table koffr backs up (ADR-0013).
+const postgresSizeQuery = "SELECT pg_database_size(current_database())"
 
 func postgresURL(target resolve.Target) string {
 	address := fmt.Sprintf("%s:%d", target.Host, target.Port)
