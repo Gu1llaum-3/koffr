@@ -19,9 +19,15 @@ en sort des anomalies `A-nn` et des décisions. Elle a lieu à la fin de chaque 
 Données, comptes, état de la base, ce qui doit tourner. Qui prépare.
 
 ## Ce qui est voulu et pourrait passer pour un bug
-Une ligne par écart assumé, avec son `N-n`, son ADR ou sa `Q-nn`.
+Une ligne par écart assumé, avec son `N-n`, son ADR ou sa `Q-nn`. **Se met à jour quand une
+décision est prise** : un scénario qui ne répercute pas ce qui vient d'être tranché produit de
+fausses anomalies au rejeu suivant.
 
 ## Parcours
+Un pas dit **ce qu'on doit voir**, pas seulement ce qu'on ne doit pas voir : « le fichier ne
+contient aucune ligne de journal » est vrai d'un fichier vide, et c'est ainsi qu'un parcours est
+déclaré passé sur un défaut.
+
 ### 1. {{Titre}}
 1. Faire … → on doit voir …
 2. …

@@ -44,7 +44,19 @@ ferait tomber — et le vérifier. Deux pièges vus en vrai :
 - le test s'exécute sur un document ou un état où le cas **n'existe pas** (vérifier l'absence d'une
   clé dans une configuration qui n'a aucune destination : il passe, et il ne teste rien) ;
 - le test garde un chemin que **personne n'emprunte** (« aucune connexion sortante » est vrai tant
-  que rien n'ouvre de connexion). Câbler le chemin, ou dire que la garde est vide.
+  que rien n'ouvre de connexion). Câbler le chemin, ou dire que la garde est vide ;
+- le test vérifie une **absence** : « le mot de passe n'apparaît pas » passe parce que le code
+  testé ne reçoit jamais de mot de passe. Un test d'absence se remplace par une **liste blanche**
+  de ce qui est permis — ce que le code peut émettre est énuméré, et y ajouter une entrée est une
+  décision, pas une édition ;
+- le test d'une **interruption** n'interrompt rien : un `kill` à deux secondes sur un travail qui
+  en dure une et demie ne laisse rien à ramasser. Vérifier que l'état intermédiaire **existait**
+  avant de vérifier qu'il a disparu ;
+- le **harnais** ment : deux lecteurs qui poussent dans le même canal peuvent rendre `stdout` et
+  `stderr` intervertis, et le test est vert pendant que la machine écrit sur la mauvaise sortie. Un
+  harnais est du code, il se relit comme le reste ;
+- la **fixture est trop petite** pour que le défaut se voie : une table de trois lignes ne montre
+  pas qu'un dump était déjà compressé. Quand la règle parle de volume, la fixture en a.
 
 **Une règle de lint qu'on assouplit s'accompagne de la garde qui la remplace, le jour même.**
 ADR-0013 a ouvert `database/sql` à `internal/engine` ; `internal/engine/queries_test.go` lit les

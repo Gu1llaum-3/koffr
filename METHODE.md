@@ -99,6 +99,10 @@ il n'écrit que ce qui lui est propre.
    qui teste ce que la précédente a écrit —, on le **dit dans le journal**, et on prouve au moins
    que le test mord : retirer la contrainte, constater l'échec, la remettre. Un rouge par
    suppression vaut moins qu'un rouge par antériorité, et ne se présente jamais comme tel.
+   **Un vert qu'on n'a pas vu rouge ne compte pas** : il passe pour de mauvaises raisons plus
+   souvent qu'on ne le croit — un fichier vide qui « ne contient aucune ligne de journal », un
+   harnais qui intervertit les deux flux qu'il compare, un `kill` qui frappe un processus déjà
+   terminé. Le geste détaillé est dans le skill `implementer`.
 4. **Vérification complète à la fin de chaque vague** (la commande `verify` de `CLAUDE.md`), codes
    de retour lus, pas seulement la dernière ligne. Quand une CI existe, on attend sa **fin** avant
    de merger, en s'assurant d'abord que l'exécution qu'on surveille **existe** : une commande de
@@ -117,6 +121,9 @@ il n'écrit que ce qui lui est propre.
    passer ce qu'on croyait corriger : un message d'erreur contient souvent le mot qu'on cherchait,
    pour une raison qui n'a rien à voir.
 7. **Une case se coche au moment où la tâche passe**, pas en bloc à la fin.
+7. bis **Une décision `N-n` qui contraint le code nomme la tâche qui la teste.** Sans elle, elle
+   n'est pas livrée et **personne ne le voit** : une `N-n` écrite et non testée est une intention,
+   pas une décision.
 8. **Ce qui sort du plan ne se code pas** : une idée va dans `docs/backlog.md`, une inconnue dans
    `docs/questions.md`, un arbitrage dans `docs/decisions.md`. Le plan est amendé par une décision
    `N-n` datée si le périmètre bouge.

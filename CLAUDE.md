@@ -135,6 +135,16 @@ déjà.
   `uint32` sur macOS. Une conversion juste sur l'une est signalée « inutile » par `unconvert` sur
   l'autre, et le lint local passe pendant que celui de la CI échoue. Un fichier par plateforme avec
   sa balise de construction, pas une conversion qui ne peut pas être juste partout.
+- **`pg_dump -Fc` compresse lui-même**, en zlib, par défaut. Le manifeste du § 5.3 porte
+  `--compress=0` pour cette raison : sans lui, zstd recompresse du compressé et `size_raw` mesure
+  autre chose que le dump. Mesuré : 75,7 Mo de dump brut contre 7,1 Mo avec la compression de
+  `pg_dump`. À noter aussi, `pg_dump --compress=zstd:3` existe depuis PostgreSQL 16 et fait mieux
+  que notre chaîne — c'est `B-09`, pas une décision de vague.
+- **`cmd.Print*` de cobra écrit sur la sortie *d'erreur*.** `Command.Print` appelle `OutOrStderr()`,
+  qui retombe sur `os.Stderr` dès qu'aucun écrivain n'est posé : jamais en test, où l'on pose les
+  deux, toujours dans le binaire. `koffr config show > fichier` a produit un fichier vide pendant
+  deux lots. Passer par `say` et `warn` de `internal/cli/streams.go` ; une garde refuse `cmd.Print*`
+  dans le paquet.
 - **Vérifier la version courante d'une action ou d'un outil avant de l'épingler.** Ce que le modèle
   « connaît » date de son entraînement : `actions/checkout@v5` et `jdx/mise-action@v3` étaient
   périmées (v7 et v4). Une requête à l'API du dépôt coûte deux secondes.
@@ -301,3 +311,6 @@ ADR existe pour toute décision structurante.
 - Branches **en anglais** : `lot<N>/wave-<n>-<slug>` pour une vague de plan, `fix/<slug>`,
   `chore/<slug>`. `main` toujours vert ; merge `--no-ff` d'une vague vérifiée.
 - Ne jamais commiter `.env`, `CLAUDE.local.md`, ni un document reçu marqué confidentiel.
+- **La CI ne se déclenche que sur la *pull request*** (`on: pull_request`), jamais sur la poussée
+  d'une branche. Attendre l'exécution avant d'ouvrir la PR bloque indéfiniment ; ouvrir la PR,
+  **puis** attendre que l'exécution existe, puis la surveiller jusqu'à sa fin.
