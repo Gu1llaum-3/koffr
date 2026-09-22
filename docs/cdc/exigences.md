@@ -45,7 +45,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
 | E-011 | Les moteurs supportés sont PostgreSQL 12 à 18, MySQL 8.x et MariaDB 10.6+. | § 3 | contrainte | doit | 1 | couverte (ADR-0004) — les trois familles sondées contre de vrais serveurs 16.15, 11.4.13 et 8.4.11 |
-| E-012a | La destination « système de fichiers local » est supportée. | § 3 | contrainte | doit | 2 | à faire |
+| E-012a | La destination « système de fichiers local » est supportée. | § 3 | contrainte | doit | 2 | couverte (`BKP-11`, `BKP-12`, `store/storetest`) |
 | E-012b | Les destinations S3-compatible et SFTP sont supportées. | § 3 | contrainte | doit | 4 | à faire |
 | E-013 | Les sources d'outils de dump supportées sont la détection sur l'hôte, l'installation gérée par l'agent et `docker exec`. | § 3 | contrainte | doit | 1 | couverte pour **deux** des trois sources — hôte (`RSV-01`) et conteneur (`RSV-10`) ; l'installation gérée est reportée (ADR-0014) |
 | E-014 | La vérification du MVP couvre l'empreinte et la relecture de structure d'archive. | § 3 | contrainte | doit | 3 | à faire |
@@ -63,13 +63,13 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-024 | Une sauvegarde suit sept étapes dans cet ordre : résolution, dump, compression, chiffrement, écriture, vérification, manifeste. | § 4.1 | technique | doit | 2 | à faire |
-| E-025 | Le dump brut n'est jamais matérialisé, ni en mémoire ni sur disque : dump, compression (zstd), chiffrement et calcul d'empreinte sont chaînés en flux, en une seule passe sur la sortie du sous-process. | § 4.1, § 4.5, `F3.3` | technique | doit | 2 | à faire |
+| E-024 | Une sauvegarde suit sept étapes dans cet ordre : résolution, dump, compression, chiffrement, écriture, vérification, manifeste. | § 4.1 | technique | doit | 2 | **partiellement couverte** (`BKP-06`, `BKP-20`) : étapes 01→05 livrées, vérification et manifeste **déclarées absentes**, lot 3 |
+| E-025 | Le dump brut n'est jamais matérialisé, ni en mémoire ni sur disque : dump, compression (zstd), chiffrement et calcul d'empreinte sont chaînés en flux, en une seule passe sur la sortie du sous-process. | § 4.1, § 4.5, `F3.3` | technique | doit | 2 | couverte (`BKP-07`, mesurée en recette : tampon 23,1 Mo pour 295 Mo de dump) |
 | E-026 | L'agent respecte l'arborescence disque prescrite : `/etc/keeper/` (`keeper.yaml`, `recipients.txt`), `/var/lib/keeper/` (`keeper.db`, `tools/<moteur>/<version>/bin/`, `tmp/` purgé au démarrage), `/var/log/keeper/keeper.log` avec rotation interne. | § 4.3 | exploitation | doit | 0 | couverte (`CFG-07`, `CFG-08`) — chemins d'ADR-0001 |
 | E-027 | L'état local est tenu par SQLite via `modernc.org/sqlite`, implémentation pure Go, pour conserver `CGO_ENABLED=0` ; `mattn/go-sqlite3` est interdit. | § 4.4, § 12, `N1` | technique | doit | 0 | couverte (`depguard`, `state/open_test.go › TestTheDriverIsThePureGoOne`) |
 | E-028 | L'état local comprend les tables `databases`, `jobs`, `job_logs`, `backups`, `backup_locations`, `schedules` et `alerts`, avec le contenu décrit au § 4.4. | § 4.4 | donnée | doit | 0 | couverte (`state/migrate_test.go › TestTheSevenTablesOfE028AreCreated`) |
-| E-029 | Trois modes de tampon existent et sont sélectionnables par base : `stage` (fichier tampon compressé et chiffré, puis envoi depuis ce fichier), `stream` (envoi direct, sans reprise possible) et `auto` (arbitrage par exécution selon l'espace, le nombre de destinations, le format de dump et la politique de vérification). | § 4.5 | fonctionnel | doit | 2 | à faire |
-| E-030 | Le mode `stage` est imposé dès que le format `-Fd` est retenu, dès qu'il y a plus d'une destination, ou dès que la vérification structurelle est exigée sans egress. | § 4.5 | fonctionnel | doit | 2 | à faire |
+| E-029 | Trois modes de tampon existent et sont sélectionnables par base : `stage` (fichier tampon compressé et chiffré, puis envoi depuis ce fichier), `stream` (envoi direct, sans reprise possible) et `auto` (arbitrage par exécution selon l'espace, le nombre de destinations, le format de dump et la politique de vérification). | § 4.5 | fonctionnel | doit | 2 | couverte (`BKP-02`, ADR-0016) |
+| E-030 | Le mode `stage` est imposé dès que le format `-Fd` est retenu, dès qu'il y a plus d'une destination, ou dès que la vérification structurelle est exigée sans egress. | § 4.5 | fonctionnel | doit | 2 | couverte (`BKP-03`) |
 | E-031 | `keeper doctor` indique, pour chaque base, le mode de tampon qui sera effectivement appliqué. | § 4.5, `F3.4`, § 5.12 | fonctionnel | doit | 6 | à faire |
 
 ## § 5.1 — Configuration (`F1`)
@@ -105,17 +105,17 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-051 | Un seul job est actif par base à tout instant, garanti par un verrou local ; une demande concurrente est refusée, pas mise en file. | § 5.3 `F3.1` | fonctionnel | doit | 2 | à faire |
+| E-051 | Un seul job est actif par base à tout instant, garanti par un verrou local ; une demande concurrente est refusée, pas mise en file. | § 5.3 `F3.1` | fonctionnel | doit | 2 | couverte (`BKP-01`, vérifiée en recette, verrou orphelin compris) |
 | E-052 | Le nombre de jobs parallèles est plafonné globalement par configuration (`max_parallel_jobs`). | § 5.3 `F3.2`, § 5.1 | fonctionnel | doit | 5 | à faire |
-| E-053 | Le point de coupure vers les destinations suit la politique de tampon du § 4.5 ; le mode effectivement appliqué est enregistré dans le manifeste. | § 5.3 `F3.4`, § 4.5 | fonctionnel | doit | 2 | en question (Q-01) |
-| E-054 | PostgreSQL : le format `-Fc` est le défaut ; le format répertoire `-Fd` avec parallélisme est utilisé au-delà d'un seuil configurable, impose alors le mode `stage`, reste indisponible en stratégie `exec`, et l'agent le signale explicitement. | § 5.3 `F3.5`, § 11 | fonctionnel | doit | 2 | en question (Q-08) |
-| E-055 | En mode `stage`, la connexion à la base est fermée dès la fin du dump, sans attendre la fin des envois. | § 5.3 `F3.6`, § 4.5 | fonctionnel | doit | 2 | à faire |
-| E-056 | MySQL et MariaDB : `--single-transaction` par défaut sur InnoDB, avec routines, déclencheurs et événements ; la présence de tables MyISAM est détectée à la sonde et signalée dans le manifeste et dans l'interface, car elle invalide la cohérence transactionnelle. | § 5.3 `F3.7`, § 11 | fonctionnel | doit | 2 | à faire |
+| E-053 | Le point de coupure vers les destinations suit la politique de tampon du § 4.5 ; le mode effectivement appliqué est enregistré dans le manifeste. | § 5.3 `F3.4`, § 4.5 | fonctionnel | doit | 2 | couverte (`BKP-04`, `Q-01` tranchée par ADR-0016 : `auto`) |
+| E-054 | PostgreSQL : le format `-Fc` est le défaut ; le format répertoire `-Fd` avec parallélisme est utilisé au-delà d'un seuil configurable, impose alors le mode `stage`, reste indisponible en stratégie `exec`, et l'agent le signale explicitement. | § 5.3 `F3.5`, § 11 | fonctionnel | doit | 2 | **partiellement couverte** (`BKP-15`) : `-Fc` et le refus de `-Fd` livrés ; le dump répertoire lui-même attend le tampon, `N-11` |
+| E-055 | En mode `stage`, la connexion à la base est fermée dès la fin du dump, sans attendre la fin des envois. | § 5.3 `F3.6`, § 4.5 | fonctionnel | doit | 2 | couverte (`BKP-14`, observée en recette : zéro chevauchement dump/envoi) |
+| E-056 | MySQL et MariaDB : `--single-transaction` par défaut sur InnoDB, avec routines, déclencheurs et événements ; la présence de tables MyISAM est détectée à la sonde et signalée dans le manifeste et dans l'interface, car elle invalide la cohérence transactionnelle. | § 5.3 `F3.7`, § 11 | fonctionnel | doit | 2 | couverte (`BKP-13`, `RSV-11`) |
 | E-057 | Chaque job produit un manifeste JSON non chiffré et sans secret, stocké à côté de l'archive sur **chaque** destination. | § 5.3 `F3.8` | donnée | doit | 3 | à faire |
 | E-058 | Le manifeste porte au moins : identifiant d'archive, base, moteur, début, durée, version du serveur, outil (nom, version, provenance, chemin, `argv`), format, chaîne de traitement, mode de tampon, tailles brute et stockée, empreintes brute et stockée, destinataires, état de vérification (empreinte, structure, horodatage). | § 5.3 (exemple de manifeste) | donnée | doit | 3 | à faire |
 | E-059 | Le manifeste ne contient jamais d'identifiant de connexion et reste lisible sans la clé privée, pour permettre l'inventaire d'un dépôt d'archives. | § 5.3, § 6 | sécurité | doit | 3 | à faire |
 | E-060 | Sur `SIGTERM`, un dump en cours dispose d'un délai de grâce configurable ; passé ce délai il est interrompu et le job marqué en échec, jamais en succès. | § 5.3 `F3.9`, `N6` | fonctionnel | doit | 5 | en question (Q-08) |
-| E-061 | L'espace disque est estimé et vérifié avant de commencer, avec marge : taille compressée attendue extrapolée de la dernière sauvegarde réussie, à défaut de la taille de la base ; un job qui remplirait le disque bascule en `stream` ou est refusé en amont. | § 5.3 `F3.10` | fonctionnel | doit | 2 | en question (Q-08) |
+| E-061 | L'espace disque est estimé et vérifié avant de commencer, avec marge : taille compressée attendue extrapolée de la dernière sauvegarde réussie, à défaut de la taille de la base ; un job qui remplirait le disque bascule en `stream` ou est refusé en amont. | § 5.3 `F3.10` | fonctionnel | doit | 2 | couverte (`BKP-05`, `RSV-12`, `Q-08` tranchée par ADR-0016 : diviseur 8) |
 
 ## § 5.4 — Vérification (`F4`)
 
@@ -130,22 +130,22 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-066 | Une interface unique de destination — écrire en flux, lire en flux, lister, supprimer, tester l'accès — est implémentée par les trois destinations du MVP. | § 5.5 `F5.1` | technique | doit | 2 | à faire |
+| E-066 | Une interface unique de destination — écrire en flux, lire en flux, lister, supprimer, tester l'accès — est implémentée par les trois destinations du MVP. | § 5.5 `F5.1` | technique | doit | 2 | couverte (`BKP-11`, `BKP-12`) : l'interface et `filesystem` ; S3 et SFTP rejoueront la suite de conformité au lot 4 |
 | E-067 | L'écriture sur plusieurs destinations se fait en parallèle à partir d'une seule lecture du flux ou du fichier tampon, sans jamais repasser par le dump. | § 5.5 `F5.2` | fonctionnel | doit | 4 | à faire |
 | E-068 | L'échec d'une destination n'annule pas les autres : le job est réussi si au moins une destination a reçu et vérifié l'archive, l'état par destination est conservé, et l'échec est alerté. | § 5.5 `F5.3`, § 5.10 | fonctionnel | doit | 4 | en question (Q-02) |
 | E-069 | S3 : téléversement en parties avec reprise et taille de partie adaptative — calculée depuis la taille attendue en mode `stage`, révisée en cours de route en mode `stream` — avec compatibilité explicitement testée contre MinIO, Scaleway, OVH et Backblaze, pas seulement AWS. | § 5.5 `F5.4`, § 11 | intégration | doit | 4 | à faire |
-| E-070 | Le chemin distant est déterministe et lisible par un humain : `<base>/<AAAA>/<MM>/<base>_<horodatage>_<id>.<ext>`, pour qu'un dépôt reste exploitable si l'agent disparaît. | § 5.5 `F5.5` | donnée | doit | 2 | à faire |
+| E-070 | Le chemin distant est déterministe et lisible par un humain : `<base>/<AAAA>/<MM>/<base>_<horodatage>_<id>.<ext>`, pour qu'un dépôt reste exploitable si l'agent disparaît. | § 5.5 `F5.5` | donnée | doit | 2 | couverte (`BKP-10`, extension `.pgc.zst.age` depuis `A-13`) |
 | E-071 | La documentation décrit une politique S3 en écriture seule et l'activation d'Object Lock, avec leurs conséquences sur la rétention. | § 5.5 `F5.6` | exploitation | devrait | 4 | en question (Q-09) |
 
 ## § 5.6 — Chiffrement (`F6`)
 
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
-| E-072 | Le chiffrement se fait en flux avec `filippo.io/age`, destinataires déclarés par clé publique X25519. | § 5.6 `F6.1` | sécurité | doit | 2 | à faire |
-| E-073 | Plusieurs destinataires sont possibles par base — clé opérationnelle et clé de séquestre — pour qu'une clé perdue ne condamne pas les archives. | § 5.6 `F6.2` | sécurité | doit | 2 | en question (Q-04) |
-| E-074 | La clé privée n'est jamais requise par l'agent ni présente dans sa configuration ; le déchiffrement est une opération manuelle et distincte. | § 5.6 `F6.3`, § 6 | sécurité | doit | 2 | à faire (ADR-0007) |
-| E-075 | Une archive chiffrée reste déchiffrable avec l'outil `age` standard, sans Keeper : aucun format maison. | § 5.6 `F6.4` | sécurité | doit | 2 | à faire |
-| E-076 | `keeper keygen` génère une paire, affiche la clé publique et n'écrit jamais la clé privée sur la machine de l'agent : elle est affichée une fois, à charge de l'opérateur de la mettre à l'abri. | § 5.6 `F6.5` | sécurité | doit | 2 | à faire |
+| E-072 | Le chiffrement se fait en flux avec `filippo.io/age`, destinataires déclarés par clé publique X25519. | § 5.6 `F6.1` | sécurité | doit | 2 | couverte (`CRY-03`) |
+| E-073 | Plusieurs destinataires sont possibles par base — clé opérationnelle et clé de séquestre — pour qu'une clé perdue ne condamne pas les archives. | § 5.6 `F6.2` | sécurité | doit | 2 | couverte (`CRY-04`, `CRY-05`, `Q-04` tranchée par ADR-0016) |
+| E-074 | La clé privée n'est jamais requise par l'agent ni présente dans sa configuration ; le déchiffrement est une opération manuelle et distincte. | § 5.6 `F6.3`, § 6 | sécurité | doit | 2 | couverte (`CRY-04`, ADR-0007) |
+| E-075 | Une archive chiffrée reste déchiffrable avec l'outil `age` standard, sans Keeper : aucun format maison. | § 5.6 `F6.4` | sécurité | doit | 2 | couverte (`CRY-03`, prouvée par le binaire `age` réel — `mise run interop` et `mise run e2e`) |
+| E-076 | `keeper keygen` génère une paire, affiche la clé publique et n'écrit jamais la clé privée sur la machine de l'agent : elle est affichée une fois, à charge de l'opérateur de la mettre à l'abri. | § 5.6 `F6.5` | sécurité | doit | 2 | couverte (`CRY-02`, clé publique sur la sortie standard depuis `A-12`) |
 
 ## § 5.7 — Rétention (`F7`)
 
@@ -203,7 +203,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | # | Exigence | Source | Type | Priorité | Lot | État |
 | --- | --- | --- | --- | --- | --- | --- |
 | E-103a | La CLI expose `version [--json]`, `config validate [--file]`, `config show [--redact]`, `doctor [--database]`, `tools list` / `install` / `remove`. | § 5.12 | fonctionnel | doit | 1 | couverte pour `version`, `config validate`, `config show`, `doctor` et `tools list` ; `tools install` et `tools remove` **n'existent pas** (ADR-0014) |
-| E-103b | La CLI expose `keygen` et `backup <db> [--dry-run]`. | § 5.12 | fonctionnel | doit | 2 | à faire (ADR-0001) |
+| E-103b | La CLI expose `keygen` et `backup <db> [--dry-run]`. | § 5.12 | fonctionnel | doit | 2 | couverte (`keygen`, `backup <db> [--dry-run]`) |
 | E-103c | La CLI expose `list [<db>] [--destination]` et `verify <backup-id>`. | § 5.12 | fonctionnel | doit | 3 | à faire (ADR-0001) |
 | E-103d | La CLI expose `restore <db> --from <backup-id> [--into DSN] [--clean-mode MODE]`, avec `--identity` ajouté par ADR-0007. | § 5.12, ADR-0007 | fonctionnel | doit | 4 | à faire (ADR-0001, ADR-0007) |
 | E-103e | La CLI expose `retention apply [<db>] [--dry-run]` et `serve`. | § 5.12 | fonctionnel | doit | 5 | à faire (ADR-0001) |
@@ -262,7 +262,7 @@ Format et vocabulaire : `docs/cdc/README.md`. Analyse du document : `analyse.md`
 | --- | --- | --- | --- | --- | --- | --- |
 | E-130 | L'embarquement des bibliothèques partagées et l'ajustement du `RPATH` des outils installés sont validés par un essai réel sur Debian, Rocky et Alpine **avant `L0`** : c'est le risque technique numéro un du document. | § 11 (risque 1) | technique | doit | 0 | couverte (`docs/inputs/spike-2026-09-rpath.md`, 18 exécutions) — conclusion **positive**, `E-043` non amendée |
 | E-131 | Une chaîne d'intégration dédiée construit et publie les binaires d'outils par versions figées, avec empreintes épinglées dans la version de l'agent, pour sept versions de PostgreSQL et trois de MariaDB sur deux architectures. | § 11 (risque 2), `F2.6`, `F2.7` | exploitation | doit | 1 | **reportée** avec `E-043` (ADR-0014) — plus d'archive à construire ni à héberger |
-| E-132 | Des destinataires multiples sont obligatoires dès la configuration initiale, la procédure de séquestre est documentée, et un avertissement est émis au premier démarrage tant qu'une seule clé est déclarée. | § 11 (risque 3), `F6.2` | sécurité | doit | 2 | en question (Q-04) |
+| E-132 | Des destinataires multiples sont obligatoires dès la configuration initiale, la procédure de séquestre est documentée, et un avertissement est émis au premier démarrage tant qu'une seule clé est déclarée. | § 11 (risque 3), `F6.2` | sécurité | doit | 2 | couverte (`CRY-02`, `CRY-05`) : **avertissement**, pas refus — divergence assumée et confirmée en recette |
 
 ---
 
