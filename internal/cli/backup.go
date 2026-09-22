@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base32"
 	"fmt"
 	"io"
 	"os"
@@ -109,7 +107,7 @@ func backupService(cmd *cobra.Command, database string, searchPath []string) (*b
 		Destinations:   destinations,
 	})
 
-	return service, backup.Request{Database: database, JobID: newJobID(), At: time.Now()}, nil
+	return service, backup.Request{Database: database, JobID: backup.NewJobID(), At: time.Now()}, nil
 }
 
 func declaredDatabase(loaded *config.Config, id string) (config.Database, error) {
@@ -257,8 +255,14 @@ func (p pipelinePacker) Pack(_ context.Context, into io.Writer, from io.Reader) 
 	return backup.Packed{
 		RawBytes: done.RawBytes, StoredBytes: done.StoredBytes,
 		SHA256Raw: done.RawSHA256, SHA256Stored: done.StoredSHA256,
-		Pipeline: []string{"zstd:3", "age:x25519"},
+		Pipeline: p.Pipeline(),
 	}, nil
+}
+
+// Pipeline is what internal/pipeline applies, in the order § 4.1 gives it:
+// compress, then encrypt. The archive is named after it (A-13).
+func (p pipelinePacker) Pipeline() []string {
+	return []string{"zstd:3", "age:x25519"}
 }
 
 // noHistory is what koffr knows about previous runs in this release: nothing.
@@ -276,18 +280,6 @@ func stateDir(cmd *cobra.Command) string {
 	}
 
 	return config.DefaultStateDir
-}
-
-// newJobID is the ULID-shaped identifier of ADR-0006: sortable by time, unique
-// without coordination.
-func newJobID() string {
-	var entropy [10]byte
-	if _, err := rand.Read(entropy[:]); err != nil {
-		return fmt.Sprintf("%016X", time.Now().UnixMilli())
-	}
-
-	return fmt.Sprintf("%010X%s", time.Now().UnixMilli(),
-		base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding).EncodeToString(entropy[:]))
 }
 
 func renderPlan(cmd *cobra.Command, planned backup.Result) {

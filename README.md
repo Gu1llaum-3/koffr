@@ -98,10 +98,12 @@ koffr backup boutique              # dump, compress, encrypt, write
 koffr backup boutique --dry-run    # what it would do, without writing a byte
 ```
 
-An archive lands at a path you can read and rebuild without koffr:
+An archive lands at a path you can read and rebuild without koffr. Its name says what it
+is, in the order you undo it — `age --decrypt`, then `zstd -d`, then a `.pgc` — and its
+identifier is a ULID, so it sorts by time:
 
 ```
-boutique/2026/09/boutique_20260922T020003Z_01JQ8F3K2M7X9P4W.pgc
+boutique/2026/09/boutique_20260922T020003Z_01K5X8QJ4T7N2M9VWZ3RBGH6CD.pgc.zst.age
 ```
 
 ### Two keys, always
@@ -128,7 +130,7 @@ This is the point of the format, and it is checked by `mise run e2e` on every bu
 tools, in this order — the archive is compressed **and then** encrypted:
 
 ```sh
-age --decrypt -i identity.txt boutique_20260922T020003Z_01JQ8F3K2M7X9P4W.pgc | zstd -d >dump.pgc
+age --decrypt -i identity.txt boutique_20260922T020003Z_01K5X8QJ4T7N2M9VWZ3RBGH6CD.pgc.zst.age | zstd -d >dump.pgc
 
 pg_restore --list dump.pgc                       # what is inside it
 pg_restore -d boutique_restored dump.pgc         # PostgreSQL

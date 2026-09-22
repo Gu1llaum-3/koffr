@@ -31,6 +31,12 @@ adaptateur n'a pas de `rules.md` (ADR-0010) et qu'`ARCHITECTURE.md` ne déclare 
 | BKP-08 | **Deux** empreintes sont calculées au vol : `sha256_raw` sur le dump **avant** compression, `sha256_stored` sur ce qui est réellement écrit. Seule la seconde se vérifie sans déchiffrer, et le lot 3 en dépend. | `E-024`, `N-7` | `pipeline/pipeline_test.go › TestBKP08BothChecksumsAreComputedOnTheWay` |
 | BKP-09 | Une erreur **au milieu** du flux — dump interrompu, disque plein, destinataire refusé — remonte **typée** et ne produit **jamais** un résultat qui ressemble à un succès. Un octet écrit n'est pas une sauvegarde. | `E-024`, § 2 `P3` | `pipeline/pipeline_test.go › TestBKP09AFailureMidStreamIsNeverASuccess` |
 
+## L'identité d'une archive
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| BKP-19 | Un job et son archive portent un **ULID** de 26 caractères. Deux identifiants produits dans la même milliseconde sont **différents et ordonnés** — le catalogue du lot 3 listera les archives par identifiant. L'aléa est **cryptographique** et rien ne panique : jamais `ulid.Make`, qui tire de `math/rand` et passe par `MustNew`. | ADR-0006, `A-14`, `N-2` | `backup/id_test.go › TestBKP19AnIdentifierIsARealULID`, `› TestBKP19IdentifiersMadeTogetherStaySorted`, `› TestNothingCallsTheConvenientULIDHelpers` |
+
 ## Le tampon
 
 | # | Règle (une phrase, vérifiable) | Source | Test |
@@ -42,7 +48,7 @@ adaptateur n'a pas de `rules.md` (ADR-0010) et qu'`ARCHITECTURE.md` ne déclare 
 
 | # | Règle (une phrase, vérifiable) | Source | Test |
 | --- | --- | --- | --- |
-| BKP-10 | Le chemin d'une archive est **déterministe et lisible par un humain** : `<base>/<AAAA>/<MM>/<base>_<horodatage>_<id>.<ext>`. Il se reconstruit **sans la base locale**, pour qu'un dépôt reste exploitable si l'agent disparaît — et il ne contient jamais d'identifiant de connexion. | `E-070`, § 5.5 `F5.5` | `backup/path_test.go › TestBKP10TheArchivePathIsDeterministicAndReadable` |
+| BKP-10 | Le chemin d'une archive est **déterministe et lisible par un humain** : `<base>/<AAAA>/<MM>/<base>_<horodatage>_<id>.<extension>`. Il se reconstruit **sans la base locale**, pour qu'un dépôt reste exploitable si l'agent disparaît — et il ne contient jamais d'identifiant de connexion. **L'extension dit ce que le fichier *est*, dans l'ordre où on le défait** (`pgc.zst.age`), et se construit à partir de la pile que le pipeline a réellement appliquée, pas d'une chaîne écrite à la main. | `E-070`, § 5.5 `F5.5`, `A-13`, `N-3` | `backup/path_test.go › TestBKP10TheArchivePathIsDeterministicAndReadable`, `› TestBKP10TheExtensionCarriesTheStackThatWasApplied`, `› TestBKP10TheExtensionReadsInTheOrderYouUndoIt` |
 | BKP-11 | Une écriture interrompue **ne laisse pas d'archive partielle visible** : on écrit à côté, puis on renomme. Un fichier qui porte le nom d'une archive est une archive entière. | `E-066`, § 2 `P3` | `store/storetest › an interrupted write leaves nothing visible` |
 | BKP-12 | Tester l'accès à une destination **dit pourquoi** il échoue — répertoire absent, droits, disque plein — et n'écrit rien de durable. | `E-066`, § 5.5 `F5.1` | `store/storetest › checking access` |
 
@@ -68,3 +74,5 @@ la raison de `N-9` : un adaptateur n'a pas de `rules.md`.
 | Répertoire des verrous | `<état>/locks/` | `N-5` | `backup/lock_test.go` |
 | Répertoire de tampon | `<état>/tmp/` | `E-026`, § 4.5 | `backup/service_test.go` |
 | Nom d'un tampon | `staging-<pid>-<job>.koffr` | `N-4` | `backup/staging_file_test.go` |
+| Extension d'une archive | `<format>.zst.age` | `A-13`, `N-3` | `backup/path_test.go` |
+| Identifiant | ULID, 26 caractères | ADR-0006, `N-2` | `backup/id_test.go` |

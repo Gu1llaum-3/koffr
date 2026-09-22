@@ -286,6 +286,8 @@ func (f *fakeDumper) started(t *testing.T) {
 // in its own package, and end to end at wave 6.
 type fakePacker struct{ fail error }
 
+func (f *fakePacker) Pipeline() []string { return []string{"zstd:3", "age:x25519"} }
+
 func (f *fakePacker) Pack(_ context.Context, into io.Writer, from io.Reader) (backup.Packed, error) {
 	if f.fail != nil {
 		return backup.Packed{}, f.fail
