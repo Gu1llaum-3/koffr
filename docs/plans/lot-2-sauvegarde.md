@@ -352,6 +352,10 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   ailleurs et hors ligne, l'avertissement qui ne disparaît pas) et la façon d'ouvrir une archive
   **sans koffr**. Le `Status` disait encore « lot 0 en cours » : corrigé, et il dit désormais ce que
   koffr ne sait **pas** encore faire.
+- **Le point 6 du critère de sortie n'était pas tenu, et la relecture du critère l'a trouvé** :
+  l'avertissement de `E-132` n'existait que sur `koffr backup`. Or c'est `config validate` qu'un
+  exploitant lance pour vérifier une configuration — il n'aurait rien vu. Ajouté là aussi, test
+  d'abord, et `CRY-02` cite maintenant les deux.
 - `mise run verify` : **0**, `mise run e2e` : **0** sur l'instance.
 
 ### 2026-09-22 — vague 5, le cas d'usage de sauvegarde

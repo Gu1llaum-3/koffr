@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Gu1llaum-3/koffr/internal/config"
+	"github.com/Gu1llaum-3/koffr/internal/domain/crypto"
 	"github.com/Gu1llaum-3/koffr/internal/domain/resolve"
 	"github.com/Gu1llaum-3/koffr/internal/engine"
 )
@@ -59,6 +60,11 @@ func newConfigValidateCommand() *cobra.Command {
 					return err
 				}
 			}
+
+			// E-132 — one key is allowed and warned about. This is the command
+			// an operator runs to check a configuration, so it is where they
+			// will see it (CRY-02).
+			warnAboutASingleRecipient(cmd, parsed)
 
 			cmd.Printf("ok %s: %d databases, %d destinations, %d alert channels, timezone %s%s\n",
 				path,
@@ -171,4 +177,22 @@ func configPath(cmd *cobra.Command) string {
 	}
 
 	return path
+}
+
+// warnAboutASingleRecipient says what E-132 asks, when there is something to
+// say. It stays quiet when koffr cannot read the file at all: that is either
+// checked elsewhere or deliberately out of scope offline.
+func warnAboutASingleRecipient(cmd *cobra.Command, parsed *config.Config) {
+	if parsed.Encryption.RecipientsFile == "" {
+		return
+	}
+
+	recipients, err := crypto.LoadRecipients(parsed.Encryption.RecipientsFile)
+	if err != nil {
+		return
+	}
+
+	if warning := recipients.Warning(); warning != "" {
+		cmd.PrintErrln(warning)
+	}
 }

@@ -200,3 +200,57 @@ func writeRecipients(t *testing.T, path string) {
 		t.Fatalf("write the recipients: %v", err)
 	}
 }
+
+// E-132 — a configuration with a single recipient is **warned about**, and the
+// command an operator runs to check a configuration is where they will see it.
+// Losing that one key would condemn every archive ever written for it.
+func TestValidateWarnsAboutASingleRecipient(t *testing.T) {
+	site := newSiteWithOneKey(t)
+
+	out, errs, err := execute(t, "config", "validate", "--config", site.config, "--offline")
+	if err != nil {
+		t.Fatalf("config validate: %v\n%s", err, errs)
+	}
+
+	if !strings.Contains(out, "ok") {
+		t.Errorf("a configuration with one key was rejected instead of warned about:\n%s", out)
+	}
+	for _, want := range []string{"escrow", "one"} {
+		if !strings.Contains(strings.ToLower(errs), want) {
+			t.Errorf("the warning does not say %q:\n%s", want, errs)
+		}
+	}
+}
+
+// E-132 — and two keys say nothing. A warning that is always there is a warning
+// nobody reads.
+func TestValidateSaysNothingAboutTwoRecipients(t *testing.T) {
+	site := newSite(t)
+
+	_, errs, err := execute(t, "config", "validate", "--config", site.config, "--offline")
+	if err != nil {
+		t.Fatalf("config validate: %v\n%s", err, errs)
+	}
+
+	if strings.Contains(strings.ToLower(errs), "escrow") {
+		t.Errorf("a configuration with two keys was warned about anyway:\n%s", errs)
+	}
+}
+
+func newSiteWithOneKey(t *testing.T) site {
+	t.Helper()
+
+	built := buildSite(t, true)
+
+	pair, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate a key pair: %v", err)
+	}
+
+	recipients := filepath.Join(filepath.Dir(built.config), "recipients.txt")
+	if err := os.WriteFile(recipients, []byte(pair.Recipient().String()+"\n"), 0o600); err != nil {
+		t.Fatalf("write the recipients: %v", err)
+	}
+
+	return built
+}
