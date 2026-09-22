@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -134,6 +135,7 @@ type Wiring struct {
 	Dumper       Dumper
 	Packer       Packer
 	Capacity     Capacity
+	Journal      Journal
 	History      History
 	Destinations []Destination
 
@@ -149,7 +151,30 @@ type Service struct {
 
 // NewService builds the use case.
 func NewService(wiring Wiring) *Service {
+	if wiring.Journal == nil {
+		wiring.Journal = silentJournal{}
+	}
+
 	return &Service{wiring: wiring}
+}
+
+// journal writes one line of the trace of E-024 (BKP-20).
+func (s *Service) journal(request Request, step Step, failed error, facts ...Fact) {
+	s.wiring.Journal.Step(JobStep{
+		Job: request.JobID, Database: request.Database,
+		Step: step, Failed: failed, Facts: facts,
+	})
+}
+
+// journalDeferred records a step this release does not implement, so that a
+// trace of seven steps is never mistaken for seven steps that ran.
+func (s *Service) journalDeferred(request Request) {
+	for _, step := range []Step{StepVerification, StepManifest} {
+		s.wiring.Journal.Step(JobStep{
+			Job: request.JobID, Database: request.Database,
+			Step: step, Deferred: deferredToLot3,
+		})
+	}
 }
 
 // Result is what a job did. It is filled as the job goes, and returned even
@@ -238,14 +263,25 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 
 	resolution, err := s.wiring.Resolver.Resolve(ctx, request.Database)
 	if err != nil {
+		s.journal(request, StepResolution, err)
+
 		return result, fmt.Errorf("resolve a tool for %s: %w", request.Database, err)
 	}
 
 	result.Warnings = resolution.Warnings
 	result.mark(StepResolution)
+	s.journal(request, StepResolution, nil,
+		Fact{"engine", resolution.Engine},
+		Fact{"server_version", resolution.ServerVersion},
+		Fact{"tool", resolution.ToolPath},
+		Fact{"tool_version", resolution.ToolVersion},
+		Fact{"tool_source", resolution.ToolSource},
+	)
 
 	decision, err := s.decideStaging(ctx, request.Database, resolution)
 	if err != nil {
+		s.journal(request, StepDump, err)
+
 		return result, err
 	}
 
@@ -265,6 +301,16 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	for _, destination := range s.wiring.Destinations {
 		result.Destinations = append(result.Destinations, destination.ID)
 	}
+
+	s.journal(request, StepWrite, nil,
+		Fact{"path", result.Path},
+		Fact{"destinations", strings.Join(result.Destinations, ",")},
+		Fact{"raw_bytes", result.RawBytes},
+		Fact{"stored_bytes", result.StoredBytes},
+		Fact{"sha256_raw", result.SHA256Raw},
+		Fact{"sha256_stored", result.SHA256Stored},
+	)
+	s.journalDeferred(request)
 
 	return result, nil
 }
@@ -309,22 +355,29 @@ func (s *Service) dumpAndWrite(
 ) (Packed, error) {
 	dump, err := s.wiring.Dumper.Dump(ctx, resolution, request)
 	if err != nil {
+		s.journal(request, StepDump, err)
+
 		return Packed{}, fmt.Errorf("dump %s: %w", request.Database, err)
 	}
 
 	result.mark(StepDump)
+	s.journal(request, StepDump, nil,
+		Fact{"staging", string(mode)},
+		Fact{"staging_reason", result.StagingReason},
+		Fact{"tool", resolution.ToolPath},
+	)
 
 	if mode == Stage {
-		return s.stage(ctx, dump, path, result, request.JobID)
+		return s.stage(ctx, request, dump, path, result)
 	}
 
-	return s.stream(ctx, dump, path, result)
+	return s.stream(ctx, request, dump, path, result)
 }
 
 // stage writes the packed stream to a staging file, **closes the dump** — which
 // is what ends the transaction on the database, E-055 — and only then sends.
-func (s *Service) stage(ctx context.Context, dump io.ReadCloser, path string, result *Result, job string) (Packed, error) {
-	staging, err := s.stagingFile(job)
+func (s *Service) stage(ctx context.Context, request Request, dump io.ReadCloser, path string, result *Result) (Packed, error) {
+	staging, err := s.stagingFile(request.JobID)
 	if err != nil {
 		_ = dump.Close()
 
@@ -343,10 +396,13 @@ func (s *Service) stage(ctx context.Context, dump io.ReadCloser, path string, re
 	closeErr := dump.Close()
 
 	if err := errors.Join(packErr, closeErr); err != nil {
+		s.journal(request, StepCompression, err)
+
 		return Packed{}, fmt.Errorf("pack the dump of %s: %w", result.Database, err)
 	}
 
 	result.mark(StepCompression, StepEncryption)
+	s.journalPacked(request, packed)
 
 	for _, destination := range s.wiring.Destinations {
 		if _, err := staging.Seek(0, io.SeekStart); err != nil {
@@ -354,6 +410,8 @@ func (s *Service) stage(ctx context.Context, dump io.ReadCloser, path string, re
 		}
 
 		if _, err := destination.Store.Write(ctx, path, staging); err != nil {
+			s.journal(request, StepWrite, err, Fact{"destination", destination.ID})
+
 			return Packed{}, fmt.Errorf("write to the destination %s: %w", destination.ID, err)
 		}
 	}
@@ -364,7 +422,7 @@ func (s *Service) stage(ctx context.Context, dump io.ReadCloser, path string, re
 }
 
 // stream sends straight to the one destination E-030 allows in this mode.
-func (s *Service) stream(ctx context.Context, dump io.ReadCloser, path string, result *Result) (Packed, error) {
+func (s *Service) stream(ctx context.Context, request Request, dump io.ReadCloser, path string, result *Result) (Packed, error) {
 	defer func() { _ = dump.Close() }()
 
 	if len(s.wiring.Destinations) != 1 {
@@ -389,10 +447,13 @@ func (s *Service) stream(ctx context.Context, dump io.ReadCloser, path string, r
 	packed, packErr := <-packing, <-failed
 
 	if err := errors.Join(packErr, writeErr); err != nil {
+		s.journal(request, StepCompression, err)
+
 		return Packed{}, fmt.Errorf("stream the dump of %s: %w", result.Database, err)
 	}
 
 	result.mark(StepCompression, StepEncryption, StepWrite)
+	s.journalPacked(request, packed)
 
 	return packed, nil
 }
@@ -413,6 +474,21 @@ func (s *Service) stagingFile(job string) (*os.File, error) {
 	}
 
 	return file, nil
+}
+
+// journalPacked records what the two middle steps of E-024 produced. They are
+// one pass through the pipeline and two steps of the specification, so each
+// gets its line with what it can honestly claim.
+func (s *Service) journalPacked(request Request, packed Packed) {
+	s.journal(request, StepCompression, nil,
+		Fact{"pipeline", strings.Join(packed.Pipeline, ",")},
+		Fact{"raw_bytes", packed.RawBytes},
+		Fact{"stored_bytes", packed.StoredBytes},
+	)
+	s.journal(request, StepEncryption, nil,
+		Fact{"sha256_raw", packed.SHA256Raw},
+		Fact{"sha256_stored", packed.SHA256Stored},
+	)
 }
 
 // freshSteps lists the seven steps, none done, the last two declared absent.

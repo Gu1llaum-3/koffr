@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -103,6 +104,7 @@ func backupService(cmd *cobra.Command, database string, searchPath []string) (*b
 		Dumper:         access,
 		Capacity:       access,
 		History:        noHistory{},
+		Journal:        slogJournal{logger: loggerOf(cmd)},
 		Packer:         pipelinePacker{recipients: recipients},
 		Destinations:   destinations,
 	})
@@ -317,5 +319,34 @@ func renderBackup(cmd *cobra.Command, done backup.Result) {
 
 	for _, warning := range done.Warnings {
 		warn(cmd, "%s\n", warning)
+	}
+}
+
+// slogJournal writes the trace of a job to the file of E-026. The domain knows
+// nothing of slog: it declares the port and this implements it (`N-1`, AR-01).
+type slogJournal struct {
+	logger *slog.Logger
+}
+
+func (j slogJournal) Step(entry backup.JobStep) {
+	attributes := []any{
+		slog.String("job", entry.Job),
+		slog.String("database", entry.Database),
+		slog.String("step", string(entry.Step)),
+	}
+
+	for _, fact := range entry.Facts {
+		attributes = append(attributes, slog.Any(fact.Name, fact.Value))
+	}
+
+	switch {
+	case entry.Failed != nil:
+		j.logger.Error("step failed", append(attributes, slog.String("error", entry.Failed.Error()))...)
+
+	case entry.Deferred != "":
+		j.logger.Info("step deferred", append(attributes, slog.String("deferred", entry.Deferred))...)
+
+	default:
+		j.logger.Info("step done", attributes...)
 	}
 }

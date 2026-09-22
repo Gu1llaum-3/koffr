@@ -200,6 +200,7 @@ type world struct {
 	history     *fakeHistory
 	destination *fakeDestination
 	second      *fakeDestination
+	journal     backup.Journal
 }
 
 func newWorld(t *testing.T) *world {
@@ -232,6 +233,7 @@ func (w *world) service() *backup.Service {
 		Packer:         w.packer,
 		Capacity:       w.capacity,
 		History:        w.history,
+		Journal:        w.journal,
 		Destinations:   destinations,
 	})
 }

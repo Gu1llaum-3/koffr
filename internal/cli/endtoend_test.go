@@ -424,3 +424,48 @@ func TestAKilledJobsBufferIsGoneAfterTheNextBackup(t *testing.T) {
 		t.Errorf("the staging directory holds %d entries after a successful backup", len(left))
 	}
 }
+
+// A-18, BKP-20 — on a real machine: the file of E-026 carries the seven steps
+// of a job, what it wrote and how big it was. The acceptance run found 21 log
+// lines for 21 commands, all of them "command started".
+func TestTheLogFileCarriesWhatABackupDid(t *testing.T) {
+	server := startPostgresServer(t, 2000)
+	site := newFleetSite(t, server)
+
+	logDir := t.TempDir()
+	run(t, append(site.args("backup", fleetDatabase), "--log-dir", logDir)...)
+
+	written, err := os.ReadFile(filepath.Join(logDir, "koffr.log"))
+	if err != nil {
+		t.Fatalf("read the log file: %v", err)
+	}
+
+	journalled := string(written)
+
+	for _, step := range []string{
+		"resolution", "dump", "compression", "encryption", "write", "verification", "manifest",
+	} {
+		if !strings.Contains(journalled, `"step":"`+step+`"`) {
+			t.Errorf("the journal lost the step %q", step)
+		}
+	}
+
+	for _, fact := range []string{"sha256_stored", "stored_bytes", "path", "pipeline", "tool"} {
+		if !strings.Contains(journalled, `"`+fact+`"`) {
+			t.Errorf("the journal does not carry %q:\n%s", fact, head(journalled))
+		}
+	}
+
+	// E-115 — and not a trace of what opens the database.
+	if strings.Contains(journalled, fleetPassword) {
+		t.Error("the database password is in the log file")
+	}
+}
+
+func head(of string) string {
+	if len(of) > 800 {
+		return of[:800]
+	}
+
+	return of
+}
