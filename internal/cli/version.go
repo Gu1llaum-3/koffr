@@ -19,7 +19,7 @@ func newVersionCommand() *cobra.Command {
 			info := build.Info()
 
 			if !asJSON {
-				cmd.Println(info)
+				say(cmd, "%v\n", info)
 				return nil
 			}
 

@@ -40,6 +40,10 @@ func newDoctorCommand() *cobra.Command {
 				return err
 			}
 
+			// E-132 — doctor is what an operator runs before going to bed, so
+			// it is one of the places the escrow warning has to appear.
+			warnAboutASingleRecipient(cmd, loaded)
+
 			// In the order of the configuration: an operator reads this next
 			// to the file they wrote.
 			diagnoses := resolve.Diagnose(cmd.Context(), engine.New(),
@@ -124,10 +128,10 @@ func renderDiagnoses(cmd *cobra.Command, diagnoses []resolve.Diagnosis) {
 	for _, diagnosis := range diagnoses {
 		switch {
 		case diagnosis.Unreachable != nil:
-			cmd.Printf("\n%s: %v\n", diagnosis.ID, diagnosis.Unreachable)
+			say(cmd, "\n%s: %v\n", diagnosis.ID, diagnosis.Unreachable)
 
 		case diagnosis.NoTool != nil:
-			cmd.Printf("\n%s: %v\n", diagnosis.ID, diagnosis.NoTool)
+			say(cmd, "\n%s: %v\n", diagnosis.ID, diagnosis.NoTool)
 		}
 	}
 }
