@@ -31,6 +31,13 @@ adaptateur n'a pas de `rules.md` (ADR-0010) et qu'`ARCHITECTURE.md` ne déclare 
 | BKP-08 | **Deux** empreintes sont calculées au vol : `sha256_raw` sur le dump **avant** compression, `sha256_stored` sur ce qui est réellement écrit. Seule la seconde se vérifie sans déchiffrer, et le lot 3 en dépend. | `E-024`, `N-7` | `pipeline/pipeline_test.go › TestBKP08BothChecksumsAreComputedOnTheWay` |
 | BKP-09 | Une erreur **au milieu** du flux — dump interrompu, disque plein, destinataire refusé — remonte **typée** et ne produit **jamais** un résultat qui ressemble à un succès. Un octet écrit n'est pas une sauvegarde. | `E-024`, § 2 `P3` | `pipeline/pipeline_test.go › TestBKP09AFailureMidStreamIsNeverASuccess` |
 
+## La trace d'un job
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| BKP-20 | Les **sept étapes** de `E-024` sont journalisées **dans l'ordre**, chacune avec ce qu'elle a produit — outil et version, mode de tampon, pile et empreintes, chemin et destinations. Une étape qui échoue est journalisée **avec son erreur**, et **rien** n'est journalisé après : une trace qui montre sept étapes pour un job mort à la deuxième est pire qu'aucune trace. Les deux étapes non implémentées se déclarent telles. | `A-18`, `E-024`, `E-026`, `N-1` | `backup/journal_test.go › TestBKP20TheSevenStepsAreJournalledInOrder`, `› TestBKP20AFailedStepIsJournalledAndStopsTheTrace`, `cli/endtoend_test.go › TestTheLogFileCarriesWhatABackupDid` |
+| BKP-21 | Le journal ne porte que des faits **énumérés**. Un identifiant de connexion n'en est pas un, et en ajouter un est une **décision**, pas une édition. Le domaine ne reçoit jamais la cible ni le mot de passe : c'est ce qui l'empêche de les divulguer, et la liste est ce qui le maintient. | `E-115`, `A-18` | `backup/journal_test.go › TestBKP21TheJournalOnlyCarriesFactsThatWereDeclared` |
+
 ## L'identité d'une archive
 
 | # | Règle (une phrase, vérifiable) | Source | Test |

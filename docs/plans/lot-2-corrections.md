@@ -140,15 +140,15 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 4 — Un job laisse une trace (`lot2c/wave-4-job-journal`) — `A-18`
 
-- [ ] **4.1** Test d'abord `internal/domain/backup/journal_test.go` — **`BKP-20`** : les **sept
+- [x] **4.1** Test d'abord `internal/domain/backup/journal_test.go` — **`BKP-20`** : les **sept
       étapes** de `E-024` sont journalisées dans l'ordre, chacune avec ce qu'elle a produit ; une
       étape qui échoue est journalisée **avec son erreur** et les suivantes ne le sont pas.
-- [ ] **4.2** Test — **`BKP-21`** : aucune ligne de journal ne porte de mot de passe, de chemin de
+- [x] **4.2** Test — **`BKP-21`** : aucune ligne de journal ne porte de mot de passe, de chemin de
       secret ni de clé (`E-115`). Le test cherche les valeurs, pas les noms de champs.
-- [ ] **4.3** Test `internal/cli` — le port est câblé sur `obs` ; après une sauvegarde réelle, le
+- [x] **4.3** Test `internal/cli` — le port est câblé sur `obs` ; après une sauvegarde réelle, le
       fichier de `E-026` porte les sept étapes, l'archive, les tailles et l'empreinte.
-- [ ] **4.4** `internal/domain/backup/rules.md` : `BKP-20`, `BKP-21`.
-- [ ] **4.5** Vague verte : `verify`, commit `feat(backup): journal the seven steps of a job`.
+- [x] **4.4** `internal/domain/backup/rules.md` : `BKP-20`, `BKP-21`.
+- [x] **4.5** Vague verte : `verify`, commit `feat(backup): journal the seven steps of a job`.
 
 ### Vague 5 — Ce qu'ADR-0016 a fixé (`lot2c/wave-5-adr-0016`) — `A-17`, `Q-04`, `Q-07`, `Q-08`
 
@@ -175,6 +175,21 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 4, un job laisse une trace
+
+- **Le domaine déclare un port `Journal` et ne connaît pas `slog`** (`N-1`). Les faits d'une étape
+  sont une **liste ordonnée**, pas une table : deux exécutions de la même base doivent se comparer
+  ligne à ligne, et un parcours de `map` les mélangerait — la leçon du lot 1 sur `Diagnose`.
+- **Une étape qui échoue est la dernière journalisée.** Une trace qui montre sept étapes pour un job
+  mort à la deuxième est pire qu'aucune trace.
+- **Mon premier `BKP-21` passait trivialement** : j'affirmais « le mot de passe n'apparaît pas »
+  alors que le domaine ne le reçoit **jamais** — `Resolution` ne porte pas de cible. Ça ne prouvait
+  rien. Remplacé par une **liste blanche de noms de faits** : un pas ajouté plus tard qui
+  journaliserait la chaîne de connexion échoue. Vérifié en ajoutant un fait `connection` contenant
+  un mot de passe — la garde l'a refusé sur les deux motifs. Troisième garde de ce type dans le
+  dépôt, après les requêtes SQL et `cmd.Print*`.
+- `mise run verify` : **0**.
 
 ### 2026-09-22 — vague 3, une archive dit ce qu'elle est
 
