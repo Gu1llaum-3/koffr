@@ -118,6 +118,39 @@ au prix d'un disque qui doit toujours suivre ?
 sauvegardés (`N-3`). Après avoir restauré au parcours 4 : est-ce acceptable, ou faut-il les
 récupérer ?
 
+## Historique
+
+- **2026-09-22, première session** : jouée sur l'instance Multipass `koffr` (Ubuntu 26.04 `arm64`),
+  sur un parc réel — PostgreSQL 16.15 (`boutique`, 372 Mo, 1 620 000 commandes, vue, fonction, deux
+  index) et MariaDB 11.4.13 (`erp`, 12 Mo, 60 000 factures, procédure, déclencheur), chacune avec un
+  utilisateur de sauvegarde à droits restreints. Les sept parcours joués. **Le critère de sortie
+  n° 2 est tenu** : l'archive s'ouvre avec `age` et `zstd` seuls, se restaure, et les comptages sont
+  identiques des deux côtés — 120 000 commandes et 299 957 982 € pour PostgreSQL, 60 000 factures et
+  99 970 009 € pour MariaDB. **Le scénario 11 est tenu et observé** : dump brut 295 Mo, pic du tampon
+  23,1 Mo, zéro échantillon où une connexion de dump et une écriture vers la destination coexistent.
+  **Sept anomalies, `A-12` à `A-18`**, dont trois bloquantes.
+
+### Mesures de la session, pour `Q-08`
+
+| Base | Dump brut | Archive | Taux réel | Ce que koffr réservait |
+| --- | --- | --- | --- | --- |
+| `boutique` (PostgreSQL, 372 Mo) | 295 Mo | 23,1 Mo | **7,8 %** | 139 Mo (`N-12` : base ÷ 4, × 1,5) |
+| `erp` (MariaDB, 12 Mo) | 9,4 Mo | 0,37 Mo | **3,9 %** | 4,7 Mo |
+
+Le taux mesuré est **trois à six fois meilleur** que l'hypothèse `N-12` (25 % du brut), et meilleur
+que la fourchette 10 %–25 % du § 4.5 elle-même. Conséquence concrète : sur une machine au disque
+juste, koffr basculera en `stream` alors que le tampon serait entré six fois.
+
+### Le contraste `stage` / `stream`, mesuré
+
+| Mode | Pic du tampon | Échantillons où le dump et l'envoi coexistent |
+| --- | --- | --- |
+| `stage` | 23,1 Mo (= l'archive) | **0** |
+| `stream` | **0** | **46** |
+
+En `stream`, la transaction reste ouverte sur la production pendant **tout** l'envoi. C'est ce que le
+mode échange, et c'est l'argument concret pour `Q-01`.
+
 ## Décisions attendues de la session
 
 1. **`Q-01`** — mode de tampon par défaut : `auto` ou `stage` ? (parcours 5)
