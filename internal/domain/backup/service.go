@@ -98,6 +98,11 @@ type (
 	// Packer compresses, encrypts and fingerprints in one pass (E-025).
 	Packer interface {
 		Pack(ctx context.Context, into io.Writer, from io.Reader) (Packed, error)
+
+		// Pipeline is what Pack applies, in order. The archive is named after
+		// it, so it has to be knowable **before** the first byte is written
+		// (`N-3`, A-13).
+		Pipeline() []string
 	}
 
 	// Capacity measures what E-061 needs before anything starts.
@@ -197,7 +202,8 @@ func (s *Service) Plan(ctx context.Context, request Request) (Result, error) {
 	}
 
 	result.Staging, result.StagingReason, result.StagingForced = decision.Mode, decision.Reason, decision.Forced
-	result.Path = ArchivePath(request.Database, request.At, request.JobID, resolution.Extension)
+	result.Path = ArchivePath(request.Database, request.At, request.JobID,
+		ArchiveExtension(resolution.Extension, s.wiring.Packer.Pipeline()))
 
 	for _, destination := range s.wiring.Destinations {
 		result.Destinations = append(result.Destinations, destination.ID)
@@ -244,7 +250,8 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	}
 
 	result.Staging, result.StagingReason, result.StagingForced = decision.Mode, decision.Reason, decision.Forced
-	result.Path = ArchivePath(request.Database, request.At, request.JobID, resolution.Extension)
+	result.Path = ArchivePath(request.Database, request.At, request.JobID,
+		ArchiveExtension(resolution.Extension, s.wiring.Packer.Pipeline()))
 
 	packed, err := s.dumpAndWrite(ctx, request, resolution, decision.Mode, result.Path, &result)
 	if err != nil {

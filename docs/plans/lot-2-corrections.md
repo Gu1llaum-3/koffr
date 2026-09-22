@@ -125,18 +125,18 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 3 — Une archive dit ce qu'elle est (`lot2c/wave-3-archive-identity`) — `A-13`, `A-14`
 
-- [ ] **3.1** Test d'abord `internal/domain/backup/path_test.go` — **`BKP-10` étendue** :
+- [x] **3.1** Test d'abord `internal/domain/backup/path_test.go` — **`BKP-10` étendue** :
       l'extension porte la **pile appliquée**, dans l'ordre où on la défait (`.pgc.zst.age`), et se
       construit à partir de ce que le pipeline a fait (`N-3`).
-- [ ] **3.2** Test `internal/domain/backup/id_test.go` — **`BKP-19`** : l'identifiant est un **ULID**
+- [x] **3.2** Test `internal/domain/backup/id_test.go` — **`BKP-19`** : l'identifiant est un **ULID**
       de 26 caractères ; deux identifiants produits dans la même milliseconde sont **différents et
       ordonnés** ; le tri lexicographique suit le temps.
-- [ ] **3.3** Test — l'identifiant vient de `ulid.New` avec `ulid.Monotonic(crypto/rand.Reader, 0)`,
+- [x] **3.3** Test — l'identifiant vient de `ulid.New` avec `ulid.Monotonic(crypto/rand.Reader, 0)`,
       **jamais** `ulid.Make` : la source est cryptographique et rien ne panique. Vérifier le binaire
       contre les **+32,7 Kio** annoncés par `N-2` ; un écart notable se dit.
-- [ ] **3.4** `README` : la procédure de déchiffrement porte la nouvelle extension.
-- [ ] **3.5** `internal/domain/backup/rules.md` : `BKP-19`, `BKP-10` amendée.
-- [ ] **3.6** Vague verte : `verify`, commit `fix(backup): name archives after what they are, and identify them with a real ULID`.
+- [x] **3.4** `README` : la procédure de déchiffrement porte la nouvelle extension.
+- [x] **3.5** `internal/domain/backup/rules.md` : `BKP-19`, `BKP-10` amendée.
+- [x] **3.6** Vague verte : `verify`, commit `fix(backup): name archives after what they are, and identify them with a real ULID`.
 
 ### Vague 4 — Un job laisse une trace (`lot2c/wave-4-job-journal`) — `A-18`
 
@@ -175,6 +175,24 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 3, une archive dit ce qu'elle est
+
+- **L'extension se construit, elle ne s'écrit pas** : `ArchiveExtension` part du format du dump et
+  de la pile que le `Packer` déclare, et rend `pgc.zst.age` — dans l'ordre où on la défait, qui est
+  la procédure du `README`. Le port `Packer` a gagné `Pipeline()` pour ça : le nom doit être connu
+  **avant** le premier octet écrit, donc il ne peut pas venir du résultat de l'empaquetage.
+- **`BKP-19` : un vrai ULID.** `NewJobID` vit maintenant dans le domaine — c'est une règle, pas un
+  détail d'adaptateur — et tire de `ulid.New` avec `ulid.Monotonic(crypto/rand.Reader, 0)`.
+- **Une garde refuse `ulid.Make`, `MustNew`, `MustNewDefault` et `MustParse`** dans tout le dépôt.
+  `Make` tire de `math/rand` — une régression sur ce que koffr faisait — et panique par `MustNew`.
+- **J'ai écrit test et code ensemble sur `id.go`, sans constater le rouge.** Rattrapé en remettant
+  l'ancienne implémentation le temps d'une exécution : le test l'a refusée sur les deux motifs —
+  27 caractères, et huit identifiants produits dans l'ordre qui ne trient pas dans l'ordre. Le
+  fichier a été restauré depuis une copie, jamais par `git checkout`.
+- **Binaire mesuré** : 13 490 642 → 13 524 178 octets, **+32,8 Kio**, contre +32,7 annoncés par
+  `N-2`. Marge restante : 16,6 Mio.
+- `mise run verify` : **0**.
 
 ### 2026-09-22 — vague 2, le tampon ne survit pas au job
 

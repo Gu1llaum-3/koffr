@@ -64,3 +64,39 @@ func TestBKP10AnAwkwardIdentifierStaysInItsPlace(t *testing.T) {
 		}
 	}
 }
+
+// BKP-10, étendue — the extension says what the file **is**, in the order you
+// undo it. `boutique_….pgc` named an archive that was compressed and encrypted;
+// `pg_restore --list` on it answered "input file does not appear to be a valid
+// tar archive", which orients nobody (A-13).
+func TestBKP10TheExtensionCarriesTheStackThatWasApplied(t *testing.T) {
+	cases := []struct {
+		dump     string
+		pipeline []string
+		want     string
+	}{
+		{"pgc", []string{"zstd:3", "age:x25519"}, "pgc.zst.age"},
+		{"sql", []string{"zstd:3", "age:x25519"}, "sql.zst.age"},
+		// A stack that changes changes the name with it — the point of
+		// building this from what the pipeline applied rather than writing it
+		// in by hand (`N-3`).
+		{"pgc", []string{"age:x25519"}, "pgc.age"},
+		{"pgc", nil, "pgc"},
+	}
+
+	for _, c := range cases {
+		if got := backup.ArchiveExtension(c.dump, c.pipeline); got != c.want {
+			t.Errorf("ArchiveExtension(%q, %v) = %q, want %q", c.dump, c.pipeline, got, c.want)
+		}
+	}
+}
+
+// And the README procedure follows from the name: age first, then zstd.
+func TestBKP10TheExtensionReadsInTheOrderYouUndoIt(t *testing.T) {
+	name := backup.ArchivePath("boutique", time.Date(2026, 9, 22, 2, 0, 3, 0, time.UTC),
+		"01JQ8F3K2M7X9P4W", backup.ArchiveExtension("pgc", []string{"zstd:3", "age:x25519"}))
+
+	if !strings.HasSuffix(name, ".pgc.zst.age") {
+		t.Errorf("the archive is not named after what it is: %s", name)
+	}
+}

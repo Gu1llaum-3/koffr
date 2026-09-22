@@ -48,3 +48,33 @@ func safeSegment(of string) string {
 
 	return cleaned
 }
+
+// stepExtensions name what each stage of the pipeline leaves behind, so that
+// the file is called after what it **is** rather than after what is inside it
+// once opened (A-13).
+var stepExtensions = map[string]string{
+	"zstd": "zst",
+	"age":  "age",
+}
+
+// ArchiveExtension builds the extension of an archive from the dump's own
+// format and the pipeline that was applied, **in the order you undo it**:
+// `pgc.zst.age` is opened by `age --decrypt | zstd -d`, which is the procedure
+// the README gives.
+//
+// It is built rather than written down so that a stack that changes changes the
+// name with it (`N-3`). A step koffr does not know is ignored rather than
+// invented: a name that lies is what this fixes.
+func ArchiveExtension(dump string, pipeline []string) string {
+	parts := []string{dump}
+
+	for _, step := range pipeline {
+		name, _, _ := strings.Cut(step, ":")
+
+		if extension, known := stepExtensions[name]; known {
+			parts = append(parts, extension)
+		}
+	}
+
+	return strings.Join(parts, ".")
+}
