@@ -28,7 +28,9 @@ jobs:
       KOFFR_REQUIRE_AGE: "1"
 
     steps:
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+      # age and zstd open an archive the way the README tells an operator to;
+      # postgresql-client reads what comes out of it (scenario 6 of § 8).
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age zstd postgresql-client
 
       - uses: actions/checkout@v7
 

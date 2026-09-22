@@ -39,6 +39,10 @@ go build \
 description = "E-075: check that the standard age tool reads an archive koffr wrote"
 run = "./scripts/check-age-interop.sh"
 
+[tasks.e2e]
+description = "Scenario 6: back up a real fleet and open the archive with age, zstd and pg_restore"
+run = "./scripts/check-backup-e2e.sh"
+
 [tasks.release]
 description = "Build the three targets of ADR-0011 and check E-117: no cgo, static ELF, under 30 MB"
 run = "./scripts/check-release.sh"
@@ -50,5 +54,6 @@ run = [
   "mise run lint",
   "mise run test",
   "mise run interop",
+  "mise run e2e",
   "mise run build",
 ]
