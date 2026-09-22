@@ -23,6 +23,7 @@ Les quatre décisions que le CDC renvoie lui-même au propriétaire (§ 11.1) so
 | ~~D-03~~ | ~~Déduplication et sauvegarde incrémentale~~ | propriétaire | `E-129`, format d'archive, donc lot de la sauvegarde | 2026-09-18 | **2026-09-18 → ADR-0005** : écartée du produit |
 | ~~D-04~~ | ~~Portée de Windows~~ | propriétaire | `E-117`, `Q-20`, matrice de CI | 2026-09-18 | **2026-09-18 → ADR-0011** : hors périmètre, annoncé |
 | D-05 | Quand ouvrir le cahier des charges du serveur central | propriétaire | `Q-16`, lot de la liaison | 2026-09-18 | |
+| D-08 | Quand livrer les **objets globaux** d'un cluster (`pg_dumpall --globals-only`) : c'est ce qui rend une reprise après sinistre réelle, `Q-07` l'a montré | propriétaire | `B-01`, `E-058`, la promesse de reprise du README | 2026-09-22 | **Ouverte le 2026-09-22 en recette du lot 2** : remontée du backlog, lot à choisir |
 | ~~D-06~~ | Qui construit, signe et héberge les binaires d'outils, et à quel coût récurrent | propriétaire | `E-131`, `E-043`, `E-044`, `Q-15` | 2026-09-18 | **Tranchée le 2026-09-19 (ADR-0014)** : installation gérée hors MVP |
 | ~~D-07~~ | ~~Version de Go~~ | propriétaire | lot 0 (`go.mod`) | 2026-09-18 | **2026-09-18 → ADR-0002** : 1.27 partout |
 | ~~D-08~~ | ~~Le serveur central vit-il dans ce dépôt ou dans un autre ?~~ | propriétaire | organisation du dépôt dès le lot 0, `D-05` | 2026-09-18 | **2026-09-18 → ADR-0001** : dépôts séparés, protocole public |

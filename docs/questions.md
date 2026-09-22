@@ -20,14 +20,14 @@ corriger avant de les envoyer.
 
 | #    | Question (titre) | Posée à | Posée le | Bloque | Répondue le |
 | ---- | ---------------- | ------- | -------- | ------ | ----------- |
-| Q-01 | Quel mode de tampon par défaut : `stage` ou `auto` ? | rédacteur | 2026-09-18 | `E-053`, `E-029` | |
+| ~~Q-01~~ | ~~Quel mode de tampon par défaut : `stage` ou `auto` ?~~ | rédacteur | 2026-09-18 | `E-053`, `E-029` | **2026-09-22 → ADR-0016** : `auto` |
 | Q-02 | La vérification relit-elle la destination ou le fichier tampon ? | rédacteur | 2026-09-18 | `E-062`, `E-068`, `E-079` | |
 | ~~Q-03~~ | ~~Par où entre la clé privée lors d'une restauration ?~~ | rédacteur | 2026-09-18 | `E-074`, `E-084`, `E-101` | **2026-09-18 → ADR-0007** |
-| Q-04 | Les destinataires de chiffrement sont-ils déclarés par base ou globalement ? | rédacteur | 2026-09-18 | `E-073`, `E-037`, `E-132` | |
+| ~~Q-04~~ | ~~Les destinataires de chiffrement sont-ils déclarés par base ou globalement ?~~ | rédacteur | 2026-09-18 | `E-073`, `E-037`, `E-132` | **2026-09-22 → ADR-0016** : globaux, une liste par base les **remplace** |
 | Q-05 | `min_interval` est-il un intervalle minimal ou maximal ? | rédacteur | 2026-09-18 | `E-091` | |
 | Q-06 | Une base a-t-elle deux jeux d'identifiants, sauvegarde et restauration ? | rédacteur | 2026-09-18 | `E-084`, `E-086`, `E-116` | |
-| Q-07 | Que sauvegarde-t-on exactement : une base, ou aussi les objets globaux du cluster ? | rédacteur | 2026-09-18 | `E-058`, `E-084` | |
-| Q-08 | Huit valeurs par défaut absentes du CDC | rédacteur | 2026-09-18 | `E-054`, `E-060`, `E-061`, `E-078`, `E-092`, `E-094` | |
+| ~~Q-07~~ | ~~Que sauvegarde-t-on exactement : une base, ou aussi les objets globaux du cluster ?~~ | rédacteur | 2026-09-18 | `E-058`, `E-084` | **2026-09-22 → ADR-0016** : une base, sans droits ni propriétaires ; les objets globaux remontent (`B-01`) |
+| ~~Q-08~~ | ~~Huit valeurs par défaut absentes du CDC~~ | rédacteur | 2026-09-18 | `E-054`, `E-060`, `E-061`, `E-078`, `E-092`, `E-094` | **2026-09-22 → ADR-0016** pour celles du lot 2 ; les autres restent ouvertes |
 | Q-09 | Sémantique exacte de la rétention (seaux, moment, destinations, suppression impossible) | rédacteur | 2026-09-18 | `E-077`, `E-071` | |
 | Q-10 | Quelle authentification pour l'interface web hors `127.0.0.1` ? | rédacteur | 2026-09-18 | `E-099` | |
 | Q-11 | Si HTMX (`F11.5`, souhaitable) est écarté, quel est le repli ? | rédacteur | 2026-09-18 | `E-102` | |
