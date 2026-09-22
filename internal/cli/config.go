@@ -66,7 +66,7 @@ func newConfigValidateCommand() *cobra.Command {
 			// will see it (CRY-02).
 			warnAboutASingleRecipient(cmd, parsed)
 
-			cmd.Printf("ok %s: %d databases, %d destinations, %d alert channels, timezone %s%s\n",
+			say(cmd, "ok %s: %d databases, %d destinations, %d alert channels, timezone %s%s\n",
 				path,
 				len(parsed.Databases),
 				len(parsed.Destinations),
@@ -143,7 +143,7 @@ func newConfigShowCommand() *cobra.Command {
 			if err != nil {
 				return err //nolint:wrapcheck // already says what failed
 			}
-			cmd.Print(shown)
+			say(cmd, "%s", shown)
 
 			return nil
 		},
@@ -193,6 +193,6 @@ func warnAboutASingleRecipient(cmd *cobra.Command, parsed *config.Config) {
 	}
 
 	if warning := recipients.Warning(); warning != "" {
-		cmd.PrintErrln(warning)
+		warn(cmd, "%s\n", warning)
 	}
 }

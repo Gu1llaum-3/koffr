@@ -88,7 +88,7 @@ func backupService(cmd *cobra.Command, database string, searchPath []string) (*b
 	}
 
 	if warning := recipients.Warning(); warning != "" {
-		cmd.PrintErrln(warning)
+		warn(cmd, "%s\n", warning)
 	}
 
 	access := &databaseAccess{
@@ -295,14 +295,14 @@ func renderPlan(cmd *cobra.Command, planned backup.Result) {
 		return
 	}
 
-	cmd.Printf("dry run  %s\n", planned.Database)
-	cmd.Printf("archive  %s\n", planned.Path)
-	cmd.Printf("staging  %s (%s)\n", planned.Staging, planned.StagingReason)
-	cmd.Printf("sending  %s\n", strings.Join(planned.Destinations, ", "))
-	cmd.Println("nothing was written")
+	say(cmd, "dry run  %s\n", planned.Database)
+	say(cmd, "archive  %s\n", planned.Path)
+	say(cmd, "staging  %s (%s)\n", planned.Staging, planned.StagingReason)
+	say(cmd, "sending  %s\n", strings.Join(planned.Destinations, ", "))
+	say(cmd, "%v\n", "nothing was written")
 
 	for _, warning := range planned.Warnings {
-		cmd.PrintErrln(warning)
+		warn(cmd, "%s\n", warning)
 	}
 }
 
@@ -311,19 +311,19 @@ func renderBackup(cmd *cobra.Command, done backup.Result) {
 		return
 	}
 
-	cmd.Printf("archive  %s\n", done.Path)
-	cmd.Printf("staging  %s (%s)\n", done.Staging, done.StagingReason)
-	cmd.Printf("size     %d bytes stored, %d dumped\n", done.StoredBytes, done.RawBytes)
-	cmd.Printf("sha256   %s\n", done.SHA256Stored)
-	cmd.Printf("sent to  %s\n", strings.Join(done.Destinations, ", "))
+	say(cmd, "archive  %s\n", done.Path)
+	say(cmd, "staging  %s (%s)\n", done.Staging, done.StagingReason)
+	say(cmd, "size     %d bytes stored, %d dumped\n", done.StoredBytes, done.RawBytes)
+	say(cmd, "sha256   %s\n", done.SHA256Stored)
+	say(cmd, "sent to  %s\n", strings.Join(done.Destinations, ", "))
 
 	for _, outcome := range done.Steps {
 		if outcome.Deferred != "" {
-			cmd.Printf("pending  %s — %s\n", outcome.Step, outcome.Deferred)
+			say(cmd, "pending  %s — %s\n", outcome.Step, outcome.Deferred)
 		}
 	}
 
 	for _, warning := range done.Warnings {
-		cmd.PrintErrln(warning)
+		warn(cmd, "%s\n", warning)
 	}
 }

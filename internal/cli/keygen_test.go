@@ -14,13 +14,19 @@ func TestKeygenShowsThePairAndWritesNothing(t *testing.T) {
 	stateDir := t.TempDir()
 	logDir := t.TempDir()
 
-	out := run(t, "keygen", "--state-dir", stateDir, "--log-dir", logDir)
+	// The public key is the result, the private key a warning: the two go to
+	// different streams, so that `keygen >> recipients.txt` appends one and not
+	// the other (A-12, décision de recette du 2026-09-22).
+	out, errs, err := execute(t, "keygen", "--state-dir", stateDir, "--log-dir", logDir)
+	if err != nil {
+		t.Fatalf("keygen: %v\n%s", err, errs)
+	}
 
 	if !strings.Contains(out, "age1") {
-		t.Errorf("no public key in the output:\n%s", out)
+		t.Errorf("no public key on standard output:\n%s", out)
 	}
-	if !strings.Contains(out, "AGE-SECRET-KEY-") {
-		t.Errorf("no private key in the output:\n%s", out)
+	if !strings.Contains(errs, "AGE-SECRET-KEY-") {
+		t.Errorf("no private key on the error stream:\n%s", errs)
 	}
 
 	// Nothing of the pair reached the disk.
@@ -39,16 +45,19 @@ func TestKeygenShowsThePairAndWritesNothing(t *testing.T) {
 
 // And it says so, because an operator who closes this terminal loses the key.
 func TestKeygenSaysThePrivateKeyIsNotKept(t *testing.T) {
-	out := run(t, "keygen", "--state-dir", t.TempDir(), "--log-dir", t.TempDir())
+	_, errs, err := execute(t, "keygen", "--state-dir", t.TempDir(), "--log-dir", t.TempDir())
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
 
-	lowered := strings.ToLower(out)
+	lowered := strings.ToLower(errs)
 	for _, want := range []string{"not", "store"} {
 		if !strings.Contains(lowered, want) {
-			t.Errorf("the output does not warn that the private key is not kept (%q):\n%s", want, out)
+			t.Errorf("nothing warns that the private key is not kept (%q):\n%s", want, errs)
 		}
 	}
 	if !strings.Contains(lowered, "recipients.txt") {
-		t.Errorf("the output does not say where the public key goes:\n%s", out)
+		t.Errorf("nothing says where the public key goes:\n%s", errs)
 	}
 }
 

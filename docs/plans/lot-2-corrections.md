@@ -91,18 +91,18 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 1 — Ce qu'on écrit va où on croit (`lot2c/wave-1-output-streams`) — `A-12`, `keygen`
 
-- [ ] **1.1** Test d'abord `internal/cli/streams_test.go` — le **câblage par défaut** : une racine
+- [x] **1.1** Test d'abord `internal/cli/streams_test.go` — le **câblage par défaut** : une racine
       construite sans `SetOut` ni `SetErr` écrit son résultat sur la **sortie standard**. Le test
       pose un `os.Pipe` sur les deux descripteurs plutôt que des écrivains cobra, sinon il ne
       prouve rien (c'est exactement ce qui a masqué `A-12`).
-- [ ] **1.2** Test — `koffr config show` redirigé produit un fichier **non vide**, et `koffr version`
+- [x] **1.2** Test — `koffr config show` redirigé produit un fichier **non vide**, et `koffr version`
       aussi ; les avertissements et les journaux restent sur la sortie d'erreur (ADR-0012).
-- [ ] **1.3** Test `internal/cli/keygen_test.go` — la clé **publique** sur la sortie standard, la
+- [x] **1.3** Test `internal/cli/keygen_test.go` — la clé **publique** sur la sortie standard, la
       **privée** et l'avertissement sur la sortie d'erreur ; `koffr keygen >> f` n'écrit **jamais**
       `AGE-SECRET-KEY`.
-- [ ] **1.4** Test — l'avertissement de séquestre apparaît sur **toute** commande qui lit les clés
+- [x] **1.4** Test — l'avertissement de séquestre apparaît sur **toute** commande qui lit les clés
       (`backup`, `config validate`, `doctor`), et disparaît à deux clés (`E-132`, `CRY-02`).
-- [ ] **1.5** Vague verte : `verify`, commit `fix(cli): send results to standard output, warnings to standard error`.
+- [x] **1.5** Vague verte : `verify`, commit `fix(cli): send results to standard output, warnings to standard error`.
 
 ### Vague 2 — Le tampon ne survit pas au job (`lot2c/wave-2-purge-staging`) — `A-16`
 
@@ -167,4 +167,27 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 
 ## Journal d'exécution
 
-Rempli par `/executer-plan`.
+Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 1, ce qu'on écrit va où on croit
+
+- **`say` et `warn` remplacent `cmd.Print*` partout.** Le nom était le piège : `cmd.Print` se lit
+  « imprime » et veut dire « imprime sur la sortie **d'erreur** » — `OutOrStderr()` retombe sur
+  `os.Stderr` dès qu'aucun écrivain n'est posé, ce qui n'arrive jamais en test et toujours dans le
+  binaire.
+- **Une garde lit les sources et refuse `cmd.Print*` dans `internal/cli`**, sur le modèle de
+  `queries_test.go`. Sans elle, la prochaine commande écrite réintroduirait le défaut sans que rien
+  ne bronche.
+- **Mon premier harnais de test passait pour la mauvaise raison** : deux goroutines lisaient les
+  deux tuyaux et poussaient dans **le même canal**, donc `stdout` et `stderr` pouvaient revenir
+  intervertis — et le test était vert alors que la machine écrivait bien sur la mauvaise sortie. Un
+  canal par flux. C'est la deuxième fois dans ce projet qu'un contrôle vert ne prouve rien, après le
+  fichier vide du parcours 4.5 du lot 0 : les deux fois, c'est le **harnais** qui mentait, pas le
+  code.
+- **`keygen` sépare les deux clés** : la publique est le résultat, sur la sortie standard, donc
+  `koffr keygen >> recipients.txt` ajoute une ligne et une seule ; la privée et les avertissements
+  partent sur la sortie d'erreur. Les deux tests de `keygen` du lot 2 ne lisaient que la sortie
+  standard et sont tombés — c'est le comportement qui a changé par décision, ils ont été mis à jour.
+- **L'avertissement de séquestre couvre maintenant `doctor`** en plus de `backup` et
+  `config validate`. `doctor` est ce qu'on lance avant d'aller se coucher.
+- `mise run verify` : **0**.

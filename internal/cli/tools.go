@@ -59,7 +59,7 @@ func newToolsListCommand() *cobra.Command {
 			}
 
 			if len(found) == 0 {
-				cmd.Println("no tool found. koffr looked on the host, on PATH and in " + toolsDir(cmd))
+				say(cmd, "%v\n", "no tool found. koffr looked on the host, on PATH and in "+toolsDir(cmd))
 
 				return nil
 			}

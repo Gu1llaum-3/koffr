@@ -254,3 +254,34 @@ func newSiteWithOneKey(t *testing.T) site {
 
 	return built
 }
+
+// E-132, CRY-02 — the escrow warning appears on **every** command that reads
+// the keys, not only on the one that happens to use them. An operator who runs
+// `doctor` before going to bed has to see it there (décision de recette du
+// 2026-09-22).
+func TestTheEscrowWarningAppearsOnEveryCommandThatReadsTheKeys(t *testing.T) {
+	alone := newSiteWithOneKey(t)
+	pair := newSite(t)
+
+	commands := map[string][]string{
+		"config validate": {"config", "validate", "--offline"},
+		"doctor":          {"doctor", "--search-path", t.TempDir()},
+		"backup":          {"backup", "shop"},
+	}
+
+	for name, args := range commands {
+		t.Run(name, func(t *testing.T) {
+			_, errs, _ := execute(t, alone.args(args...)...)
+			if !strings.Contains(strings.ToLower(errs), "escrow") {
+				t.Errorf("%s says nothing about the escrow key with a single recipient:\n%s", name, errs)
+			}
+
+			// And two keys say nothing: a warning that is always there is a
+			// warning nobody reads.
+			_, quiet, _ := execute(t, pair.args(args...)...)
+			if strings.Contains(strings.ToLower(quiet), "escrow") {
+				t.Errorf("%s warned although two recipients are declared:\n%s", name, quiet)
+			}
+		})
+	}
+}
