@@ -55,7 +55,13 @@ func TestThePostgreSQLDumpCarriesTheOptionsOfTheSpecification(t *testing.T) {
 		Tool: resolve.Candidate{Family: resolve.PostgreSQL, Tool: resolve.Dump, Path: "/usr/bin/pg_dump"},
 	})
 
-	for _, want := range []string{"--format=custom", "--no-owner", "--no-privileges", "--no-password"} {
+	// --compress=0 is in the manifest of § 5.3, and it is not decoration:
+	// pg_dump compresses -Fc by itself, so leaving it on would hand zstd an
+	// already-compressed stream — and make size_raw the size of something
+	// nobody asked for.
+	for _, want := range []string{
+		"--format=custom", "--no-owner", "--no-privileges", "--no-password", "--compress=0",
+	} {
 		if !carries(argv, want) {
 			t.Errorf("the command does not carry %q: %v", want, argv)
 		}

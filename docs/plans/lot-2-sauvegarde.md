@@ -329,6 +329,13 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   et aucun échantillon ne montre d'écriture vers la destination **pendant** qu'une connexion de dump
   est ouverte. Le détecteur est un détecteur de violation, pas une preuve d'avoir observé l'instant :
   la preuve déterministe est `BKP-14`, qui tient l'ordre par construction.
+- **Le test du scénario 11 a trouvé un vrai défaut de la vague 4** : le dump de 60 000 lignes ne
+  faisait que 187 Kio. `pg_dump -Fc` **compresse lui-même** par défaut, et le manifeste du § 5.3
+  porte `--compress=0` — que j'avais manqué. Conséquence : le « dump brut » était déjà compressé,
+  zstd recompressait du compressé, `size_raw` mesurait autre chose que ce que le CDC nomme, et
+  l'arithmétique du § 4.5 (10 % à 25 % du brut) était fausse par construction. Corrigé, et
+  `BKP-13` le dit maintenant. C'est exactement ce qu'un test de bout en bout sur une base non
+  triviale est censé attraper : aucun test unitaire de la vague 4 ne pouvait le voir.
 - **Ce test lit la sortie de la commande**, à dessein : les deux tailles affichées sont ce qu'un
   exploitant lit pour juger qu'une sauvegarde s'est bien passée. Elles font donc partie de ce qui
   est testé.

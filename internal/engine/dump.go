@@ -96,6 +96,12 @@ func DumpCommand(request DumpRequest) []string {
 			// of the one it came from.
 			"--no-owner",
 			"--no-privileges",
+			// The manifest of § 5.3 carries this one, and it matters: pg_dump
+			// compresses the custom format by itself. Leaving it on would hand
+			// zstd an already-compressed stream, make size_raw the size of
+			// something nobody asked for, and break the arithmetic § 4.5 uses
+			// to decide whether there is room to stage.
+			"--compress=0",
 			request.Target.Database,
 		}
 
