@@ -1,7 +1,9 @@
 # Plan lot 2 — Sauvegarder une base vers un fichier chiffré
 
-> Statut : **validé par le propriétaire le 2026-09-19**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
-> dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
+> Statut : **terminé le 2026-09-22** — six vagues mergées, `verify` vert sur `main`, CI verte.
+> Validé par le propriétaire le 2026-09-19. Exécuté par `/executer-plan`. Reste la **recette**
+> (`docs/recette/lot-2-scenario.md`), puis `/cloturer-lot 2`. Les règles communes à tous les plans
+> sont dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 À la fin de ce lot, koffr sauvegarde. C'est la chaîne 01→05 du § 4.1 : résolution, dump,
 compression, chiffrement, écriture. Le manifeste et la vérification sont au lot 3.
