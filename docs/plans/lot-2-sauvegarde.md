@@ -153,6 +153,13 @@ Constaté dans le code, pas supposé.
 - **N-14 (2026-09-22) — la tâche `5.6` demandait `STO-01`, qui n'existe pas.** Même raison que
   `N-9` : `internal/store` est un adaptateur et `ARCHITECTURE.md` ne déclare pas ce préfixe. Les
   règles de destination sont `BKP-11` et `BKP-12`, écrites à la vague 3. Rien à ajouter.
+- **N-15 (2026-09-22) — le scénario 6 est prouvé par un script, comme `E-075`.** *Raison* : une
+  archive qui « s'ouvre sans koffr » ne se démontre qu'avec des binaires qui ne sont pas les nôtres,
+  et `AR-07` réserve `os/exec` à `internal/engine`. Le test Go démarre les serveurs, lance
+  `koffr backup` et **dépose** l'archive et une clé privée dans un répertoire donné par un drapeau
+  de test ; `scripts/check-backup-e2e.sh` exécute `age --decrypt | zstd -d` puis `pg_restore --list`
+  par-dessus. Exigé en CI par `KOFFR_REQUIRE_AGE=1` et `KOFFR_REQUIRE_DOCKER=1`. *Exclut* : prouver
+  le scénario 6 avec notre propre bibliothèque `age`, ce qui ne prouverait qu'un aller-retour.
 - **N-7 L'empreinte `sha256_raw` est celle du flux *avant* compression, `sha256_stored` celle de ce
   qui est écrit.** *Raison* : le manifeste du § 5.3 porte les deux, et seule la seconde se vérifie
   sans déchiffrer. *Exclut* : une seule empreinte, qui rendrait `E-062` impossible au lot 3.
@@ -255,15 +262,15 @@ Exigences : `E-024`, `E-029`, `E-030`, `E-051`, `E-053`, `E-061`, et `backup` de
 
 ### Vague 6 — De bout en bout, sur un vrai parc (`lot2/wave-6-end-to-end`)
 
-- [ ] **6.1** Test d'intégration : `koffr backup` sur un **vrai** PostgreSQL et une **vraie**
+- [x] **6.1** Test d'intégration : `koffr backup` sur un **vrai** PostgreSQL et une **vraie**
       MariaDB, archive écrite sur disque, **déchiffrée par l'outil `age` standard**, et le contenu
       relu par `pg_restore --list` (scénario 6 du § 8).
-- [ ] **6.2** Test — **scénario 11, première moitié** : en `stage`, aucun fichier de plus que la
+- [x] **6.2** Test — **scénario 11, première moitié** : en `stage`, aucun fichier de plus que la
       taille compressée n'apparaît, et la connexion se ferme avant l'envoi.
-- [ ] **6.3** Mesurer le binaire : `internal/state`, `age` et `zstd` y entrent. Noter l'écart.
-- [ ] **6.4** `README` : la procédure de séquestre (`E-132`), et comment déchiffrer une archive
+- [x] **6.3** Mesurer le binaire : `internal/state`, `age` et `zstd` y entrent. Noter l'écart.
+- [x] **6.4** `README` : la procédure de séquestre (`E-132`), et comment déchiffrer une archive
       **sans koffr**.
-- [ ] **6.5** Vague verte : `verify`, commit `chore: back up a real fleet end to end`.
+- [x] **6.5** Vague verte : `verify`, commit `chore: back up a real fleet end to end`.
 
 ## Vérification de bout en bout
 
@@ -304,6 +311,46 @@ Sur l'instance de recette, avec son parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 6, de bout en bout sur un vrai parc
+
+- **Le scénario 6 est tenu, et par des outils qui ne sont pas les nôtres** : `mise run e2e` lance
+  `koffr backup` sur une **vraie** PostgreSQL 16 et une **vraie** MariaDB 11.4, puis ouvre les
+  archives avec `age --decrypt | zstd -d` et lit la PostgreSQL avec `pg_restore --list`. `N-15`
+  ajoutée : même marché que `N-8`, le test dépose, le script exécute.
+- **L'ordre compte et le script le documente** : `age` **puis** `zstd`, parce que le § 4.1 compresse
+  avant de chiffrer. C'est la procédure que le `README` donne maintenant à un exploitant qui a perdu
+  l'agent et gardé la clé — vérifiée à chaque build, pas seulement écrite.
+- **La MariaDB passe par la stratégie `exec`** dans ce test, donc ADR-0015 est vérifié de bout en
+  bout : sur un runner qui ne porte que le client MySQL d'Oracle, c'est la seule façon d'atteindre
+  le bon client.
+- **Scénario 11, première moitié** : sur une base d'environ 20 Mio de dump, le tampon ne dépasse
+  jamais la taille de l'archive **compressée** (tolérance 20 % pour le bloc que l'encodeur retient),
+  et aucun échantillon ne montre d'écriture vers la destination **pendant** qu'une connexion de dump
+  est ouverte. Le détecteur est un détecteur de violation, pas une preuve d'avoir observé l'instant :
+  la preuve déterministe est `BKP-14`, qui tient l'ordre par construction.
+- **Le test du scénario 11 a trouvé un vrai défaut de la vague 4** : le dump de 60 000 lignes ne
+  faisait que 187 Kio. `pg_dump -Fc` **compresse lui-même** par défaut, et le manifeste du § 5.3
+  porte `--compress=0` — que j'avais manqué. Conséquence : le « dump brut » était déjà compressé,
+  zstd recompressait du compressé, `size_raw` mesurait autre chose que ce que le CDC nomme, et
+  l'arithmétique du § 4.5 (10 % à 25 % du brut) était fausse par construction. Corrigé, et
+  `BKP-13` le dit maintenant. C'est exactement ce qu'un test de bout en bout sur une base non
+  triviale est censé attraper : aucun test unitaire de la vague 4 ne pouvait le voir.
+- **Ce test lit la sortie de la commande**, à dessein : les deux tailles affichées sont ce qu'un
+  exploitant lit pour juger qu'une sauvegarde s'est bien passée. Elles font donc partie de ce qui
+  est testé.
+- **`database/sql` est interdit jusque dans les tests** : la garde a refusé le pilote MySQL dans
+  `internal/cli`, alors que j'allais semer MariaDB avec. Semé par `container.Exec`, avec le client de
+  l'image — ce qui est de toute façon plus proche de ce que fait koffr.
+- **`6.3` — le binaire mesuré** : **13,4 / 12,6 / 12,9 Mio** (linux/amd64, linux/arm64,
+  darwin/arm64), contre **10,0 / 9,3 / 9,5** au début du lot. `age` et `zstd` coûtent donc
+  **+3,4 Mio**. Marge avant le seuil : **16,6 Mio**. Le risque du plan est levé pour ce lot ; il se
+  repose au lot 4 avec le SDK S3.
+- **`6.4` — le `README` porte la procédure de séquestre** (`E-132`, deux clés, celle de séquestre
+  ailleurs et hors ligne, l'avertissement qui ne disparaît pas) et la façon d'ouvrir une archive
+  **sans koffr**. Le `Status` disait encore « lot 0 en cours » : corrigé, et il dit désormais ce que
+  koffr ne sait **pas** encore faire.
+- `mise run verify` : **0**, `mise run e2e` : **0** sur l'instance.
 
 ### 2026-09-22 — vague 5, le cas d'usage de sauvegarde
 

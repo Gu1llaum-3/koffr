@@ -9,8 +9,10 @@ alone — without koffr.
 
 ## Status
 
-**Early development.** Lot 0 (skeleton, tooling and the tool-linking spike) is in progress; no
-backup is taken yet. The `version` command is the only thing this binary does today.
+**Early development.** koffr takes real backups: `koffr backup <db>` dumps a PostgreSQL, MySQL or
+MariaDB database, compresses it, encrypts it and writes it to a filesystem destination. Not yet
+here: S3 and SFTP destinations, archive verification, the manifest, retention, restore, the
+scheduler and the web interface. What a command cannot do yet, it says.
 
 ## Requirements
 
@@ -87,6 +89,53 @@ koffr config show                  # prints it with every secret masked
 
 Parsing is strict: an unknown key is an error naming the key, its line and its section.
 Every sensitive field takes three forms — a literal value, `*_env`, or `*_file`.
+
+## Back up
+
+```sh
+koffr keygen                       # a key pair, shown once and never written
+koffr backup boutique              # dump, compress, encrypt, write
+koffr backup boutique --dry-run    # what it would do, without writing a byte
+```
+
+An archive lands at a path you can read and rebuild without koffr:
+
+```
+boutique/2026/09/boutique_20260922T020003Z_01JQ8F3K2M7X9P4W.pgc
+```
+
+### Two keys, always
+
+koffr holds **public** keys only. It cannot read its own archives, which is what makes a stolen
+agent give away the databases as they are now rather than the history of what they were.
+
+That cuts the other way too: **lose the private key and every archive encrypted for it is
+unreadable, forever.** So `recipients.txt` takes two keys — the operational one and an **escrow**
+key kept somewhere else entirely, offline, by somebody who is not the person running koffr.
+
+```sh
+koffr keygen >>notes-operational.txt   # keep the private key off this machine
+koffr keygen >>notes-escrow.txt        # and this one somewhere else again
+# put both public keys, one per line, in /etc/koffr/recipients.txt
+```
+
+koffr warns at every start when it finds a single key. It does not refuse: a fleet with one key is
+a fleet that is still being backed up. But the warning does not go away.
+
+### Open an archive without koffr
+
+This is the point of the format, and it is checked by `mise run e2e` on every build. Two standard
+tools, in this order — the archive is compressed **and then** encrypted:
+
+```sh
+age --decrypt -i identity.txt boutique_20260922T020003Z_01JQ8F3K2M7X9P4W.pgc | zstd -d >dump.pgc
+
+pg_restore --list dump.pgc                       # what is inside it
+pg_restore -d boutique_restored dump.pgc         # PostgreSQL
+mariadb boutique_restored <dump.sql              # MySQL and MariaDB
+```
+
+Nothing above runs koffr. If this repository disappeared tomorrow, your archives would still open.
 
 ## Documentation
 

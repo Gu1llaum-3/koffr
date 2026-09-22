@@ -49,7 +49,9 @@ mise run lint                # golangci-lint : format, lint et interdits globaux
 mise run fmt                 # applique les formateurs (gofumpt, goimports)
 mise run test                # tests ; `-race` si la machine a un compilateur C, sinon sans, en le disant
 mise run build               # binaire statique CGO_ENABLED=0 dans dist/koffr
-mise run verify              # les quatre ci-dessus, dans l'ordre ; vert avant tout commit sur main
+mise run interop             # E-075 : le vrai binaire `age` relit une archive écrite par koffr
+mise run e2e                 # scénario 6 : sauvegarde d'un vrai parc, archive ouverte sans koffr
+mise run verify              # tout ce qui précède, dans l'ordre ; vert avant tout commit sur main
 ```
 
 Versions des outils : `mise.toml` fait autorité (Go 1.27, `golangci-lint` 2.13.2), y compris en CI.
