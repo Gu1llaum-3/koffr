@@ -333,11 +333,23 @@ Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, éca
   la preuve déterministe est `BKP-14`, qui tient l'ordre par construction.
 - **Le test du scénario 11 a trouvé un vrai défaut de la vague 4** : le dump de 60 000 lignes ne
   faisait que 187 Kio. `pg_dump -Fc` **compresse lui-même** par défaut, et le manifeste du § 5.3
-  porte `--compress=0` — que j'avais manqué. Conséquence : le « dump brut » était déjà compressé,
-  zstd recompressait du compressé, `size_raw` mesurait autre chose que ce que le CDC nomme, et
-  l'arithmétique du § 4.5 (10 % à 25 % du brut) était fausse par construction. Corrigé, et
-  `BKP-13` le dit maintenant. C'est exactement ce qu'un test de bout en bout sur une base non
-  triviale est censé attraper : aucun test unitaire de la vague 4 ne pouvait le voir.
+  porte `--compress=0` — que j'avais manqué. Corrigé, et `BKP-13` le dit maintenant. C'est ce qu'un
+  test de bout en bout sur une base non triviale est censé attraper : aucun test unitaire de la
+  vague 4 ne pouvait le voir.
+- **Et la mesure a corrigé deux affirmations que j'avais faites sur ce défaut** (2026-09-22, base de
+  107 Mo, 400 000 lignes, sur l'instance) : dump brut **75,7 Mo** ; `--compress=0` + zstd:3
+  **7,25 Mo** en 0,7 s ; zlib de `pg_dump` + zstd:3 **6,84 Mo** en 0,8 s ; zlib seul **7,11 Mo**.
+  Donc **non**, la double compression ne « recompressait pas du compressé pour rien » : elle gagnait
+  encore 4 %. Et **non**, l'arithmétique du § 4.5 n'était pas fausse par construction : l'estimation
+  d'espace lit la **taille de la base**, pas le dump brut. Ce qui était réellement cassé, c'est le
+  **sens des deux tailles** : la commande affichait « 6,8 Mo stockés, 7,1 Mo dumpés », d'où un
+  exploitant conclut que la compression ne sert à rien, alors que le dump fait 75,7 Mo. Après
+  correctif : 9,6 % du brut, soit l'extrémité optimiste de la fourchette du § 4.5, **validée par la
+  mesure**. Et `sha256_raw` porte enfin l'empreinte du dump.
+- **Trouvaille inattendue, versée au backlog (`B-09`)** : `pg_dump --compress=zstd:3` seul rend
+  **6,69 Mo en 0,4 s** — plus petit et deux fois plus rapide que notre chaîne. Ça ne dispense pas de
+  chiffrer, et ça casserait l'uniformité des trois moteurs, mais c'est une piste mesurée qui demande
+  un ADR, pas une décision de vague.
 - **Ce test lit la sortie de la commande**, à dessein : les deux tailles affichées sont ce qu'un
   exploitant lit pour juger qu'une sauvegarde s'est bien passée. Elles font donc partie de ce qui
   est testé.
