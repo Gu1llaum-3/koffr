@@ -87,6 +87,13 @@ Le registre fait foi : `docs/recette/anomalies.md`.
   non écrite en dur dans l'adaptateur. *Exclut* : un `.zst.age` codé dans `internal/cli` qui
   mentirait le jour où la compression change.
 
+- **N-4 (2026-09-22) — le tampon porte le pid de son propriétaire dans son nom.** *Constat* : le
+  plan dit « purger au démarrage d'un job » sans dire comment, et une purge qui balaie le
+  répertoire **supprimerait le tampon d'un job voisin** — le verrou de `E-051` est par **base**,
+  donc deux jobs coexistent légitimement. *Décision* : `staging-<pid>-<job>.koffr`, et la purge ne
+  retire que les fichiers dont le processus est mort, avec la même vérification que le verrou.
+  *Exclut* : un `RemoveAll` du répertoire, qui casserait la sauvegarde d'à côté.
+
 ## Vagues
 
 ### Vague 1 — Ce qu'on écrit va où on croit (`lot2c/wave-1-output-streams`) — `A-12`, `keygen`
@@ -106,15 +113,15 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 2 — Le tampon ne survit pas au job (`lot2c/wave-2-purge-staging`) — `A-16`
 
-- [ ] **2.1** Test d'abord `internal/domain/backup/staging_file_test.go` — **`BKP-17`** : le
+- [x] **2.1** Test d'abord `internal/domain/backup/staging_file_test.go` — **`BKP-17`** : le
       répertoire de tampon est **purgé au démarrage** d'un job ; un fichier laissé par un job mort
       disparaît.
-- [ ] **2.2** Test — **`BKP-18`** : un job qui échoue **en cours de tampon** ne laisse rien ; un job
+- [x] **2.2** Test — **`BKP-18`** : un job qui échoue **en cours de tampon** ne laisse rien ; un job
       tué pendant l'écriture laisse un fichier que le job suivant purge.
-- [ ] **2.3** Test d'intégration `internal/cli` — après un job interrompu, `/var/lib/koffr/tmp` est
+- [x] **2.3** Test d'intégration `internal/cli` — après un job interrompu, `/var/lib/koffr/tmp` est
       vide à la relance. Joué avec un vrai conteneur.
-- [ ] **2.4** `internal/domain/backup/rules.md` : `BKP-17`, `BKP-18`.
-- [ ] **2.5** Vague verte : `verify`, commit `fix(backup): purge the staging directory a killed job left behind`.
+- [x] **2.4** `internal/domain/backup/rules.md` : `BKP-17`, `BKP-18`.
+- [x] **2.5** Vague verte : `verify`, commit `fix(backup): purge the staging directory a killed job left behind`.
 
 ### Vague 3 — Une archive dit ce qu'elle est (`lot2c/wave-3-archive-identity`) — `A-13`, `A-14`
 
@@ -168,6 +175,22 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 2, le tampon ne survit pas au job
+
+- **`N-4` ajoutée, et c'est le cœur de la vague** : le plan disait « purger au démarrage d'un job »
+  sans dire comment. Or une purge qui balaie le répertoire **supprimerait le tampon du job d'à
+  côté** — le verrou de `E-051` est par **base**, donc deux sauvegardes coexistent légitimement. Le
+  tampon porte donc le **pid** de son propriétaire dans son nom, et la purge ne retire que ceux dont
+  le processus est mort, avec la même vérification que le verrou.
+- **Un test pour chaque moitié de la règle** : le tampon d'un processus mort disparaît, celui d'un
+  processus vivant est laissé intact. Sans le second, la correction aurait échangé une fuite de
+  disque contre une corruption de sauvegarde.
+- **`BKP-17` et `BKP-18` écrites avant le code.** Un job ne laisse aucun tampon, qu'il réussisse ou
+  qu'il échoue ; seul un processus tué peut en laisser un, et c'est la purge qui le ramasse.
+- **Vérifié sur une vraie machine** : un tampon de 13 Mio planté au nom d'un pid mort — la taille
+  exacte trouvée en recette — a disparu après la sauvegarde suivante, et le répertoire est vide.
+- `mise run verify` : **0**.
 
 ### 2026-09-22 — vague 1, ce qu'on écrit va où on croit
 

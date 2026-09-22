@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"filippo.io/age"
+
+	"github.com/Gu1llaum-3/koffr/internal/domain/backup"
 )
 
 // fixtureDir is where the end-to-end tests lay out what external tools need to
@@ -387,4 +389,38 @@ func newIdentity(t *testing.T) *age.X25519Identity {
 
 func firstBytes(of []byte) string {
 	return string(of[:min(len(of), 48)])
+}
+
+// A-16, BKP-17 — on a real machine: a buffer left by a job that was killed is
+// gone after the next job, and the staging directory is empty once a backup
+// succeeds. The recette found 13 MB sitting there for ever.
+func TestAKilledJobsBufferIsGoneAfterTheNextBackup(t *testing.T) {
+	server := startPostgresServer(t, 2000)
+	site := newFleetSite(t, server)
+
+	staging := filepath.Join(site.stateDir, "tmp")
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		t.Fatalf("make the staging directory: %v", err)
+	}
+
+	// As a job killed mid-stream would have left it: a pid the kernel has not
+	// handed out.
+	orphan := filepath.Join(staging, backup.StagingFileName(2147483646, "01JQ8F3K2M7X9P4W"))
+	if err := os.WriteFile(orphan, make([]byte, 13<<20), 0o600); err != nil {
+		t.Fatalf("plant the orphan buffer: %v", err)
+	}
+
+	run(t, site.args("backup", fleetDatabase)...)
+
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Errorf("the buffer of a killed job survived the next backup: %s", orphan)
+	}
+
+	left, err := os.ReadDir(staging)
+	if err != nil {
+		t.Fatalf("read the staging directory: %v", err)
+	}
+	if len(left) != 0 {
+		t.Errorf("the staging directory holds %d entries after a successful backup", len(left))
+	}
 }

@@ -221,6 +221,12 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	}
 	defer func() { _ = lock.Release() }()
 
+	// BKP-17 — collect what a killed job left behind, before adding to it. Only
+	// buffers whose process is gone: another database may be staging right now.
+	if err := purgeStaging(s.wiring.StateDirectory); err != nil {
+		return result, err
+	}
+
 	started := time.Now()
 	defer func() { result.Duration = time.Since(started) }()
 
@@ -302,7 +308,7 @@ func (s *Service) dumpAndWrite(
 	result.mark(StepDump)
 
 	if mode == Stage {
-		return s.stage(ctx, dump, path, result)
+		return s.stage(ctx, dump, path, result, request.JobID)
 	}
 
 	return s.stream(ctx, dump, path, result)
@@ -310,8 +316,8 @@ func (s *Service) dumpAndWrite(
 
 // stage writes the packed stream to a staging file, **closes the dump** — which
 // is what ends the transaction on the database, E-055 — and only then sends.
-func (s *Service) stage(ctx context.Context, dump io.ReadCloser, path string, result *Result) (Packed, error) {
-	staging, err := s.stagingFile()
+func (s *Service) stage(ctx context.Context, dump io.ReadCloser, path string, result *Result, job string) (Packed, error) {
+	staging, err := s.stagingFile(job)
 	if err != nil {
 		_ = dump.Close()
 
@@ -384,15 +390,17 @@ func (s *Service) stream(ctx context.Context, dump io.ReadCloser, path string, r
 	return packed, nil
 }
 
-// stagingFile opens the buffer of § 4.5, under the state directory so that it
-// lives on the volume koffr was given and not on whatever /tmp happens to be.
-func (s *Service) stagingFile() (*os.File, error) {
-	directory := filepath.Join(s.wiring.StateDirectory, "tmp")
+// stagingFile opens the buffer of § 4.5. Its name carries the pid of this
+// process, so that the next job can tell it from a buffer being written now.
+func (s *Service) stagingFile(job string) (*os.File, error) {
+	directory := filepath.Join(s.wiring.StateDirectory, stagingDirectory)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("make the staging directory %s: %w", directory, err)
 	}
 
-	file, err := os.CreateTemp(directory, "staging-*.koffr")
+	path := filepath.Join(directory, StagingFileName(os.Getpid(), job))
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open a staging file in %s: %w", directory, err)
 	}

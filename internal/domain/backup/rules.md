@@ -31,6 +31,13 @@ adaptateur n'a pas de `rules.md` (ADR-0010) et qu'`ARCHITECTURE.md` ne déclare 
 | BKP-08 | **Deux** empreintes sont calculées au vol : `sha256_raw` sur le dump **avant** compression, `sha256_stored` sur ce qui est réellement écrit. Seule la seconde se vérifie sans déchiffrer, et le lot 3 en dépend. | `E-024`, `N-7` | `pipeline/pipeline_test.go › TestBKP08BothChecksumsAreComputedOnTheWay` |
 | BKP-09 | Une erreur **au milieu** du flux — dump interrompu, disque plein, destinataire refusé — remonte **typée** et ne produit **jamais** un résultat qui ressemble à un succès. Un octet écrit n'est pas une sauvegarde. | `E-024`, § 2 `P3` | `pipeline/pipeline_test.go › TestBKP09AFailureMidStreamIsNeverASuccess` |
 
+## Le tampon
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| BKP-17 | Un job **purge les tampons abandonnés** avant de commencer — ceux dont le processus propriétaire n'existe plus. `internal/state` sait purger ce répertoire (`E-026`) mais une sauvegarde n'ouvre jamais l'état, donc rien ne les collectait : un job tué laissait son tampon pour toujours et le disque se remplissait, ce que `E-061` existe pour éviter. Le tampon d'un processus **vivant** n'est **jamais** touché : le verrou est par base, donc deux jobs coexistent. | `A-16`, `E-026`, `E-061`, `N-4` | `backup/staging_file_test.go › TestBKP17AJobPurgesWhatAKilledJobLeftBehind`, `› TestBKP17ALivingJobsStagingFileIsNotTouched`, `cli/endtoend_test.go › TestAKilledJobsBufferIsGoneAfterTheNextBackup` |
+| BKP-18 | Un job **ne laisse aucun tampon**, qu'il réussisse ou qu'il échoue. Seul un processus tué peut en laisser un, et c'est `BKP-17` qui le ramasse. | `A-16`, § 4.5 | `backup/staging_file_test.go › TestBKP18AFailedJobLeavesNoBuffer`, `› TestBKP18ASuccessfulJobLeavesNoBuffer` |
+
 ## Où l'archive est écrite
 
 | # | Règle (une phrase, vérifiable) | Source | Test |
@@ -60,3 +67,4 @@ la raison de `N-9` : un adaptateur n'a pas de `rules.md`.
 | Compression supposée sans historique | ÷ 4 | § 4.5 (10 % à 25 %), `N-12` | `backup/staging_test.go` |
 | Répertoire des verrous | `<état>/locks/` | `N-5` | `backup/lock_test.go` |
 | Répertoire de tampon | `<état>/tmp/` | `E-026`, § 4.5 | `backup/service_test.go` |
+| Nom d'un tampon | `staging-<pid>-<job>.koffr` | `N-4` | `backup/staging_file_test.go` |
