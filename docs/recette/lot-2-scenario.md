@@ -33,6 +33,10 @@ Durée attendue : une heure, préparation des bases non comprise.
 | La clé privée n'est **nulle part** sur la machine | C'est le cœur d'ADR-0007 : un attaquant qui prend la machine n'obtient pas l'historique |
 | Les objets globaux du cluster ne sont pas sauvegardés | Hors MVP, `B-01` |
 | `koffr backup` ne planifie rien | Le planificateur est au lot 5 |
+| L'extension est `.pgc.zst.age`, pas `.pgc` | `A-13` : le nom dit la pile, dans l'ordre où on la défait. `pg_restore` direct dessus échoue **et c'est normal** |
+| `koffr keygen` n'affiche qu'une ligne quand on le redirige | Voulu depuis `A-12` : la clé **publique** est le résultat, donc `koffr keygen >> recipients.txt` ajoute une ligne. La privée reste au terminal |
+| L'espace réservé est bien plus petit qu'au premier passage | ADR-0016 : le diviseur est passé de 4 à 8, sur les mesures de la première session |
+| `doctor` ajoute une ligne quand le client est plus récent que le serveur | `A-15`, `RSV-13` : les archives portent des directives que ce serveur ignore |
 
 ## Parcours
 
@@ -41,7 +45,9 @@ Durée attendue : une heure, préparation des bases non comprise.
 1. `koffr keygen` → **on doit voir** une clé publique et une clé privée à l'écran, et un message
    disant que la privée n'est **écrite nulle part**.
 2. Chercher la clé privée sur la machine — `grep -r AGE-SECRET-KEY /etc /var` → **on ne doit rien
-   trouver**.
+   trouver**. Attention au faux positif : `sudo` journalise la **ligne de commande**, donc la
+   recherche elle-même apparaît dans `auth.log` et dans le journal `systemd`. Chercher la chaîne la
+   journalise.
 3. Mettre la clé publique dans `recipients.txt`, la privée **ailleurs**.
 
 **Décision attendue** : cette ergonomie est-elle tenable ? Un exploitant qui perd cette fenêtre de
@@ -129,6 +135,19 @@ récupérer ?
   99 970 009 € pour MariaDB. **Le scénario 11 est tenu et observé** : dump brut 295 Mo, pic du tampon
   23,1 Mo, zéro échantillon où une connexion de dump et une écriture vers la destination coexistent.
   **Sept anomalies, `A-12` à `A-18`**, dont trois bloquantes.
+
+- **2026-09-22, rejeu après corrections** : les **sept parcours** rejoués sur la même instance et le
+  même parc, après `docs/plans/lot-2-corrections.md`. **Aucune nouvelle anomalie.** Les sept
+  anomalies `A-12` à `A-18` sont vérifiées corrigées sur la machine :
+  `koffr backup` écrit 499 octets sur la **sortie standard** ; les archives s'appellent
+  `…​.pgc.zst.age` et `…​.sql.zst.age` ; les identifiants sont des **ULID de 26 caractères**
+  (`01M2ZGTMYBFF6X3MAYMZWREHQJ`) ; un `kill -9` à 0,7 s laisse `staging-112735-01M2ZG….koffr` de
+  4,6 Mo et un verrou orphelin, **tous deux purgés à la relance** ; le journal porte les **sept
+  étapes** de `E-024` et aucun secret ; l'avertissement de séquestre apparaît sur `config validate`
+  **et** `doctor`. L'espace réservé est passé de 139 Mo à **73 Mo** pour la même base (`Q-08`).
+  Le critère de sortie n° 2 est retenu : 1 620 000 commandes et 4 049 903 965 € identiques des deux
+  côtés après un aller-retour par `age` et `zstd` seuls, et le scénario 11 est inchangé — pic du
+  tampon 23,1 Mo pour 295 Mo de dump, zéro chevauchement.
 
 ### Mesures de la session, pour `Q-08`
 

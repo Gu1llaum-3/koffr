@@ -1,6 +1,8 @@
 # Plan lot 2 — Corrections de recette
 
-> Statut : **validé par le propriétaire le 2026-09-22**. Exécuté par `/executer-plan`. Les règles
+> Statut : **terminé le 2026-09-22** — six vagues mergées, `verify` et CI verts, scénario rejoué en
+> entier sur l'instance. Validé par le propriétaire le 2026-09-22. Exécuté par `/executer-plan`.
+> Reste `/cloturer-lot 2`. Les règles
 > communes à tous les plans sont dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées
 > ici.
 
@@ -173,14 +175,30 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 6 — Rejouer la recette (`lot2c/wave-6-replay`)
 
-- [ ] **6.1** Rejouer **les sept parcours** du scénario sur l'instance, parc réel.
-- [ ] **6.2** Mettre à jour `docs/recette/lot-2-scenario.md` : historique du rejeu, et ce que les
+- [x] **6.1** Rejouer **les sept parcours** du scénario sur l'instance, parc réel.
+- [x] **6.2** Mettre à jour `docs/recette/lot-2-scenario.md` : historique du rejeu, et ce que les
       décisions ont changé dans « ce qui est voulu et pourrait passer pour un bug ».
-- [ ] **6.3** Vague verte : `verify`, commit `chore: replay the lot 2 acceptance scenario`.
+- [x] **6.3** Vague verte : `verify`, commit `chore: replay the lot 2 acceptance scenario`.
 
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 6, rejeu de la recette
+
+- **Les sept parcours rejoués sur l'instance**, même parc, après les cinq vagues. **Aucune nouvelle
+  anomalie**, et les sept précédentes vérifiées corrigées **sur la machine**, pas seulement en test.
+- **Un faux positif à noter dans le scénario** : chercher `AGE-SECRET-KEY` sous `/etc` et `/var` le
+  trouve — dans `auth.log` et le journal `systemd`, parce que `sudo` enregistre la **ligne de
+  commande** de la recherche. Chercher la chaîne la journalise. Ajouté au parcours 1 pour que
+  personne ne le poursuive.
+- **Le premier `kill -9` n'a rien prouvé** : à 2 s, le job était déjà fini. Refait à 0,7 s, et là le
+  tampon de 4,6 Mo et le verrou orphelin apparaissent — puis disparaissent à la relance. Un test
+  d'interruption qui n'interrompt rien est vert et ne dit rien.
+- **La table « ce qui est voulu et pourrait passer pour un bug » a gagné quatre lignes** : les
+  décisions changent ce qui doit surprendre, et un scénario qui ne les répercute pas produit de
+  fausses anomalies au rejeu suivant.
+- `mise run verify` : **0**.
 
 ### 2026-09-22 — vague 5, ce qu'ADR-0016 a fixé
 
