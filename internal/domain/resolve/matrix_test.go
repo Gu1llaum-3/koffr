@@ -210,3 +210,32 @@ func candidate(family resolve.Family, tool resolve.Tool, version string, source 
 		Source:  source,
 	}
 }
+
+// RSV-13, A-15 — a client of a newer major than its server is compatible, and
+// the archives it writes carry directives that server does not know. Dumping a
+// 16 with a pg_dump 18 produced `unrecognized configuration parameter
+// "transaction_timeout"` on restore, then `errors ignored on restore: 1`:
+// benign, but a restore is never clean, and `--exit-on-error` would fail.
+func TestRSV13AToolAheadOfItsServerIsSignalled(t *testing.T) {
+	server := resolve.ServerInfo{Family: resolve.PostgreSQL, Version: resolve.ParseVersion("16.15")}
+
+	warning := resolve.WarnIfAhead(candidate(resolve.PostgreSQL, resolve.Dump, "18.6", resolve.Host), server)
+	if warning == "" {
+		t.Fatal("a pg_dump 18 against a server 16 passed without a word")
+	}
+	for _, want := range []string{"18", "16"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("the warning does not name %q: %s", want, warning)
+		}
+	}
+
+	// The same major says nothing, and neither does an older client — which the
+	// matrix refuses outright anyway.
+	if got := resolve.WarnIfAhead(candidate(resolve.PostgreSQL, resolve.Dump, "16.2", resolve.Host), server); got != "" {
+		t.Errorf("a client of the server's own major warned about something: %s", got)
+	}
+	mariadb := resolve.ServerInfo{Family: resolve.MariaDB, Version: resolve.ParseVersion("11.4.13")}
+	if got := resolve.WarnIfAhead(candidate(resolve.MariaDB, resolve.Dump, "11.4.8", resolve.Host), mariadb); got != "" {
+		t.Errorf("a client of the same major warned about something: %s", got)
+	}
+}

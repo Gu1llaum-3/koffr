@@ -81,9 +81,9 @@ func backupService(cmd *cobra.Command, database string, searchPath []string) (*b
 		return nil, backup.Request{}, err
 	}
 
-	recipients, err := crypto.LoadRecipients(loaded.Encryption.RecipientsFile)
+	recipients, err := recipientsFor(loaded, declared)
 	if err != nil {
-		return nil, backup.Request{}, fmt.Errorf("the encryption keys: %w", err)
+		return nil, backup.Request{}, err
 	}
 
 	if warning := recipients.Warning(); warning != "" {
@@ -349,4 +349,25 @@ func (j slogJournal) Step(entry backup.JobStep) {
 	default:
 		j.logger.Info("step done", attributes...)
 	}
+}
+
+// recipientsFor applies `Q-04`: a database that declares its own recipients is
+// encrypted for **them alone**; one that declares none inherits the fleet's
+// (ADR-0016).
+func recipientsFor(loaded *config.Config, database config.Database) (crypto.Recipients, error) {
+	fleet, err := crypto.LoadRecipients(loaded.Encryption.RecipientsFile)
+	if err != nil {
+		return crypto.Recipients{}, fmt.Errorf("the encryption keys of the fleet: %w", err)
+	}
+
+	if database.RecipientsFile == "" {
+		return fleet, nil
+	}
+
+	own, err := crypto.LoadRecipients(database.RecipientsFile)
+	if err != nil {
+		return crypto.Recipients{}, fmt.Errorf("the encryption keys of %s: %w", database.ID, err)
+	}
+
+	return crypto.Effective(fleet, own), nil
 }

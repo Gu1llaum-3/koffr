@@ -124,6 +124,23 @@ koffr keygen >>notes-escrow.txt        # and this one somewhere else again
 koffr warns at every start when it finds a single key. It does not refuse: a fleet with one key is
 a fleet that is still being backed up. But the warning does not go away.
 
+### What koffr does not back up
+
+A dump is taken with `--no-owner --no-privileges`, so an archive restores into **any** cluster —
+including one rebuilt after a total loss, where the original roles no longer exist. The price is
+stated rather than discovered on the day:
+
+- **roles, passwords and grants** are not in it, nor are tablespaces and cluster-wide extensions;
+- restoring gives every object to whoever runs the restore.
+
+For a faithful disaster recovery the industry pairs this with `pg_dumpall --globals-only`. koffr
+does not take that second artefact yet — it is the next thing on the list, and until then koffr
+produces archives that are **portable**, not a byte-for-byte cluster.
+
+Each database is encrypted for the fleet's recipients, unless it declares its own
+`recipients_file` — which then **replaces** the fleet list rather than adding to it, so that one
+can say for whom an archive is encrypted by looking at one place.
+
 ### Open an archive without koffr
 
 This is the point of the format, and it is checked by `mise run e2e` on every build. Two standard

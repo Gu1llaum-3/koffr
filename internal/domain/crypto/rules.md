@@ -17,6 +17,12 @@ c'est ce qui fait qu'un attaquant qui prend l'agent n'obtient pas l'historique d
 | CRY-03 | Le chiffrement est **en flux** : l'entrée n'est jamais matérialisée, et l'archive produite est **déchiffrable par l'outil `age` standard**, sans koffr. Aucun format maison. | `E-072`, `E-075`, § 5.6 `F6.1` et `F6.4` | `pipeline/encrypt_test.go › TestCRY03TheArchiveIsReadableByTheStandardAgeTool`, `› TestCRY03NothingIsMaterialised` |
 | CRY-04 | Une archive se déchiffre avec **chacun** des destinataires déclarés, et avec **aucune autre** clé : une clé perdue ne condamne pas les archives, et une clé volée ailleurs n'ouvre rien. | `E-073`, `E-074`, ADR-0007 | `pipeline/encrypt_test.go › TestCRY04EachRecipientCanOpenTheArchive`, `› TestCRY04AnotherKeyOpensNothing` |
 
+## Quelles clés s'appliquent
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| CRY-05 | Les destinataires d'une base sont **les siens quand elle en déclare**, ceux du parc sinon. **Jamais les deux** : une fusion serait pratique — ajouter une clé à une base sensible sans répéter le séquestre — et plus personne ne saurait, en lisant une base, pour qui ses archives sont chiffrées. L'avertissement de `E-132` suit la liste **qui s'applique**. | `Q-04`, ADR-0016, `A-17` | `crypto/effective_test.go › TestCRY05ADatabasesOwnRecipientsReplaceTheFleets`, `› TestCRY05ADatabaseWithoutRecipientsInheritsTheFleets`, `› TestCRY05TheEscrowWarningFollowsTheListThatApplies`, `cli/endtoend_test.go › TestADatabaseWithItsOwnRecipientsIsEncryptedForThemAlone` |
+
 ## Divergences avec le cahier des charges
 
 - **Une seule clé avertit, elle n'empêche pas.** Le § 11 écrit « destinataires multiples

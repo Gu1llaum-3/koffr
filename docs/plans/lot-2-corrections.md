@@ -94,6 +94,12 @@ Le registre fait foi : `docs/recette/anomalies.md`.
   retire que les fichiers dont le processus est mort, avec la même vérification que le verrou.
   *Exclut* : un `RemoveAll` du répertoire, qui casserait la sauvegarde d'à côté.
 
+- **N-5 (2026-09-22) — la règle des destinataires est `CRY-05`, pas `BKP-22`.** *Constat* : la
+  tâche `5.2` la place dans `backup`, mais les destinataires sont le sujet de `crypto`, qui porte
+  déjà `CRY-01` à `CRY-04`. Même raison que `N-9` du plan du lot 2 : on ne crée pas une règle dans
+  le module qui l'utilise plutôt que dans celui qui la détient. *Exclut* : un `BKP-22` qui doublerait
+  `CRY-05`. La règle `RSV-13` d'`A-15` suit la même logique : elle vit dans `resolve`.
+
 ## Vagues
 
 ### Vague 1 — Ce qu'on écrit va où on croit (`lot2c/wave-1-output-streams`) — `A-12`, `keygen`
@@ -152,18 +158,18 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 
 ### Vague 5 — Ce qu'ADR-0016 a fixé (`lot2c/wave-5-adr-0016`) — `A-17`, `Q-04`, `Q-07`, `Q-08`
 
-- [ ] **5.1** Test d'abord `internal/config` — le champ `recipients` **par base** est accepté,
+- [x] **5.1** Test d'abord `internal/config` — le champ `recipients` **par base** est accepté,
       valide des clés `age`, et une base qui n'en déclare pas hérite de la liste globale.
-- [ ] **5.2** Test `internal/domain/backup` — **`BKP-22`** : la liste par base **remplace** la
+- [x] **5.2** Test `internal/domain/backup` — **`BKP-22`** : la liste par base **remplace** la
       globale, jamais ne la complète ; l'archive n'est déchiffrable que par les clés déclarées.
-- [ ] **5.3** Test `staging_test.go` — le diviseur d'estimation est **8** (`N-12` amendée par
+- [x] **5.3** Test `staging_test.go` — le diviseur d'estimation est **8** (`N-12` amendée par
       ADR-0016), avec la mesure de recette citée dans le test.
-- [ ] **5.4** Test `internal/cli/doctor_test.go` — un client d'une majeure plus récente que son
+- [x] **5.4** Test `internal/cli/doctor_test.go` — un client d'une majeure plus récente que son
       serveur est **signalé** (`A-15`).
-- [ ] **5.5** `README` : ce que koffr **ne** sauvegarde pas — rôles, tablespaces, droits — et
+- [x] **5.5** `README` : ce que koffr **ne** sauvegarde pas — rôles, tablespaces, droits — et
       pourquoi (`Q-07`).
-- [ ] **5.6** `rules.md` : `BKP-22`, et les constantes mises à jour.
-- [ ] **5.7** Vague verte : `verify`, commit `feat(backup): per-database recipients, and the estimate the acceptance session measured`.
+- [x] **5.6** `rules.md` : `BKP-22`, et les constantes mises à jour.
+- [x] **5.7** Vague verte : `verify`, commit `feat(backup): per-database recipients, and the estimate the acceptance session measured`.
 
 ### Vague 6 — Rejouer la recette (`lot2c/wave-6-replay`)
 
@@ -175,6 +181,27 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-22 — vague 5, ce qu'ADR-0016 a fixé
+
+- **`N-5` ajoutée** : la tâche `5.2` plaçait la règle des destinataires dans `backup`, alors que
+  c'est le sujet de `crypto`. Elle est devenue **`CRY-05`**, et celle d'`A-15` **`RSV-13`** dans
+  `resolve`. Même raison que `N-9` du plan du lot 2 : une règle vit dans le module qui la détient,
+  pas dans celui qui l'utilise.
+- **`A-17` est réparée** : le champ `recipients_file` par base existe, l'analyse stricte l'accepte,
+  et une faute de frappe dessus reste une erreur qui nomme la clé. La promesse de `N-2` du plan du
+  lot 2 n'avait jamais été tenue parce que rien ne la testait.
+- **Prouvé là où ça compte** : une base qui déclare ses propres clés produit une archive que la clé
+  du parc — celle qui ouvre toutes les autres — **n'ouvre pas**. Un test qui vérifierait seulement
+  que la bonne clé ouvre ne dirait rien de la fusion.
+- **Le diviseur passe de 4 à 8**, avec la mesure de recette citée dans le test et dans le code :
+  7,8 % et 3,9 % là où koffr supposait 25 %.
+- **`RSV-13`** : `doctor` signale un client d'une majeure plus récente que son serveur. C'est lu
+  **avant** l'incident, contrairement à une ligne de `README`.
+- **Le `README` dit ce que koffr ne sauvegarde pas** — rôles, mots de passe, droits, tablespaces —
+  et pourquoi : l'archive se restaure dans **n'importe quel** cluster, y compris un cluster
+  reconstruit où les rôles d'origine n'existent plus.
+- `mise run verify` : **0**.
 
 ### 2026-09-22 — vague 4, un job laisse une trace
 

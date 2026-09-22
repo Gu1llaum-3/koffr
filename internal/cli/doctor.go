@@ -132,6 +132,14 @@ func renderDiagnoses(cmd *cobra.Command, diagnoses []resolve.Diagnosis) {
 
 		case diagnosis.NoTool != nil:
 			say(cmd, "\n%s: %v\n", diagnosis.ID, diagnosis.NoTool)
+
+		default:
+			// A-15 — the resolution is fine and still worth a word when the
+			// client is ahead of its server. doctor is read **before** the
+			// incident; a README line is read after.
+			if warning := resolve.WarnIfAhead(diagnosis.Tool, diagnosis.Server); warning != "" {
+				say(cmd, "\n%s: %s\n", diagnosis.ID, warning)
+			}
 		}
 	}
 }
