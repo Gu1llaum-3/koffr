@@ -1,6 +1,6 @@
 # Plan lot 2 — Corrections de recette
 
-> Statut : **brouillon**, à valider par le propriétaire. Exécuté par `/executer-plan`. Les règles
+> Statut : **validé par le propriétaire le 2026-09-22**. Exécuté par `/executer-plan`. Les règles
 > communes à tous les plans sont dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées
 > ici.
 
