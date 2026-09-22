@@ -68,9 +68,21 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 - **N-1 Le domaine ne connaît pas `slog`.** `backup.Service` reçoit un port `Journal` avec une
   méthode par événement de job ; `internal/cli` l'implémente sur `obs`. *Raison* : `AR-01`.
   *Exclut* : un `*slog.Logger` dans une signature du domaine.
-- **N-2 L'ULID vient d'une bibliothèque, pas de nous.** *Raison* : le format a des règles — base32
-  de Crockford, monotonie dans la même milliseconde — qu'une réimplémentation rate en silence.
-  *Exclut* : `oklog/ulid` sans mesurer ce qu'il ajoute au binaire (marge actuelle : 16,6 Mio).
+- **N-2 L'ULID vient de `github.com/oklog/ulid/v2`** — tranché par le propriétaire le 2026-09-22,
+  après mesure. *Raison* : le format a des règles que notre version ratait déjà en silence. Le
+  `%010X` de `newJobID` **n'a jamais fixé la largeur** — c'est un minimum, pas un maximum, et
+  l'horodatage tient sur 11 chiffres hexadécimaux depuis 2004 : d'où les 27 caractères au lieu de
+  26. Le jour où il en faudrait 12, **tous les anciens identifiants trieraient après les
+  nouveaux**. Et deux identifiants produits dans la même milliseconde ne sont **pas ordonnés** :
+  vérifié, 8 identifiants produits dans l'ordre ne se trient pas dans l'ordre.
+  *Mesuré le 2026-09-22* : **+32,7 Kio** sur le binaire (13 490 642 → 13 524 146 octets), sur
+  16,6 Mio de marge. Apache-2.0 comme koffr, **722 lignes** en un fichier, aucune dépendance
+  transitive liée, 0 avis de sécurité, dernière version en juillet 2026.
+  *Comment on l'appelle* : **`ulid.New` avec `ulid.Monotonic(crypto/rand.Reader, 0)`**, jamais
+  `ulid.Make`. `Make` utilise `math/rand` — une **régression** par rapport au `crypto/rand`
+  d'aujourd'hui — et passe par `MustNew`, qui **panique** si la source d'aléa échoue. Un agent de
+  sauvegarde ne panique pas à 2 h du matin.
+  *Exclut* : réimplémenter le format, et `ulid.Make`.
 - **N-3 L'extension est construite par le domaine**, à partir de ce que le pipeline a appliqué, et
   non écrite en dur dans l'adaptateur. *Exclut* : un `.zst.age` codé dans `internal/cli` qui
   mentirait le jour où la compression change.
@@ -112,7 +124,9 @@ Le registre fait foi : `docs/recette/anomalies.md`.
 - [ ] **3.2** Test `internal/domain/backup/id_test.go` — **`BKP-19`** : l'identifiant est un **ULID**
       de 26 caractères ; deux identifiants produits dans la même milliseconde sont **différents et
       ordonnés** ; le tri lexicographique suit le temps.
-- [ ] **3.3** Mesurer le binaire après l'ajout de la dépendance ULID, et le **noter** (`N-2`).
+- [ ] **3.3** Test — l'identifiant vient de `ulid.New` avec `ulid.Monotonic(crypto/rand.Reader, 0)`,
+      **jamais** `ulid.Make` : la source est cryptographique et rien ne panique. Vérifier le binaire
+      contre les **+32,7 Kio** annoncés par `N-2` ; un écart notable se dit.
 - [ ] **3.4** `README` : la procédure de déchiffrement porte la nouvelle extension.
 - [ ] **3.5** `internal/domain/backup/rules.md` : `BKP-19`, `BKP-10` amendée.
 - [ ] **3.6** Vague verte : `verify`, commit `fix(backup): name archives after what they are, and identify them with a real ULID`.
