@@ -144,3 +144,23 @@ func versionsOf(candidates []Candidate) string {
 
 	return strings.Join(seen, ", ")
 }
+
+// WarnIfAhead says what an operator has to know when the tool that will run is
+// of a **newer major** than the server it dumps: the archive carries
+// directives that server does not understand, so restoring it there is never
+// clean — `pg_restore` ignores the error by default, and `--exit-on-error`
+// would fail on it (A-15).
+//
+// It warns and does not block: the matrix accepts a newer client on purpose
+// (RSV-04), and a distribution often ships only the newest.
+func WarnIfAhead(tool Candidate, server ServerInfo) string {
+	if server.Version.IsZero() || tool.Version.Major <= server.Version.Major {
+		return ""
+	}
+
+	return fmt.Sprintf(
+		"%s is %s and the server runs %s: the archives it writes carry directives that "+
+			"a %d server does not know, so restoring them there reports errors it then ignores. "+
+			"Install the client of major %d to avoid it",
+		tool.Path, tool.Version, server.Version, server.Version.Major, server.Version.Major)
+}

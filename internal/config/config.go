@@ -46,6 +46,12 @@ type Database struct {
 	PasswordEnv  string `yaml:"password_env"`
 	PasswordFile string `yaml:"password_file"`
 
+	// RecipientsFile, when set, **replaces** encryption.recipients_file for
+	// this database — never completes it (`Q-04`, ADR-0016). The field exists
+	// even where nobody uses it, so that adding it later cannot break a
+	// configuration written in between (A-17).
+	RecipientsFile string `yaml:"recipients_file"`
+
 	Tools               Tools     `yaml:"tools"`
 	Staging             string    `yaml:"staging"`
 	Schedule            string    `yaml:"schedule"`

@@ -37,9 +37,15 @@ const (
 )
 
 // blindCompressionDivisor turns a raw database size into an expected stored
-// size when there is no history: a quarter, the pessimistic end of the 10 % to
-// 25 % § 4.5 gives (`N-12`).
-const blindCompressionDivisor = 4
+// size when there is no history: an eighth, 12,5 %.
+//
+// § 4.5 gives a range of 10 % to 25 %, and `N-12` first took the pessimistic
+// end. The acceptance run of the 2026-09-22 measured **7,8 %** on a 372 MB
+// PostgreSQL and **3,9 %** on a MariaDB: koffr was reserving 139 MB for an
+// archive of 23 MB. ADR-0016 amended it — over-reserving is not free, it falls
+// back to `stream`, and the same session measured what `stream` costs: the
+// transaction stays open on production for the whole send.
+const blindCompressionDivisor = 8
 
 // StagingInputs is everything the arbitration of § 4.5 looks at. It holds no
 // file, no connection and no clock: the decision is pure, so it can be shown to

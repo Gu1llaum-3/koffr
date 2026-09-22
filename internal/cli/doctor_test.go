@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Gu1llaum-3/koffr/internal/config"
+	"github.com/Gu1llaum-3/koffr/internal/domain/resolve"
 )
 
 // E-104a — doctor reports, for each database, whether it answers, which version
@@ -223,4 +225,43 @@ func configWith(t *testing.T, extra string) *config.Config {
 	}
 
 	return loaded
+}
+
+// A-15 — doctor says so when the tool that would run is of a newer major than
+// its server. The diagnosis is healthy and the warning still matters: the
+// archives carry directives that server does not know, so restoring them there
+// is never clean. doctor is read **before** the incident.
+func TestDoctorSignalsAToolAheadOfItsServer(t *testing.T) {
+	var out, errs bytes.Buffer
+
+	root := NewRoot()
+	root.SetOut(&out)
+	root.SetErr(&errs)
+
+	renderDiagnoses(root, []resolve.Diagnosis{
+		{
+			ID:     "boutique",
+			Server: resolve.ServerInfo{Reachable: true, Family: resolve.PostgreSQL, Version: resolve.ParseVersion("16.15")},
+			Tool: resolve.Candidate{
+				Family: resolve.PostgreSQL, Tool: resolve.Dump,
+				Path: "/usr/bin/pg_dump", Version: resolve.ParseVersion("18.6"), Source: resolve.Host,
+			},
+		},
+		{
+			ID:     "erp",
+			Server: resolve.ServerInfo{Reachable: true, Family: resolve.MariaDB, Version: resolve.ParseVersion("11.4.13")},
+			Tool: resolve.Candidate{
+				Family: resolve.MariaDB, Tool: resolve.Dump,
+				Path: "mariadb-dump", Version: resolve.ParseVersion("11.4.13"), Source: resolve.Container,
+			},
+		},
+	})
+
+	written := out.String()
+	if !strings.Contains(written, "boutique: /usr/bin/pg_dump is 18.6") {
+		t.Errorf("doctor does not signal the client ahead of its server:\n%s", written)
+	}
+	if strings.Contains(written, "erp: mariadb-dump") {
+		t.Errorf("doctor warned about a client of the server's own major:\n%s", written)
+	}
 }

@@ -469,3 +469,48 @@ func head(of string) string {
 
 	return of
 }
+
+// Q-04, CRY-05 — a database that declares its own recipients is encrypted for
+// **them alone**. Proven where it counts: the fleet key, which would open every
+// other archive, opens nothing here.
+func TestADatabaseWithItsOwnRecipientsIsEncryptedForThemAlone(t *testing.T) {
+	server := startPostgresServer(t, 500)
+	site := newFleetSite(t, server)
+
+	// One key of its own, declared on the database.
+	own := newIdentity(t)
+	ownFile := filepath.Join(filepath.Dir(site.config), "shop-recipients.txt")
+	writeFleetFile(t, ownFile, own.Recipient().String()+"\n")
+
+	configuration, err := os.ReadFile(site.config)
+	if err != nil {
+		t.Fatalf("read the configuration: %v", err)
+	}
+
+	writeFleetFile(t, site.config, strings.Replace(string(configuration),
+		"    staging: stage\n", "    staging: stage\n    recipients_file: "+ownFile+"\n", 1))
+
+	run(t, site.args("backup", fleetDatabase)...)
+
+	archive := site.onlyArchive(t)
+
+	// The key the database declares opens it.
+	if _, err := age.Decrypt(bytes.NewReader(archive.contents), own); err != nil {
+		t.Fatalf("the key the database declares does not open its archive: %v", err)
+	}
+
+	// And the fleet key — which opens every other archive — does not.
+	fleet, err := os.ReadFile(site.identity)
+	if err != nil {
+		t.Fatalf("read the fleet identity: %v", err)
+	}
+
+	fleetKey, err := age.ParseX25519Identity(strings.TrimSpace(string(fleet)))
+	if err != nil {
+		t.Fatalf("parse the fleet identity: %v", err)
+	}
+
+	if _, err := age.Decrypt(bytes.NewReader(archive.contents), fleetKey); err == nil {
+		t.Error("the fleet key opened an archive encrypted for the database's own: the lists were merged")
+	}
+}

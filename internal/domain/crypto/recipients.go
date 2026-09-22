@@ -75,3 +75,19 @@ func (r Recipients) Warning() string {
 		r.From,
 	)
 }
+
+// Effective says which recipients apply to a database: **its own when it
+// declares any, the fleet's otherwise**. Never both.
+//
+// `Q-04`, tranchée par ADR-0016. A merge would be convenient — add one key to a
+// sensitive database without repeating the escrow — and would mean that nobody
+// could say, reading one database, for whom its archives are encrypted. The
+// escrow warning of E-132 follows the list that applies, so a database with one
+// key of its own is warned about even when the fleet declares two.
+func Effective(fleet, database Recipients) Recipients {
+	if len(database.Keys) > 0 {
+		return database
+	}
+
+	return fleet
+}

@@ -131,11 +131,14 @@ func TestBKP05TheExpectedSizeComesFromTheLastBackupFirst(t *testing.T) {
 		t.Errorf("estimate = %d, want the 6 GiB the last backup actually took", fromHistory)
 	}
 
-	// With no history, § 4.5 gives a range of 10 % to 25 % of the raw size.
-	// koffr takes the pessimistic end (`N-12`): under-estimating fills a disk.
+	// With no history: an eighth of the raw size, 12,5 %. The acceptance run of
+	// the 2026-09-22 measured 7,8 % on a 372 MB PostgreSQL and 3,9 % on a
+	// MariaDB, where koffr was assuming 25 % — it reserved 139 MB for an
+	// archive of 23 MB. ADR-0016 amended `N-12`: over-reserving is not free,
+	// it falls back to `stream`, whose cost the same session measured.
 	blind := backup.EstimateStored(nil, databaseBytes)
-	if blind != databaseBytes/4 {
-		t.Errorf("estimate = %d, want a quarter of %d — the pessimistic end of § 4.5", blind, databaseBytes)
+	if blind != databaseBytes/8 {
+		t.Errorf("estimate = %d, want an eighth of %d (ADR-0016)", blind, databaseBytes)
 	}
 
 	// And an unknown database size is not an estimate of zero, which would make
