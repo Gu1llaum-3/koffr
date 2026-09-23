@@ -134,7 +134,7 @@ de forme.
       (`E-025`).
 - [x] **1.4** `internal/domain/verify/rules.md` : `VRF-01`, `VRF-02`, et la **divergence écrite** —
       la structure est contrôlée au vol et non sur l'archive écrite, avec son renvoi ADR-0017.
-- [ ] **1.5** Vague verte : `verify`, commit `feat(verify): check a dump's structure as it streams past`.
+- [x] **1.5** Vague verte : `verify`, commit `feat(verify): check a dump's structure as it streams past`.
 
 ### Vague 2 — Le catalogue écrit pour de vrai (`lot3/wave-2-catalog`)
 
@@ -247,3 +247,21 @@ Sur l'instance Multipass, parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-23 — vague 1, la structure se vérifie au vol
+
+- **L'inconnue du lot est levée** : `VRF-01` et `VRF-02` passent contre un **vrai** PostgreSQL 16 et
+  une **vraie** MariaDB 11.4, sans clé privée. ADR-0017 tient.
+- **Rien n'est mis en tampon côté PostgreSQL.** `pg_restore --list` lit la table des matières en
+  tête d'un dump `-Fc` et **sort** ; le tube casse, et le reste du dump passe et est jeté. Le
+  watcher retient donc **0 octet** — mesuré par `TestWatchingDoesNotConsumeTheStream` sur 8 Mio.
+  C'est mieux que la fenêtre bornée que `N-2` prévoyait : c'est `pg_restore` qui décide quand il en
+  a assez, pas une constante inventée par nous.
+- **Le marqueur MySQL se cherche à la fin, pas partout.** Un test plante une ligne de données qui
+  **cite** `-- Dump completed` et vérifie qu'elle ne suffit pas.
+- **Trois états, pas deux** : `verify.Structure` porte `Checked` **et** `OK`. Un contrôle que koffr
+  n'a pas pu mener n'est ni un succès ni un échec de l'archive — `P4` veut que les deux ne se
+  confondent jamais. C'est la leçon de `RSV-11` (`MyISAMUnknown`) réappliquée.
+- `tail` de `internal/engine` sert maintenant aussi à garder une **tête** bornée, pour la table des
+  matières. Un champ, pas un second type.
+- `mise run verify` : **0**. Tests sur serveurs réels joués sur l'instance avant la PR.
