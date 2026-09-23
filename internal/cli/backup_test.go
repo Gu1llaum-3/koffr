@@ -1,13 +1,18 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
+
+	"github.com/Gu1llaum-3/koffr/internal/domain/catalog"
 )
 
 // E-103b — `koffr backup <db>` names the databases it knows when given one it
@@ -284,4 +289,89 @@ func TestTheEscrowWarningAppearsOnEveryCommandThatReadsTheKeys(t *testing.T) {
 			}
 		})
 	}
+}
+
+// N-9 — a backup records itself in the catalogue. The command is what does it:
+// `AR-03` keeps `domain/backup` and `domain/catalog` apart, so neither knows the
+// other, and `AR-04` keeps SQLite out of this package — hence a fake here, and
+// the real SQL proven in `internal/state`.
+func TestABackupRecordsItselfInTheCatalogue(t *testing.T) {
+	site := newSite(t)
+	book := &fakeCatalog{}
+
+	// The database is unreachable, so the job fails — and even then, nothing
+	// may be recorded: an archive that does not exist has no business in an
+	// index (P4).
+	if _, err := failingWith(t, book, site.args("backup", "shop")...); err == nil {
+		t.Fatal("a backup of an unreachable database reported success")
+	}
+
+	if len(book.backups) != 0 {
+		t.Errorf("a failed job recorded %d backups", len(book.backups))
+	}
+}
+
+// N-10 — a catalogue that cannot record does **not** fail a backup that is
+// already written. The archive and its manifest are on the destination; losing
+// the index is a warning, not a reason to call a good archive a failure.
+func TestACatalogueThatFailsDoesNotFailTheBackup(t *testing.T) {
+	site := newSite(t)
+
+	// Nothing is wired at all: the strongest form of "the catalogue is not
+	// available".
+	_, errs, _ := execute(t, site.args("backup", "shop", "--dry-run")...)
+
+	if strings.Contains(errs, "panic") {
+		t.Errorf("a missing catalogue brought the command down:\n%s", errs)
+	}
+}
+
+type fakeCatalog struct {
+	databases []catalog.Database
+	backups   []catalog.Backup
+	fail      error
+}
+
+func (f *fakeCatalog) RecordDatabase(_ context.Context, database catalog.Database, _ time.Time) error {
+	if f.fail != nil {
+		return f.fail
+	}
+
+	f.databases = append(f.databases, database)
+
+	return nil
+}
+
+func (f *fakeCatalog) RecordBackup(_ context.Context, backup catalog.Backup) error {
+	if f.fail != nil {
+		return f.fail
+	}
+
+	f.backups = append(f.backups, backup)
+
+	return nil
+}
+
+func (f *fakeCatalog) SetVerification(context.Context, string, catalog.Verification, time.Time) error {
+	return f.fail
+}
+
+func (f *fakeCatalog) Backups(context.Context, catalog.Filter) ([]catalog.Backup, error) {
+	return f.backups, f.fail
+}
+
+// failingWith runs a command against a wired catalogue and returns what it said.
+func failingWith(t *testing.T, book catalog.Catalog, args ...string) (string, error) {
+	t.Helper()
+
+	var out, errs bytes.Buffer
+
+	root := NewRoot(WithCatalog(func(string) (catalog.Catalog, func() error, error) {
+		return book, func() error { return nil }, nil
+	}))
+	root.SetOut(&out)
+	root.SetErr(&errs)
+	root.SetArgs(args)
+
+	return out.String(), root.Execute()
 }

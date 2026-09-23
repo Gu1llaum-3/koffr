@@ -15,6 +15,7 @@ import (
 
 	"github.com/Gu1llaum-3/koffr/internal/config"
 	"github.com/Gu1llaum-3/koffr/internal/domain/backup"
+	"github.com/Gu1llaum-3/koffr/internal/domain/catalog"
 	"github.com/Gu1llaum-3/koffr/internal/domain/crypto"
 	"github.com/Gu1llaum-3/koffr/internal/domain/resolve"
 	"github.com/Gu1llaum-3/koffr/internal/engine"
@@ -33,7 +34,7 @@ func newBackupCommand() *cobra.Command {
 		Short: "Back up one database to its destinations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			service, request, err := backupService(cmd, args[0], searchPath)
+			service, request, declared, err := backupService(cmd, args[0], searchPath)
 			if err != nil {
 				return err
 			}
@@ -48,6 +49,10 @@ func newBackupCommand() *cobra.Command {
 			done, err := service.Run(cmd.Context(), request)
 			renderBackup(cmd, done)
 
+			if err == nil {
+				recordInCatalogue(cmd, done, declared)
+			}
+
 			return err //nolint:wrapcheck // the use case already names the database and the step
 		},
 	}
@@ -60,30 +65,32 @@ func newBackupCommand() *cobra.Command {
 
 // backupService wires one database: what resolves it, what dumps it, what packs
 // it and where it goes. The domain knows none of these by name (ADR-0010).
-func backupService(cmd *cobra.Command, database string, searchPath []string) (*backup.Service, backup.Request, error) {
+func backupService(
+	cmd *cobra.Command, database string, searchPath []string,
+) (*backup.Service, backup.Request, config.Database, error) {
 	loaded, err := loadResolved(cmd)
 	if err != nil {
-		return nil, backup.Request{}, err
+		return nil, backup.Request{}, config.Database{}, err
 	}
 
 	subjects, err := targetsOf(loaded, database)
 	if err != nil {
-		return nil, backup.Request{}, err
+		return nil, backup.Request{}, config.Database{}, err
 	}
 
 	declared, err := declaredDatabase(loaded, database)
 	if err != nil {
-		return nil, backup.Request{}, err
+		return nil, backup.Request{}, config.Database{}, err
 	}
 
 	destinations, err := destinationsOf(loaded, declared)
 	if err != nil {
-		return nil, backup.Request{}, err
+		return nil, backup.Request{}, config.Database{}, err
 	}
 
 	recipients, err := recipientsFor(loaded, declared)
 	if err != nil {
-		return nil, backup.Request{}, err
+		return nil, backup.Request{}, config.Database{}, err
 	}
 
 	if warning := recipients.Warning(); warning != "" {
@@ -109,7 +116,7 @@ func backupService(cmd *cobra.Command, database string, searchPath []string) (*b
 		Destinations:   destinations,
 	})
 
-	return service, backup.Request{Database: database, JobID: backup.NewJobID(), At: time.Now()}, nil
+	return service, backup.Request{Database: database, JobID: backup.NewJobID(), At: time.Now()}, declared, nil
 }
 
 func declaredDatabase(loaded *config.Config, id string) (config.Database, error) {
@@ -370,4 +377,59 @@ func recipientsFor(loaded *config.Config, database config.Database) (crypto.Reci
 	}
 
 	return crypto.Effective(fleet, own), nil
+}
+
+// recordInCatalogue indexes a finished backup.
+//
+// It is the **command** that does it, not the use case: `AR-03` keeps
+// `domain/backup` and `domain/catalog` from knowing each other, and neither has
+// any business importing the other to write a row (`N-9`).
+//
+// A catalogue that cannot record does **not** fail a backup that is already
+// written (`N-10`): the archive and its manifest are on the destination, and
+// the manifest is the source of truth (ADR-0006). Losing the index is a warning.
+func recordInCatalogue(cmd *cobra.Command, done backup.Result, declared config.Database) {
+	book, closer, err := catalogFor(cmd)
+	if err != nil {
+		warn(cmd, "the backup is written but was not indexed: %v\n", err)
+
+		return
+	}
+	defer func() { _ = closer() }()
+
+	indexed := catalog.Database{
+		ID: declared.ID, Engine: declared.Engine, Host: declared.Host, Port: declared.Port,
+		Name: declared.Database, User: declared.User,
+		Destinations: declared.Destinations, Staging: declared.Staging,
+		Schedule: declared.Schedule, Container: declared.Tools.Container,
+		Retention: catalog.Retention{
+			Last: declared.Retention.Last, Daily: declared.Retention.Daily,
+			Weekly: declared.Retention.Weekly, Monthly: declared.Retention.Monthly,
+		},
+	}
+
+	if err := book.RecordDatabase(cmd.Context(), indexed, done.At); err != nil {
+		warn(cmd, "the backup is written but its database was not indexed: %v\n", err)
+
+		return
+	}
+
+	entry := catalog.Backup{
+		ID: done.JobID, Database: done.Database,
+		StartedAt: done.At, FinishedAt: done.At.Add(done.Duration),
+		RawBytes: done.RawBytes, StoredBytes: done.StoredBytes,
+		SHA256Raw: done.SHA256Raw, SHA256Stored: done.SHA256Stored,
+		Verified: catalog.NotVerified,
+	}
+
+	for _, destination := range done.Destinations {
+		entry.Locations = append(entry.Locations, catalog.Location{
+			Destination: destination, Path: done.Path,
+			Bytes: done.StoredBytes, StoredAt: done.At.Add(done.Duration),
+		})
+	}
+
+	if err := book.RecordBackup(cmd.Context(), entry); err != nil {
+		warn(cmd, "the backup is written but was not indexed: %v\n", err)
+	}
 }

@@ -117,6 +117,25 @@ Constaté dans le code et le schéma, pas supposé.
   la clé étrangère l'exige, et `E-028` veut détecter les changements de configuration. *Exclut* :
   relâcher la contrainte du schéma.
 
+- **N-7 (2026-09-23) — `backups.job_id` reste nul à ce lot.** *Raison* : la table `jobs` se remplit
+  quand le planificateur existe (lot 5) ; aucune `E-nn` du lot 3 ne la demande, et le schéma autorise
+  le nul. *Exclut* : inventer une ligne de `jobs` par sauvegarde manuelle sans les exigences qui la
+  cadrent.
+- **N-8 (2026-09-23) — le type `Manifest` naît à la vague 2, pas à la vague 3.** *Constat* :
+  `CAT-02` — « le catalogue est un index, jamais la source de vérité » — ne se formule pas sans lui.
+  *Correction* : la vague 2 pose la **forme** et prouve l'aller-retour ; la vague 3 remplit les
+  dix-sept champs, refuse les secrets et le dépose sur chaque destination. *Exclut* : une `CAT-02`
+  qui parlerait du manifeste sans en avoir un.
+- **N-9 (2026-09-23) — c'est la *commande* qui enregistre au catalogue, pas le cas d'usage.**
+  *Raison* : `AR-03` interdit à `domain/backup` de connaître `domain/catalog`, et réciproquement.
+  `internal/cli` connaît les deux et fait le joint. *Effet* : la vague 2 branche l'enregistrement sur
+  `koffr backup`, sans quoi « le catalogue écrit pour de vrai » serait faux et le lint refuserait un
+  câblage que personne n'utilise. *Exclut* : un port `Catalog` dans `backup.Wiring`.
+- **N-10 (2026-09-23) — un catalogue qui échoue ne fait pas échouer une sauvegarde déjà écrite.**
+  *Raison* : l'archive et son manifeste sont sur la destination, et le manifeste est la source de
+  vérité (ADR-0006). Perdre l'index est un **avertissement**. *Exclut* : appeler échec une archive
+  intacte parce qu'une base locale n'a pas répondu.
+
 ## Vagues
 
 ### Vague 1 — La structure se vérifie au vol (`lot3/wave-1-structure-in-flight`)
@@ -138,18 +157,18 @@ de forme.
 
 ### Vague 2 — Le catalogue écrit pour de vrai (`lot3/wave-2-catalog`)
 
-- [ ] **2.1** Test d'abord `internal/state/catalog_test.go` — sur une **vraie** base SQLite : une
+- [x] **2.1** Test d'abord `internal/state/catalog_test.go` — sur une **vraie** base SQLite : une
       base est enregistrée puis mise à jour, une sauvegarde est insérée avec ses emplacements, et
       une sauvegarde dont la base n'existe pas est **refusée** par la clé étrangère.
-- [ ] **2.2** Test — **`CAT-01`** : la ligne `databases` porte la configuration résolue **sans
+- [x] **2.2** Test — **`CAT-01`** : la ligne `databases` porte la configuration résolue **sans
       secret** et son empreinte ; deux configurations identiques donnent la même empreinte, une
       modification la change (`N-6`, `E-028`).
-- [ ] **2.3** Test `internal/domain/catalog` — **`CAT-02`** : le catalogue est un **index**, jamais
+- [x] **2.3** Test `internal/domain/catalog` — **`CAT-02`** : le catalogue est un **index**, jamais
       la source de vérité ; tout ce qu'une restauration exige vit aussi dans le manifeste (ADR-0006).
-- [ ] **2.4** `N-3` : le câblage remonte dans `cmd/koffr` ; `internal/cli` reçoit ses dépendances.
+- [x] **2.4** `N-3` : le câblage remonte dans `cmd/koffr` ; `internal/cli` reçoit ses dépendances.
       `internal/arch` reste vert sans modification — c'est lui qui prouve que `AR-04` tient.
-- [ ] **2.5** `internal/domain/catalog/rules.md` : `CAT-01`, `CAT-02`.
-- [ ] **2.6** Vague verte : `verify`, commit `feat(catalog): record backups and where each one is stored`.
+- [x] **2.5** `internal/domain/catalog/rules.md` : `CAT-01`, `CAT-02`.
+- [x] **2.6** Vague verte : `verify`, commit `feat(catalog): record backups and where each one is stored`.
 
 ### Vague 3 — Le manifeste (`lot3/wave-3-manifest`)
 
@@ -247,6 +266,27 @@ Sur l'instance Multipass, parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-23 — vague 2, le catalogue écrit pour de vrai
+
+- **Les sept tables reçoivent enfin des lignes.** `internal/state` n'avait aucune requête métier ;
+  il en a maintenant, et elles sont testées sur une **vraie** base SQLite, clés étrangères actives.
+- **Quatre décisions prises en route**, toutes consignées : `N-7` (`job_id` nul jusqu'au lot 5),
+  `N-8` (le type `Manifest` naît ici, sans quoi `CAT-02` ne se formule pas), `N-9` (c'est la
+  **commande** qui enregistre, parce qu'`AR-03` interdit aux deux modules du domaine de se
+  connaître), `N-10` (un index qui échoue n'invalide pas une archive écrite).
+- **`N-9` est née d'un refus du lint**, et c'était juste : le câblage de la tâche `2.4` n'était
+  utilisé par rien, donc c'était du code mort. « Le catalogue écrit pour de vrai » n'était pas vrai
+  tant que rien n'écrivait. La vague a été complétée, pas contournée.
+- **`AR-04` a tenu tout du long** : `internal/cli` ne peut pas ouvrir une vraie base, donc son test
+  d'intégration utilise un catalogue de test et le SQL est prouvé dans `internal/state`. La règle a
+  dicté le découpage des tests, ce qui est le signe qu'elle sert.
+- **`CAT-02` est prouvée de la seule façon qui vaille** : le manifeste est construit, le catalogue
+  **jeté**, et l'entrée reconstruite depuis le manifeste seul. Un test qui aurait comparé deux
+  structures en mémoire n'aurait rien dit.
+- **La clé étrangère mord.** Une sauvegarde dont la base n'est pas enregistrée est refusée par le
+  schéma, pas par un `if` en Go qu'on peut oublier d'écrire.
+- `mise run verify` : **0**.
 
 ### 2026-09-23 — vague 1, la structure se vérifie au vol
 
