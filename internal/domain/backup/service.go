@@ -284,7 +284,6 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	}
 
 	started := time.Now()
-	defer func() { result.Duration = time.Since(started) }()
 
 	resolution, err := s.wiring.Resolver.Resolve(ctx, request.Database)
 	if err != nil {
@@ -337,6 +336,10 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 		Fact{"sha256_stored", result.SHA256Stored},
 	)
 	s.journalDeferred(request)
+
+	// The duration is known before the manifest is written, because the
+	// manifest carries it (E-058).
+	result.Duration = time.Since(started)
 
 	if err := s.depositManifest(ctx, request, &result); err != nil {
 		return result, err

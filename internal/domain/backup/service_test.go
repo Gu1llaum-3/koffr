@@ -519,3 +519,22 @@ func (f *fakeManifester) Render(result backup.Result) ([]byte, error) {
 
 	return []byte(`{"backup_id":"` + result.JobID + `","database_id":"` + result.Database + `"}`), nil
 }
+
+// The duration is known **before** the manifest is written, because the
+// manifest carries it (E-058).
+//
+// It used to be set by a defer, which never did anything: `return result, err`
+// copies the struct before deferred functions run, so the caller always saw
+// zero. Found while fixing the manifest.
+func TestTheDurationReachesTheCaller(t *testing.T) {
+	world := newWorld(t)
+
+	result, err := world.service().Run(t.Context(), request())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.Duration <= 0 {
+		t.Errorf("Duration = %s, want the time the job took", result.Duration)
+	}
+}

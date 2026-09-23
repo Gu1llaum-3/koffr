@@ -203,9 +203,11 @@ func (d *databaseAccess) Resolve(ctx context.Context, database string) (backup.R
 		ToolVersion:   diagnosed.Tool.Version.String(),
 		ToolSource:    string(diagnosed.Tool.Source),
 		Extension:     extensionFor(diagnosed.Server.Family),
-		Argv: engine.DumpCommand(engine.DumpRequest{
+		// The options that describe the archive, never the connection: the
+		// manifest is deposited unencrypted on every destination (E-059).
+		Argv: engine.ArchiveOptions(engine.DumpRequest{
 			Target: d.subject.Target, Tool: diagnosed.Tool, Container: d.subject.Container,
-		})[1:],
+		}),
 	}
 
 	if warning := diagnosed.Server.MyISAMWarning(); warning != "" {

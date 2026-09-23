@@ -588,6 +588,9 @@ func TestTheManifestIsDepositedAndReadsWithoutAKey(t *testing.T) {
 	if manifest.SHA256Stored == "" || manifest.SizeRaw == 0 {
 		t.Errorf("the manifest carries no checksum or no raw size: %+v", manifest)
 	}
+	if manifest.DurationMS <= 0 {
+		t.Errorf("duration_ms = %d: the job took no time at all?", manifest.DurationMS)
+	}
 
 	// What says how to open it, six months later, without koffr.
 	if manifest.Format == "" || len(manifest.Pipeline) == 0 || manifest.Tool.Name == "" {

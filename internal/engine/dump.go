@@ -74,6 +74,58 @@ type DumpRequest struct {
 // The password is never on it: it travels in the environment, where E-115 wants
 // it, and not in a command line every process on the machine can read.
 func DumpCommand(request DumpRequest) []string {
+	argv := connectionOptions(request)
+	if len(argv) == 0 {
+		return nil
+	}
+
+	argv = append(argv, ArchiveOptions(request)...)
+
+	return append(argv, request.Target.Database)
+}
+
+// ArchiveOptions are the options that describe the **archive**: its format and
+// its scope. Never the connection.
+//
+// They are what the manifest of § 5.3 shows — `["--format=custom", "--no-owner",
+// "--no-privileges", "--compress=0"]` — and the manifest is deposited
+// unencrypted on every destination, so a host, a port or a user in there would
+// be handed to whoever steals the repository (E-059, E-114).
+func ArchiveOptions(request DumpRequest) []string {
+	switch request.Tool.Family {
+	case resolve.PostgreSQL:
+		return []string{
+			"--format=" + string(request.format()),
+			// N-3 — the archive restores into any cluster, whatever the roles
+			// of the one it came from.
+			"--no-owner",
+			"--no-privileges",
+			// The manifest of § 5.3 carries this one, and it matters: pg_dump
+			// compresses the custom format by itself. Leaving it on would hand
+			// zstd an already-compressed stream, make size_raw the size of
+			// something nobody asked for, and break the arithmetic § 4.5 uses
+			// to decide whether there is room to stage.
+			"--compress=0",
+		}
+
+	case resolve.MySQL, resolve.MariaDB:
+		return []string{
+			// E-056 — consistent on InnoDB, and complete: a schema that comes
+			// back without its routines, triggers and events is not a restore.
+			"--single-transaction",
+			"--routines",
+			"--triggers",
+			"--events",
+		}
+
+	default:
+		return nil
+	}
+}
+
+// connectionOptions say where to connect and as whom. They never reach a
+// manifest.
+func connectionOptions(request DumpRequest) []string {
 	host, port := request.Target.Host, request.Target.Port
 	if request.Container != "" {
 		// Inside the database's own container, the server is on the loopback
@@ -91,18 +143,6 @@ func DumpCommand(request DumpRequest) []string {
 			"--username=" + request.Target.User,
 			// Fail rather than wait for a prompt nobody is there to answer.
 			"--no-password",
-			"--format=" + string(request.format()),
-			// N-3 — the archive restores into any cluster, whatever the roles
-			// of the one it came from.
-			"--no-owner",
-			"--no-privileges",
-			// The manifest of § 5.3 carries this one, and it matters: pg_dump
-			// compresses the custom format by itself. Leaving it on would hand
-			// zstd an already-compressed stream, make size_raw the size of
-			// something nobody asked for, and break the arithmetic § 4.5 uses
-			// to decide whether there is room to stage.
-			"--compress=0",
-			request.Target.Database,
 		}
 
 	case resolve.MySQL, resolve.MariaDB:
@@ -111,13 +151,6 @@ func DumpCommand(request DumpRequest) []string {
 			"--host=" + host,
 			"--port=" + strconv.Itoa(port),
 			"--user=" + request.Target.User,
-			// E-056 — consistent on InnoDB, and complete: a schema that comes
-			// back without its routines, triggers and events is not a restore.
-			"--single-transaction",
-			"--routines",
-			"--triggers",
-			"--events",
-			request.Target.Database,
 		}
 
 	default:
