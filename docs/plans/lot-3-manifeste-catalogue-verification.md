@@ -172,15 +172,15 @@ de forme.
 
 ### Vague 3 — Le manifeste (`lot3/wave-3-manifest`)
 
-- [ ] **3.1** Test d'abord `internal/domain/catalog/manifest_test.go` — **`CAT-03`** : le manifeste
+- [x] **3.1** Test d'abord `internal/domain/catalog/manifest_test.go` — **`CAT-03`** : le manifeste
       porte les **dix-sept champs** de `E-058` dans la forme exacte du § 5.3, et se relit en JSON.
-- [ ] **3.2** Test — **`CAT-04`**, `E-059` : aucun identifiant de connexion, sous aucune forme. Le
+- [x] **3.2** Test — **`CAT-04`**, `E-059` : aucun identifiant de connexion, sous aucune forme. Le
       test cherche les **valeurs** — mot de passe, chaîne de connexion, chemin de secret — pas les
       noms de champs, et la liste des champs émis est **énumérée** (leçon de `BKP-21`).
-- [ ] **3.3** Test — le manifeste est **déposé sur chaque destination**, à côté de l'archive, sous
+- [x] **3.3** Test — le manifeste est **déposé sur chaque destination**, à côté de l'archive, sous
       `<archive>.json` (`N-4`, `E-057`).
-- [ ] **3.4** `internal/domain/catalog/rules.md` : `CAT-03`, `CAT-04`.
-- [ ] **3.5** Vague verte : `verify`, commit `feat(catalog): write the manifest beside each archive`.
+- [x] **3.4** `internal/domain/catalog/rules.md` : `CAT-03`, `CAT-04`.
+- [x] **3.5** Vague verte : `verify`, commit `feat(catalog): write the manifest beside each archive`.
 
 ### Vague 4 — Les sept étapes sont sept (`lot3/wave-4-seven-steps`)
 
@@ -266,6 +266,27 @@ Sur l'instance Multipass, parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-23 — vague 3, le manifeste
+
+- **Les champs sont énumérés, pas comptés.** Le plan disait « dix-sept champs » ; le § 5.3 en montre
+  **seize**. Un compte ne dit pas lequel manque : le test liste les noms, et refuse aussi tout champ
+  que koffr ajouterait — un manifeste est un format que d'autres lisent.
+- **Vert d'emblée sur `CAT-03` et `CAT-04`**, parce que la forme posée à la vague 2 était déjà
+  conforme. Les deux gardes ont donc été **mises à l'épreuve** : en ajoutant un champ `user` au
+  manifeste, elles tombent toutes les deux. Un vert qu'on n'a pas vu rouge ne compte pas.
+- **Le test sur machine réelle a trouvé trois vrais défauts**, qu'aucun test unitaire ne voyait :
+  1. le manifeste portait **l'utilisateur et l'hôte**, parce que `argv` contenait les options de
+     connexion. Le § 5.3 ne montre que les options de **forme**. `engine.ArchiveOptions` les sépare
+     maintenant, et `CAT-04` l'interdit. Un manifeste est déposé **en clair sur chaque
+     destination** : c'était `E-114` cassée ;
+  2. `duration_ms` valait **0**, la durée étant posée après le rendu ;
+  3. et en corrigeant : le `defer` qui posait `result.Duration` **n'a jamais rien fait** depuis le
+     lot 2 — `return result, err` copie la structure **avant** que les `defer` ne tournent. Le
+     champ était donc toujours nul pour l'appelant. Un test le dit maintenant.
+- **`BKP-23`** : le manifeste est écrit **en dernier**, et un manifeste qu'on ne peut pas écrire fait
+  échouer le job — une archive sans manifeste est une archive que personne n'inventorie.
+- `mise run verify` : **0**. Dépôt vérifié sur l'instance, avec un vrai PostgreSQL.
 
 ### 2026-09-23 — vague 2, le catalogue écrit pour de vrai
 
