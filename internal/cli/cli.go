@@ -12,8 +12,15 @@ import (
 )
 
 // NewRoot builds the root command. Callers set the output streams and the
-// arguments, which is what makes the surface testable.
-func NewRoot() *cobra.Command {
+// arguments, which is what makes the surface testable, and pass the
+// dependencies a transport may not build for itself — the catalogue, whose
+// implementation `AR-04` keeps out of this package (`N-3`).
+func NewRoot(options ...Option) *cobra.Command {
+	built = wiring{}
+	for _, option := range options {
+		option(&built)
+	}
+
 	var releaseLogger func() error
 
 	root := &cobra.Command{

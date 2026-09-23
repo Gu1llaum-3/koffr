@@ -16,6 +16,7 @@ import (
 	"filippo.io/age"
 
 	"github.com/Gu1llaum-3/koffr/internal/domain/backup"
+	"github.com/Gu1llaum-3/koffr/internal/domain/catalog"
 )
 
 // fixtureDir is where the end-to-end tests lay out what external tools need to
@@ -512,5 +513,45 @@ func TestADatabaseWithItsOwnRecipientsIsEncryptedForThemAlone(t *testing.T) {
 
 	if _, err := age.Decrypt(bytes.NewReader(archive.contents), fleetKey); err == nil {
 		t.Error("the fleet key opened an archive encrypted for the database's own: the lists were merged")
+	}
+}
+
+// N-9 — on a real machine: a successful backup lands in the catalogue, with its
+// database, its sizes, its checksum and where the copy is. Not verified yet —
+// that is the wave 4, and P4 says so out loud in the meantime.
+func TestASuccessfulBackupIsIndexed(t *testing.T) {
+	server := startPostgresServer(t, 500)
+	site := newFleetSite(t, server)
+	book := &fakeCatalog{}
+
+	var out, errs bytes.Buffer
+
+	root := NewRoot(WithCatalog(func(string) (catalog.Catalog, func() error, error) {
+		return book, func() error { return nil }, nil
+	}))
+	root.SetOut(&out)
+	root.SetErr(&errs)
+	root.SetArgs(site.args("backup", fleetDatabase))
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("backup: %v\n%s", err, errs.String())
+	}
+
+	if len(book.databases) != 1 || book.databases[0].ID != fleetDatabase {
+		t.Fatalf("the database was not indexed: %+v", book.databases)
+	}
+	if len(book.backups) != 1 {
+		t.Fatalf("got %d indexed backups, want 1", len(book.backups))
+	}
+
+	indexed := book.backups[0]
+	if indexed.StoredBytes == 0 || indexed.SHA256Stored == "" {
+		t.Errorf("the index carries neither size nor checksum: %+v", indexed)
+	}
+	if len(indexed.Locations) != 1 || indexed.Locations[0].Destination != "local" {
+		t.Errorf("the index does not say where the copy is: %+v", indexed.Locations)
+	}
+	if indexed.Verified != catalog.NotVerified {
+		t.Errorf("a backup nobody has verified is indexed as %q — P4", indexed.Verified)
 	}
 }
