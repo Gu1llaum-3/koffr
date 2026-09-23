@@ -18,7 +18,7 @@ périmètre** (§ 3 et § 10 du CDC, reportées dans `docs/backlog.md`). Aucune 
 | 1c  | Corrections de recette du lot 1            | 3 `A-nn` | terminé | `docs/plans/lot-1-corrections.md` | 2026-09-19 |
 | 2   | Sauvegarder une base vers un fichier chiffré | 20      | terminé | `docs/plans/lot-2-sauvegarde.md` | 2026-09-22 |
 | 2c  | Corrections de recette du lot 2            | 7 `A-nn` | terminé | `docs/plans/lot-2-corrections.md` | 2026-09-22 |
-| 3   | Manifeste, catalogue et vérification       | 11        | à faire | | |
+| 3   | Manifeste, catalogue et vérification       | 11        | en cours | `docs/plans/lot-3-manifeste-catalogue-verification.md` | |
 | 4   | Restauration et destinations distantes     | 13        | à faire | | |
 | 5   | Planification et rétention                 | 14        | à faire | | |
 | 6   | Alertes et diagnostic complet              | 9         | à faire | | |

@@ -25,3 +25,4 @@ que le propriétaire ne l'a pas passé en **accepté** ; on ne code pas dessus.
 | 0014 | L'installation gérée d'outils sort du MVP : l'hôte et le conteneur suffisent | accepté, borné par ADR-0015 | 2026-09-19 |
 | 0015 | Un parc mixte MySQL et MariaDB exige la stratégie `exec` | accepté | 2026-09-19 |
 | 0016 | La politique de sauvegarde est fixée : tampon, destinataires, portée, estimation | accepté | 2026-09-22 |
+| 0017 | La structure d'un dump se vérifie au vol, jamais sur l'archive écrite | accepté | 2026-09-23 |
