@@ -41,6 +41,7 @@ func TestBKP20TheSevenStepsAreJournalledInOrder(t *testing.T) {
 		backup.StepResolution: {"engine", "tool"},
 		backup.StepDump:       {"staging"},
 		backup.StepWrite:      {"path", "stored_bytes", "sha256_stored"},
+		backup.StepManifest:   {"path"},
 	}
 
 	for step, wanted := range carried {
@@ -52,11 +53,10 @@ func TestBKP20TheSevenStepsAreJournalledInOrder(t *testing.T) {
 		}
 	}
 
-	// And the two that are not implemented say so rather than looking done.
-	for _, step := range []backup.Step{backup.StepVerification, backup.StepManifest} {
-		if !strings.Contains(journal.detailOf(step), "3") {
-			t.Errorf("the step %q does not say which lot brings it: %q", step, journal.detailOf(step))
-		}
+	// And the one that is not implemented says so rather than looking done.
+	if !strings.Contains(journal.detailOf(backup.StepVerification), "3") {
+		t.Errorf("the verification does not say which lot brings it: %q",
+			journal.detailOf(backup.StepVerification))
 	}
 }
 

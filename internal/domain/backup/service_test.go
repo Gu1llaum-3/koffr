@@ -48,13 +48,17 @@ func TestBKP06TheSevenStepsHappenInTheOrderOfTheSpecification(t *testing.T) {
 		}
 	}
 
-	for _, outcome := range result.Steps[5:] {
-		if outcome.Done {
-			t.Errorf("the step %q reported itself done, and it is not implemented", outcome.Step)
-		}
-		if !strings.Contains(outcome.Deferred, "3") {
-			t.Errorf("the step %q does not say which lot brings it: %q", outcome.Step, outcome.Deferred)
-		}
+	// The manifest is written since the wave 3 of the lot 3; the verification
+	// arrives at the wave 4. What is not implemented **says so**.
+	if !result.Steps[6].Done {
+		t.Errorf("the manifest step did not run: %+v", result.Steps[6])
+	}
+
+	if result.Steps[5].Done {
+		t.Errorf("the verification reported itself done, and it is not implemented")
+	}
+	if !strings.Contains(result.Steps[5].Deferred, "3") {
+		t.Errorf("the verification does not say which lot brings it: %q", result.Steps[5].Deferred)
 	}
 }
 
@@ -201,6 +205,7 @@ type world struct {
 	destination *fakeDestination
 	second      *fakeDestination
 	journal     backup.Journal
+	manifester  backup.Manifester
 }
 
 func newWorld(t *testing.T) *world {
@@ -216,6 +221,7 @@ func newWorld(t *testing.T) *world {
 		capacity:    &fakeCapacity{free: 100 << 30, database: 1 << 30},
 		history:     &fakeHistory{},
 		destination: newDestination(),
+		manifester:  &fakeManifester{},
 	}
 }
 
@@ -234,6 +240,7 @@ func (w *world) service() *backup.Service {
 		Capacity:       w.capacity,
 		History:        w.history,
 		Journal:        w.journal,
+		Manifester:     w.manifester,
 		Destinations:   destinations,
 	})
 }
@@ -324,6 +331,7 @@ func (f *fakeHistory) LastSuccessful(context.Context, string) (*backup.PreviousB
 type fakeDestination struct {
 	mutex   sync.Mutex
 	written map[string][]byte
+	order   []string
 }
 
 func newDestination() *fakeDestination {
@@ -340,6 +348,7 @@ func (f *fakeDestination) Write(_ context.Context, path string, from io.Reader) 
 	defer f.mutex.Unlock()
 
 	f.written[path] = contents
+	f.order = append(f.order, path)
 
 	return int64(len(contents)), nil
 }
@@ -352,22 +361,41 @@ func (f *fakeDestination) List(context.Context, string) ([]backup.Entry, error) 
 func (f *fakeDestination) Delete(context.Context, string) error                 { return nil }
 func (f *fakeDestination) Check(context.Context) error                          { return nil }
 
-// only returns the single archive this destination holds.
+// paths is what this destination holds, in the order it received them.
+func (f *fakeDestination) paths() []string {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	return slices.Clone(f.order)
+}
+
+// only returns the single **archive** this destination holds. The manifest
+// beside it is not one: it is how the archive is inventoried (E-057).
 func (f *fakeDestination) only(t *testing.T) []byte {
 	t.Helper()
 
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	if len(f.written) != 1 {
-		t.Fatalf("the destination holds %d archives, want 1", len(f.written))
+	var found []byte
+
+	for path, contents := range f.written {
+		if strings.HasSuffix(path, ".json") {
+			continue
+		}
+
+		if found != nil {
+			t.Fatalf("the destination holds more than one archive: %v", f.order)
+		}
+
+		found = contents
 	}
 
-	for _, contents := range f.written {
-		return contents
+	if found == nil {
+		t.Fatalf("the destination holds no archive: %v", f.order)
 	}
 
-	return nil
+	return found
 }
 
 // E-103b — a dry run says what the job would do and **writes nothing**: no
@@ -408,5 +436,105 @@ func TestADryRunSaysWhatItWouldDoAndWritesNothing(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join(world.stateDir, "locks"))
 	if err == nil && len(entries) != 0 {
 		t.Errorf("a dry run left %d locks behind", len(entries))
+	}
+}
+
+// E-057 — the manifest is deposited **beside the archive, on every
+// destination**: a repository that holds an archive without its manifest is a
+// repository nobody can inventory.
+func TestTheManifestIsDepositedBesideTheArchiveOnEveryDestination(t *testing.T) {
+	world := newWorld(t)
+	world.second = newDestination()
+	world.manifester = &fakeManifester{}
+
+	result, err := world.service().Run(t.Context(), request())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for name, destination := range map[string]*fakeDestination{
+		"local": world.destination, "offsite": world.second,
+	} {
+		beside := result.Path + ".json"
+
+		written, held := destination.written[beside]
+		if !held {
+			t.Errorf("the destination %s holds no manifest at %s; it holds %v",
+				name, beside, destination.paths())
+
+			continue
+		}
+
+		if !strings.Contains(string(written), result.JobID) {
+			t.Errorf("the manifest on %s is not the one of this backup:\n%s", name, written)
+		}
+	}
+}
+
+// E-024 — and it is written **last**, after the archive. A manifest that
+// arrives first would describe something that does not exist yet.
+func TestTheManifestIsWrittenAfterTheArchive(t *testing.T) {
+	world := newWorld(t)
+	world.manifester = &fakeManifester{}
+
+	result, err := world.service().Run(t.Context(), request())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	order := world.destination.order
+	if len(order) != 2 {
+		t.Fatalf("the destination received %d writes, want the archive and its manifest: %v", len(order), order)
+	}
+	if order[0] != result.Path || order[1] != result.Path+".json" {
+		t.Errorf("written in the order %v, want the archive then its manifest", order)
+	}
+
+	if !result.Steps[6].Done || result.Steps[6].Deferred != "" {
+		t.Errorf("the manifest step is still declared absent: %+v", result.Steps[6])
+	}
+}
+
+// A manifest that cannot be rendered stops the job: an archive without its
+// manifest is an archive nobody can inventory, and E-024 makes it a step.
+func TestAManifestThatCannotBeWrittenFailsTheJob(t *testing.T) {
+	world := newWorld(t)
+	world.manifester = &fakeManifester{fail: errors.New("the destination went away")}
+
+	result, err := world.service().Run(t.Context(), request())
+	if err == nil {
+		t.Fatal("a job whose manifest could not be written reported success")
+	}
+	if result.Steps[6].Done {
+		t.Error("the manifest step reports itself done although it failed")
+	}
+}
+
+type fakeManifester struct{ fail error }
+
+func (f *fakeManifester) Render(result backup.Result) ([]byte, error) {
+	if f.fail != nil {
+		return nil, f.fail
+	}
+
+	return []byte(`{"backup_id":"` + result.JobID + `","database_id":"` + result.Database + `"}`), nil
+}
+
+// The duration is known **before** the manifest is written, because the
+// manifest carries it (E-058).
+//
+// It used to be set by a defer, which never did anything: `return result, err`
+// copies the struct before deferred functions run, so the caller always saw
+// zero. Found while fixing the manifest.
+func TestTheDurationReachesTheCaller(t *testing.T) {
+	world := newWorld(t)
+
+	result, err := world.service().Run(t.Context(), request())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.Duration <= 0 {
+		t.Errorf("Duration = %s, want the time the job took", result.Duration)
 	}
 }

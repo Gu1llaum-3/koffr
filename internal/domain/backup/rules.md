@@ -44,6 +44,12 @@ adaptateur n'a pas de `rules.md` (ADR-0010) et qu'`ARCHITECTURE.md` ne déclare 
 | --- | --- | --- | --- |
 | BKP-19 | Un job et son archive portent un **ULID** de 26 caractères. Deux identifiants produits dans la même milliseconde sont **différents et ordonnés** — le catalogue du lot 3 listera les archives par identifiant. L'aléa est **cryptographique** et rien ne panique : jamais `ulid.Make`, qui tire de `math/rand` et passe par `MustNew`. | ADR-0006, `A-14`, `N-2` | `backup/id_test.go › TestBKP19AnIdentifierIsARealULID`, `› TestBKP19IdentifiersMadeTogetherStaySorted`, `› TestNothingCallsTheConvenientULIDHelpers` |
 
+## Le manifeste
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| BKP-23 | Le manifeste est déposé **à côté de l'archive, sur chaque destination**, sous `<archive>.json`, et il est écrit **en dernier** — après l'archive, dont il décrit la taille et l'empreinte, et après la vérification, dont il porte l'état. Un manifeste qui ne peut pas être écrit **fait échouer le job** : une archive sans son manifeste est une archive que personne ne peut inventorier. Le domaine demande des **octets** et ne sait pas ce qu'il y a dedans — la forme appartient à `catalog`, et `AR-03` sépare les deux. | `E-057`, `E-024`, `N-4` | `backup/service_test.go › TestTheManifestIsDepositedBesideTheArchiveOnEveryDestination`, `› TestTheManifestIsWrittenAfterTheArchive`, `› TestAManifestThatCannotBeWrittenFailsTheJob` |
+
 ## Le tampon
 
 | # | Règle (une phrase, vérifiable) | Source | Test |

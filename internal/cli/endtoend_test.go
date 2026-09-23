@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -66,11 +67,14 @@ func TestBackupOfARealPostgreSQLWritesAnEncryptedArchive(t *testing.T) {
 			t.Errorf("the command does not report %q:\n%s", said, out)
 		}
 	}
-	// E-024: what is not implemented is declared, not skipped in silence.
-	for _, pending := range []string{"verification", "manifest"} {
-		if !strings.Contains(out, pending) {
-			t.Errorf("the command does not declare %q as pending:\n%s", pending, out)
-		}
+	// E-024 — what is not implemented is declared, not skipped in silence. The
+	// manifest is written since the wave 3 of the lot 3; the verification
+	// arrives at the wave 4, and says so until then.
+	if !strings.Contains(out, "pending  verification") {
+		t.Errorf("the command does not declare the verification as pending:\n%s", out)
+	}
+	if strings.Contains(out, "pending  manifest") {
+		t.Errorf("the command still declares the manifest as pending, and it writes one:\n%s", out)
 	}
 
 	site.layOutFixture(t, "postgresql", archive)
@@ -225,7 +229,8 @@ func (s fleetSite) onlyArchive(t *testing.T) writtenArchive {
 		if err != nil {
 			return err
 		}
-		if !entry.IsDir() {
+		// The manifest deposited beside the archive is not one (E-057).
+		if !entry.IsDir() && !strings.HasSuffix(path, ".json") {
 			found = append(found, path)
 		}
 
@@ -553,5 +558,68 @@ func TestASuccessfulBackupIsIndexed(t *testing.T) {
 	}
 	if indexed.Verified != catalog.NotVerified {
 		t.Errorf("a backup nobody has verified is indexed as %q — P4", indexed.Verified)
+	}
+}
+
+// E-057, E-058, E-059 — on a real machine: the manifest is deposited beside the
+// archive, it reads as JSON without any key, it says how to open the archive,
+// and it carries no credential.
+func TestTheManifestIsDepositedAndReadsWithoutAKey(t *testing.T) {
+	server := startPostgresServer(t, 500)
+	site := newFleetSite(t, server)
+
+	run(t, site.args("backup", fleetDatabase)...)
+
+	archive := site.onlyArchive(t)
+
+	written, err := os.ReadFile(filepath.Join(site.destination, archive.path+".json"))
+	if err != nil {
+		t.Fatalf("no manifest beside the archive: %v", err)
+	}
+
+	var manifest catalog.Manifest
+	if err := json.Unmarshal(written, &manifest); err != nil {
+		t.Fatalf("the manifest is not JSON: %v\n%s", err, written)
+	}
+
+	if manifest.BackupID == "" || manifest.DatabaseID != fleetDatabase {
+		t.Errorf("the manifest does not say what it describes: %+v", manifest)
+	}
+	if manifest.SizeStored != int64(len(archive.contents)) {
+		t.Errorf("size_stored = %d, the archive is %d bytes", manifest.SizeStored, len(archive.contents))
+	}
+	if manifest.SHA256Stored == "" || manifest.SizeRaw == 0 {
+		t.Errorf("the manifest carries no checksum or no raw size: %+v", manifest)
+	}
+	if manifest.DurationMS <= 0 {
+		t.Errorf("duration_ms = %d: the job took no time at all?", manifest.DurationMS)
+	}
+
+	// What says how to open it, six months later, without koffr.
+	if manifest.Format == "" || len(manifest.Pipeline) == 0 || manifest.Tool.Name == "" {
+		t.Errorf("the manifest does not say how the archive was written: %+v", manifest)
+	}
+	if len(manifest.Tool.Argv) == 0 {
+		t.Errorf("the manifest does not carry the argv of the tool: %+v", manifest.Tool)
+	}
+	if len(manifest.Recipients) != 2 {
+		t.Errorf("recipients = %v, want the two keys of the fleet", manifest.Recipients)
+	}
+
+	// P4 — nothing has verified it yet, and it says so rather than staying silent.
+	if manifest.Verified.Checksum || manifest.Verified.Structure {
+		t.Error("an archive nobody has verified claims a verification in its manifest")
+	}
+
+	// E-059, E-114 — and not a credential in sight, argv included.
+	for what, value := range map[string]string{
+		"the password":    fleetPassword,
+		"the user":        fleetUser,
+		"a private key":   "AGE-SECRET-KEY",
+		"the server host": server.host,
+	} {
+		if strings.Contains(string(written), value) {
+			t.Errorf("%s is in the manifest:\n%s", what, written)
+		}
 	}
 }

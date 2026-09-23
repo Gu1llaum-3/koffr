@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -34,7 +35,12 @@ var Steps = []Step{
 }
 
 // deferredToLot3 is what the two last steps say until the lot 3 brings them.
-const deferredToLot3 = "not in this release: verification and manifest arrive at the lot 3"
+const deferredToLot3 = "not in this release: verification arrives at the lot 3"
+
+// manifestSuffix is how a manifest is named: beside its archive, sorted next to
+// it in a listing, and found by reading every *.json of a repository — which is
+// what E-059 asks of an inventory (`N-4`).
+const manifestSuffix = ".json"
 
 // StepOutcome is what became of one step.
 type StepOutcome struct {
@@ -67,6 +73,10 @@ type Resolution struct {
 
 	// Extension is what the archive file is called: `pgc`, `sql`…
 	Extension string
+
+	// Argv is the command line the dump ran with, **without its password** —
+	// the manifest of § 5.3 shows it, because it says what the archive is.
+	Argv []string
 
 	// Warnings are what an operator has to be told about this database —
 	// MyISAM tables, for one (E-056). They travel with the job.
@@ -117,6 +127,15 @@ type (
 	History interface {
 		LastSuccessful(ctx context.Context, database string) (*PreviousBackup, error)
 	}
+
+	// Manifester renders the manifest of a finished backup — step 07 of E-024.
+	//
+	// The domain declares that it needs **bytes** to deposit, and never what is
+	// in them: the shape of a manifest belongs to `catalog`, and `AR-03` keeps
+	// the two modules of the domain from knowing each other.
+	Manifester interface {
+		Render(result Result) ([]byte, error)
+	}
 )
 
 // Destination is one place an archive goes, with the identifier the operator
@@ -137,6 +156,7 @@ type Wiring struct {
 	Capacity     Capacity
 	Journal      Journal
 	History      History
+	Manifester   Manifester
 	Destinations []Destination
 
 	// StructuralVerifyWithoutEgress forwards the third case of E-030.
@@ -169,7 +189,7 @@ func (s *Service) journal(request Request, step Step, failed error, facts ...Fac
 // journalDeferred records a step this release does not implement, so that a
 // trace of seven steps is never mistaken for seven steps that ran.
 func (s *Service) journalDeferred(request Request) {
-	for _, step := range []Step{StepVerification, StepManifest} {
+	for _, step := range []Step{StepVerification} {
 		s.wiring.Journal.Step(JobStep{
 			Job: request.JobID, Database: request.Database,
 			Step: step, Deferred: deferredToLot3,
@@ -199,6 +219,11 @@ type Result struct {
 
 	Warnings []string
 	Steps    []StepOutcome
+
+	// Resolution is what the resolver settled on. The manifest of E-058 carries
+	// it — the tool, its version and its provenance say what can read the
+	// archive back.
+	Resolution Resolution
 }
 
 // Plan is the dry run of E-103b: it resolves the tool, decides the staging mode
@@ -259,7 +284,6 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	}
 
 	started := time.Now()
-	defer func() { result.Duration = time.Since(started) }()
 
 	resolution, err := s.wiring.Resolver.Resolve(ctx, request.Database)
 	if err != nil {
@@ -269,6 +293,7 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	}
 
 	result.Warnings = resolution.Warnings
+	result.Resolution = resolution
 	result.mark(StepResolution)
 	s.journal(request, StepResolution, nil,
 		Fact{"engine", resolution.Engine},
@@ -312,7 +337,49 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	)
 	s.journalDeferred(request)
 
+	// The duration is known before the manifest is written, because the
+	// manifest carries it (E-058).
+	result.Duration = time.Since(started)
+
+	if err := s.depositManifest(ctx, request, &result); err != nil {
+		return result, err
+	}
+
 	return result, nil
+}
+
+// depositManifest writes the manifest beside the archive, on **every**
+// destination — step 07 of E-024, and the last thing a job does.
+//
+// It is last on purpose: a manifest that arrived first would describe something
+// that does not exist yet, and it carries the verification state, which is not
+// known before the step that precedes it.
+func (s *Service) depositManifest(ctx context.Context, request Request, result *Result) error {
+	if s.wiring.Manifester == nil {
+		return nil
+	}
+
+	rendered, err := s.wiring.Manifester.Render(*result)
+	if err != nil {
+		s.journal(request, StepManifest, err)
+
+		return fmt.Errorf("render the manifest of %s: %w", result.Database, err)
+	}
+
+	beside := result.Path + manifestSuffix
+
+	for _, destination := range s.wiring.Destinations {
+		if _, err := destination.Store.Write(ctx, beside, bytes.NewReader(rendered)); err != nil {
+			s.journal(request, StepManifest, err, Fact{"destination", destination.ID})
+
+			return fmt.Errorf("deposit the manifest on %s: %w", destination.ID, err)
+		}
+	}
+
+	result.markEvenIfDeferred(StepManifest)
+	s.journal(request, StepManifest, nil, Fact{"path", beside})
+
+	return nil
 }
 
 // decideStaging applies E-061 then § 4.5: what the archive is expected to take,
@@ -505,6 +572,17 @@ func freshSteps() []StepOutcome {
 	}
 
 	return outcomes
+}
+
+// markEvenIfDeferred records a step that used to be declared absent and is now
+// implemented: it clears the note along with setting the flag.
+func (r *Result) markEvenIfDeferred(step Step) {
+	for index := range r.Steps {
+		if r.Steps[index].Step == step {
+			r.Steps[index].Done = true
+			r.Steps[index].Deferred = ""
+		}
+	}
 }
 
 // mark records that a step ran. A deferred step is never marked: it is not

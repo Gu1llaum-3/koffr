@@ -21,6 +21,15 @@ disparu.
 | --- | --- | --- | --- |
 | CAT-02 | **Tout ce qu'une restauration exige survit dans le manifeste**, sans le catalogue : identifiant, base, moment, tailles, empreintes, état de vérification, et ce qui dit **comment ouvrir** l'archive — format, chaîne de traitement, outil et sa version, destinataires. Le test le prouve de la seule façon qui vaille : il construit le manifeste, jette le catalogue, et reconstruit l'entrée depuis le manifeste seul. L'état de `P4` voyage avec : une archive que personne n'a vérifiée ne revendique rien. | ADR-0006, `E-059`, `E-058` | `catalog/manifest_test.go › TestCAT02EverythingARestoreNeedsSurvivesInTheManifest`, `› TestCAT02TheVerificationStateTravelsWithTheArchive` |
 
+## Le manifeste
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| CAT-03 | Le manifeste porte **exactement** les champs du § 5.3, sous les noms qu'il montre — énumérés, pas comptés : un compte ne dit pas lequel manque. Il n'en porte **aucun de plus** : c'est un format que d'autres lisent. Les moments sont en RFC 3339 **UTC** (ADR-0006), et `tool` porte son `argv`, qui dit ce qui saura relire l'archive. | `E-058`, § 5.3 | `catalog/manifest_test.go › TestCAT03TheManifestCarriesTheFieldsOfTheSpecification`, `› TestCAT03TheMomentsAreRFC3339UTC` |
+| CAT-04 | Le manifeste ne porte **jamais** d'identifiant de connexion, sous aucune forme — mot de passe, utilisateur, hôte, port, chemin de secret, clé privée, chaîne de connexion. L'`argv` qu'il montre décrit l'**archive** (format, portée), jamais la connexion. Les destinataires y sont : ce sont des clés **publiques**, et elles disent quelle clé ouvre l'archive. | `E-059`, `E-113`, `E-114`, § 6 | `catalog/manifest_test.go › TestCAT04TheManifestCarriesNoCredential`, `› TestCAT04AStolenRepositoryGivesUpMetadataOnly`, `engine/dump_test.go › TestTheArchiveOptionsCarryNothingOfTheConnection`, `cli/endtoend_test.go › TestTheManifestIsDepositedAndReadsWithoutAKey` |
+
+Le dépôt lui-même est une garantie de `backup` : voir `BKP-23` dans `internal/domain/backup/rules.md`.
+
 ## Ce que le catalogue écrit
 
 Écrit par `internal/state` sur la base SQLite d'`E-028` ; les règles ci-dessus sont pures, ce qui

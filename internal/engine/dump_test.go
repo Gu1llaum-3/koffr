@@ -448,3 +448,59 @@ func writeTemp(t *testing.T, name string, contents []byte) string {
 func head(of []byte) string {
 	return string(of[:min(len(of), 400)])
 }
+
+// E-059, E-114 — the argv the manifest carries describes the **archive**, not
+// the connection. The § 5.3 shows exactly that: the format and the scope, never
+// a host, a port or a user. A manifest is deposited unencrypted on every
+// destination, and a stolen repository must give up metadata and nothing else.
+func TestTheArchiveOptionsCarryNothingOfTheConnection(t *testing.T) {
+	request := engine.DumpRequest{
+		Target: resolve.Target{
+			Engine: resolve.PostgreSQL, Host: "db.internal", Port: 5432,
+			Database: "shop", User: "koffr_backup", Password: "hunter2",
+		},
+		Tool: resolve.Candidate{Family: resolve.PostgreSQL, Tool: resolve.Dump, Path: "/usr/bin/pg_dump"},
+	}
+
+	options := engine.ArchiveOptions(request)
+
+	for _, want := range []string{"--format=custom", "--no-owner", "--no-privileges", "--compress=0"} {
+		if !carries(options, want) {
+			t.Errorf("the archive options lose %q, which the § 5.3 shows: %v", want, options)
+		}
+	}
+
+	for _, forbidden := range []string{"db.internal", "5432", "koffr_backup", "hunter2", "shop"} {
+		for _, option := range options {
+			if strings.Contains(option, forbidden) {
+				t.Errorf("the archive options carry %q, which belongs to the connection: %v",
+					forbidden, options)
+			}
+		}
+	}
+}
+
+// And the same for the MySQL family, whose options say what the dump contains.
+func TestTheArchiveOptionsOfTheMySQLFamily(t *testing.T) {
+	options := engine.ArchiveOptions(engine.DumpRequest{
+		Target: resolve.Target{
+			Engine: resolve.MariaDB, Host: "db.internal", Port: 3306,
+			Database: "erp", User: "koffr_backup", Password: "hunter2",
+		},
+		Tool: resolve.Candidate{Family: resolve.MariaDB, Tool: resolve.Dump, Path: "/usr/bin/mariadb-dump"},
+	})
+
+	for _, want := range []string{"--single-transaction", "--routines", "--triggers", "--events"} {
+		if !carries(options, want) {
+			t.Errorf("the archive options lose %q: %v", want, options)
+		}
+	}
+
+	for _, forbidden := range []string{"db.internal", "3306", "koffr_backup", "hunter2", "erp"} {
+		for _, option := range options {
+			if strings.Contains(option, forbidden) {
+				t.Errorf("the archive options carry %q: %v", forbidden, options)
+			}
+		}
+	}
+}

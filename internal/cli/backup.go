@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -113,6 +115,7 @@ func backupService(
 		History:        noHistory{},
 		Journal:        slogJournal{logger: loggerOf(cmd)},
 		Packer:         pipelinePacker{recipients: recipients},
+		Manifester:     manifester{database: declared, recipients: recipients},
 		Destinations:   destinations,
 	})
 
@@ -200,6 +203,11 @@ func (d *databaseAccess) Resolve(ctx context.Context, database string) (backup.R
 		ToolVersion:   diagnosed.Tool.Version.String(),
 		ToolSource:    string(diagnosed.Tool.Source),
 		Extension:     extensionFor(diagnosed.Server.Family),
+		// The options that describe the archive, never the connection: the
+		// manifest is deposited unencrypted on every destination (E-059).
+		Argv: engine.ArchiveOptions(engine.DumpRequest{
+			Target: d.subject.Target, Tool: diagnosed.Tool, Container: d.subject.Container,
+		}),
 	}
 
 	if warning := diagnosed.Server.MyISAMWarning(); warning != "" {
@@ -397,18 +405,7 @@ func recordInCatalogue(cmd *cobra.Command, done backup.Result, declared config.D
 	}
 	defer func() { _ = closer() }()
 
-	indexed := catalog.Database{
-		ID: declared.ID, Engine: declared.Engine, Host: declared.Host, Port: declared.Port,
-		Name: declared.Database, User: declared.User,
-		Destinations: declared.Destinations, Staging: declared.Staging,
-		Schedule: declared.Schedule, Container: declared.Tools.Container,
-		Retention: catalog.Retention{
-			Last: declared.Retention.Last, Daily: declared.Retention.Daily,
-			Weekly: declared.Retention.Weekly, Monthly: declared.Retention.Monthly,
-		},
-	}
-
-	if err := book.RecordDatabase(cmd.Context(), indexed, done.At); err != nil {
+	if err := book.RecordDatabase(cmd.Context(), databaseSnapshot(declared), done.At); err != nil {
 		warn(cmd, "the backup is written but its database was not indexed: %v\n", err)
 
 		return
@@ -431,5 +428,60 @@ func recordInCatalogue(cmd *cobra.Command, done backup.Result, declared config.D
 
 	if err := book.RecordBackup(cmd.Context(), entry); err != nil {
 		warn(cmd, "the backup is written but was not indexed: %v\n", err)
+	}
+}
+
+// manifester renders the manifest of E-058. It lives here because the domain
+// declares that it needs bytes and never what is in them: the shape belongs to
+// `catalog`, and `AR-03` keeps `backup` and `catalog` from knowing each other.
+type manifester struct {
+	database   config.Database
+	recipients crypto.Recipients
+}
+
+func (m manifester) Render(done backup.Result) ([]byte, error) {
+	indexed := catalog.Backup{
+		ID: done.JobID, Database: done.Database,
+		StartedAt: done.At, FinishedAt: done.At.Add(done.Duration),
+		RawBytes: done.RawBytes, StoredBytes: done.StoredBytes,
+		SHA256Raw: done.SHA256Raw, SHA256Stored: done.SHA256Stored,
+		Verified: catalog.NotVerified,
+	}
+
+	run := catalog.Run{
+		ServerVersion: done.Resolution.ServerVersion,
+		Tool: catalog.Tool{
+			Name:    filepath.Base(done.Resolution.ToolPath),
+			Version: done.Resolution.ToolVersion,
+			Source:  done.Resolution.ToolSource,
+			Path:    done.Resolution.ToolPath,
+			Argv:    done.Resolution.Argv,
+		},
+		Format:     done.Resolution.Extension,
+		Pipeline:   done.Pipeline,
+		Staging:    string(done.Staging),
+		Recipients: m.recipients.Public(),
+	}
+
+	rendered, err := json.MarshalIndent(catalog.ManifestOf(indexed, databaseSnapshot(m.database), run), "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("render the manifest of %s: %w", done.Database, err)
+	}
+
+	return append(rendered, '\n'), nil
+}
+
+// databaseSnapshot is the resolved configuration as the catalogue and the
+// manifest keep it: no credential, ever (E-115, E-059).
+func databaseSnapshot(declared config.Database) catalog.Database {
+	return catalog.Database{
+		ID: declared.ID, Engine: declared.Engine, Host: declared.Host, Port: declared.Port,
+		Name: declared.Database, User: declared.User,
+		Destinations: declared.Destinations, Staging: declared.Staging,
+		Schedule: declared.Schedule, Container: declared.Tools.Container,
+		Retention: catalog.Retention{
+			Last: declared.Retention.Last, Daily: declared.Retention.Daily,
+			Weekly: declared.Retention.Weekly, Monthly: declared.Retention.Monthly,
+		},
 	}
 }

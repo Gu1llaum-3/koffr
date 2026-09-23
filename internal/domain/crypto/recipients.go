@@ -91,3 +91,15 @@ func Effective(fleet, database Recipients) Recipients {
 
 	return fleet
 }
+
+// Public is the list of recipients as text, for the manifest of E-058. They are
+// **public** keys: they say which key opens an archive, and publishing them
+// gives nothing away.
+func (r Recipients) Public() []string {
+	written := make([]string, 0, len(r.Keys))
+	for _, key := range r.Keys {
+		written = append(written, key.String())
+	}
+
+	return written
+}
