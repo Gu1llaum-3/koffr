@@ -67,11 +67,14 @@ func TestBackupOfARealPostgreSQLWritesAnEncryptedArchive(t *testing.T) {
 			t.Errorf("the command does not report %q:\n%s", said, out)
 		}
 	}
-	// E-024: what is not implemented is declared, not skipped in silence.
-	for _, pending := range []string{"verification", "manifest"} {
-		if !strings.Contains(out, pending) {
-			t.Errorf("the command does not declare %q as pending:\n%s", pending, out)
-		}
+	// E-024 — what is not implemented is declared, not skipped in silence. The
+	// manifest is written since the wave 3 of the lot 3; the verification
+	// arrives at the wave 4, and says so until then.
+	if !strings.Contains(out, "pending  verification") {
+		t.Errorf("the command does not declare the verification as pending:\n%s", out)
+	}
+	if strings.Contains(out, "pending  manifest") {
+		t.Errorf("the command still declares the manifest as pending, and it writes one:\n%s", out)
 	}
 
 	site.layOutFixture(t, "postgresql", archive)
