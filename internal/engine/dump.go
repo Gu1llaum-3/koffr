@@ -308,23 +308,41 @@ func (d *dumpStream) Close() error {
 	}
 }
 
-// tail keeps the end of what a tool wrote on its error output. The end, because
-// that is where the reason is, and bounded, because a dump can complain for
-// megabytes.
+// tail keeps a bounded slice of what a tool wrote. The **end** by default,
+// because that is where the reason of a failure is; the **head** when asked,
+// for a listing whose beginning is what matters.
 type tail struct {
-	kept []byte
+	kept  []byte
+	limit int
+	head  bool
 }
 
 const keptFromStderr = 4 << 10
 
 func (t *tail) Write(p []byte) (int, error) {
+	limit := t.limit
+	if limit == 0 {
+		limit = keptFromStderr
+	}
+
+	if t.head {
+		if room := limit - len(t.kept); room > 0 {
+			t.kept = append(t.kept, p[:min(room, len(p))]...)
+		}
+
+		return len(p), nil
+	}
+
 	t.kept = append(t.kept, p...)
-	if len(t.kept) > keptFromStderr {
-		t.kept = t.kept[len(t.kept)-keptFromStderr:]
+	if len(t.kept) > limit {
+		t.kept = t.kept[len(t.kept)-limit:]
 	}
 
 	return len(p), nil
 }
+
+// String is what was kept.
+func (t *tail) String() string { return string(t.kept) }
 
 func (t *tail) suffix() string {
 	said := bytes.TrimSpace(t.kept)

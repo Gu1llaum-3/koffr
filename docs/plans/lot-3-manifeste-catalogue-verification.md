@@ -124,15 +124,15 @@ Constaté dans le code et le schéma, pas supposé.
 L'inconnue d'abord, comme au lot 2 : si ce contrôle n'est pas faisable sans clé, tout le lot change
 de forme.
 
-- [ ] **1.1** Test d'abord `internal/engine/structure_test.go` — **`VRF-01`** : contre un **vrai**
+- [x] **1.1** Test d'abord `internal/engine/structure_test.go` — **`VRF-01`** : contre un **vrai**
       PostgreSQL, la tête du flux de `pg_dump -Fc` rend une table des matières cohérente ; un flux
       qui n'est pas un dump est **refusé** ; un flux vide est refusé.
-- [ ] **1.2** Test — **`VRF-02`** : contre une **vraie** MariaDB, le marqueur `-- Dump completed`
+- [x] **1.2** Test — **`VRF-02`** : contre une **vraie** MariaDB, le marqueur `-- Dump completed`
       est trouvé en queue ; un dump tronqué avant le marqueur est **refusé**.
-- [ ] **1.3** Test — le contrôle **ne consomme pas** le flux pour le reste de la chaîne : l'archive
+- [x] **1.3** Test — le contrôle **ne consomme pas** le flux pour le reste de la chaîne : l'archive
       produite avec contrôle est **identique** à celle produite sans, et le pic mémoire reste borné
       (`E-025`).
-- [ ] **1.4** `internal/domain/verify/rules.md` : `VRF-01`, `VRF-02`, et la **divergence écrite** —
+- [x] **1.4** `internal/domain/verify/rules.md` : `VRF-01`, `VRF-02`, et la **divergence écrite** —
       la structure est contrôlée au vol et non sur l'archive écrite, avec son renvoi ADR-0017.
 - [ ] **1.5** Vague verte : `verify`, commit `feat(verify): check a dump's structure as it streams past`.
 
