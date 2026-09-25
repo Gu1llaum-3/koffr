@@ -212,7 +212,7 @@ de forme.
 - [x] **5.4** Test — un identifiant inconnu **nomme les archives récentes** de la base plutôt que de
       répondre « introuvable ».
 - [x] **5.5** `internal/domain/verify/rules.md` : `VRF-04`.
-- [ ] **5.6** Vague verte : `verify`, commit `feat(cli): list archives and verify one on demand`.
+- [x] **5.6** Vague verte : `verify`, commit `feat(cli): list archives and verify one on demand`.
 
 ### Vague 6 — Un dépôt s'inventorie sans koffr (`lot3/wave-6-end-to-end`)
 
@@ -270,6 +270,22 @@ Sur l'instance Multipass, parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-25 — vague 5, `koffr list` et `koffr verify`
+
+- **`E-064` est tenue par les mots, pas par une couleur** : une archive que personne n'a regardée
+  affiche **« no — never checked »**, en toutes lettres. Un blanc dans une colonne se lit « ça va »
+  par un œil fatigué à 3 h du matin ; le CDC dit que l'absence de vérification n'est **jamais**
+  assimilée à un succès, et une chaîne vide l'y assimile.
+- **`koffr verify` dit ce qu'il ne fait pas.** Il recalcule l'empreinte et ne rejoue **pas** la
+  structure, parce que la clé privée n'est pas sur la machine. Un exploitant qui croirait que tout a
+  été revérifié se tromperait, et c'est le genre d'erreur qu'on découvre le jour de l'incident.
+- **Encore un harnais qui mentait**, écrit par moi à la vague 2 : `return out.String(),
+  root.Execute()` évalue la sortie **avant** d'exécuter la commande, donc rendait toujours une
+  chaîne vide. Quatre tests le montraient d'un coup. Troisième harnais défaillant du projet.
+- Un identifiant inconnu **nomme les archives récentes** ; une archive disparue de sa destination
+  passe en `failed` — c'est exactement ce à quoi sert une vérification.
+- `mise run verify` : **0** en local et sur l'instance.
 
 ### 2026-09-25 — vague 4, les sept étapes sont sept
 
