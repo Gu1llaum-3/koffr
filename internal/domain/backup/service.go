@@ -3,6 +3,8 @@ package backup
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +43,44 @@ const deferredToLot3 = "not in this release: verification arrives at the lot 3"
 // it in a listing, and found by reading every *.json of a repository — which is
 // what E-059 asks of an inventory (`N-4`).
 const manifestSuffix = ".json"
+
+// ErrNotVerified is `P4`: an archive that did not pass its checks is not a
+// backup, and the job that produced it failed.
+var ErrNotVerified = errors.New("the archive did not pass its verification")
+
+// Verdict is what the verification of step 06 concluded.
+//
+// Checked is separate from the two results on purpose: an archive nobody could
+// check is not a success, and it is not a failure of the archive either — `P4`
+// wants the two never to collapse into one another.
+type Verdict struct {
+	Checked     bool
+	ChecksumOK  bool
+	StructureOK bool
+	Detail      string
+}
+
+// Sound says whether this verdict lets an archive count as verified.
+func (v Verdict) Sound() bool {
+	return v.Checked && v.ChecksumOK && v.StructureOK
+}
+
+// why says what failed, for the error an operator reads.
+func (v Verdict) why() string {
+	switch {
+	case !v.Checked:
+		return "it could not be checked: " + v.Detail
+
+	case !v.ChecksumOK && !v.StructureOK:
+		return "its checksum does not match and its structure was refused: " + v.Detail
+
+	case !v.ChecksumOK:
+		return "its checksum does not match what was written"
+
+	default:
+		return "its structure was refused: " + v.Detail
+	}
+}
 
 // StepOutcome is what became of one step.
 type StepOutcome struct {
@@ -128,6 +168,28 @@ type (
 		LastSuccessful(ctx context.Context, database string) (*PreviousBackup, error)
 	}
 
+	// Verifier hands out a watcher for a dump about to stream past — step 06
+	// of E-024, or rather its half that has to happen early.
+	//
+	// The structure is checked **while the dump goes by**, because koffr holds
+	// only a public key and that is the one moment it sees the plaintext
+	// (ADR-0017). The other half — the checksum — is recomputed afterwards by
+	// re-reading the destination, and the domain does that itself.
+	Verifier interface {
+		Watch(resolution Resolution) (StructureWatcher, error)
+	}
+
+	// StructureWatcher observes the dump as it streams past and says, at the
+	// end, whether the engine still recognises it as one.
+	//
+	// It says so in `bool, string` and not in a type of `domain/verify`:
+	// `AR-03` keeps the modules of the domain from knowing each other, and the
+	// vocabulary of a verdict belongs to `verify`.
+	StructureWatcher interface {
+		io.Writer
+		Conclude(ctx context.Context) (sound bool, detail string)
+	}
+
 	// Manifester renders the manifest of a finished backup — step 07 of E-024.
 	//
 	// The domain declares that it needs **bytes** to deposit, and never what is
@@ -156,6 +218,7 @@ type Wiring struct {
 	Capacity     Capacity
 	Journal      Journal
 	History      History
+	Verifier     Verifier
 	Manifester   Manifester
 	Destinations []Destination
 
@@ -167,6 +230,10 @@ type Wiring struct {
 // and what happens when something breaks — it does not dump, write or compress.
 type Service struct {
 	wiring Wiring
+
+	// watch is the structure watcher of the job being run. One job at a time
+	// per service, which the lock of E-051 guarantees.
+	watch StructureWatcher
 }
 
 // NewService builds the use case.
@@ -189,12 +256,14 @@ func (s *Service) journal(request Request, step Step, failed error, facts ...Fac
 // journalDeferred records a step this release does not implement, so that a
 // trace of seven steps is never mistaken for seven steps that ran.
 func (s *Service) journalDeferred(request Request) {
-	for _, step := range []Step{StepVerification} {
-		s.wiring.Journal.Step(JobStep{
-			Job: request.JobID, Database: request.Database,
-			Step: step, Deferred: deferredToLot3,
-		})
+	if s.watch != nil {
+		return
 	}
+
+	s.wiring.Journal.Step(JobStep{
+		Job: request.JobID, Database: request.Database,
+		Step: StepVerification, Deferred: deferredToLot3,
+	})
 }
 
 // Result is what a job did. It is filled as the job goes, and returned even
@@ -219,6 +288,10 @@ type Result struct {
 
 	Warnings []string
 	Steps    []StepOutcome
+
+	// Verification is what step 06 concluded. P4: an archive is valid only
+	// once it has been checked, and "not checked" never passes for a success.
+	Verification Verdict
 
 	// Resolution is what the resolver settled on. The manifest of E-058 carries
 	// it — the tool, its version and its provenance say what can read the
@@ -283,6 +356,8 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 		return result, err
 	}
 
+	s.watch = nil
+
 	started := time.Now()
 
 	resolution, err := s.wiring.Resolver.Resolve(ctx, request.Database)
@@ -295,6 +370,13 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	result.Warnings = resolution.Warnings
 	result.Resolution = resolution
 	result.mark(StepResolution)
+
+	if s.wiring.Verifier != nil {
+		if s.watch, err = s.wiring.Verifier.Watch(resolution); err != nil {
+			return result, fmt.Errorf("watch the structure of %s: %w", request.Database, err)
+		}
+	}
+
 	s.journal(request, StepResolution, nil,
 		Fact{"engine", resolution.Engine},
 		Fact{"server_version", resolution.ServerVersion},
@@ -335,6 +417,10 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 		Fact{"sha256_raw", result.SHA256Raw},
 		Fact{"sha256_stored", result.SHA256Stored},
 	)
+	if err := s.verifyArchive(ctx, request, &result); err != nil {
+		return result, err
+	}
+
 	s.journalDeferred(request)
 
 	// The duration is known before the manifest is written, because the
@@ -346,6 +432,75 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 	}
 
 	return result, nil
+}
+
+// verifyArchive is step 06 of E-024, and the whole of `P4`: nothing is backed
+// up until it has been checked.
+//
+// Two halves, for the reason ADR-0017 gives. The **structure** was read while
+// the dump streamed past, because that is the only moment koffr holds the
+// plaintext. The **checksum** is recomputed here, by re-reading the archive
+// from the destination — never from what the pipeline kept in memory, which
+// would only prove that koffr agrees with itself (E-062).
+func (s *Service) verifyArchive(ctx context.Context, request Request, result *Result) error {
+	if s.watch == nil {
+		return nil
+	}
+
+	sound, detail := s.watch.Conclude(ctx)
+
+	result.Verification = Verdict{Checked: true, StructureOK: sound, Detail: detail}
+
+	// The first destination is re-read. With one destination it is the only
+	// one; which to re-read when there are several is `Q-02`, still open, and
+	// the lot 4 decides it with S3 in hand (`N-5`).
+	if len(s.wiring.Destinations) > 0 {
+		reread, err := s.rereadChecksum(ctx, s.wiring.Destinations[0], result.Path)
+		if err != nil {
+			result.Verification.Checked = false
+			result.Verification.Detail = err.Error()
+			s.journal(request, StepVerification, err)
+
+			return fmt.Errorf("verify the archive of %s: %w", result.Database, err)
+		}
+
+		result.Verification.ChecksumOK = reread == result.SHA256Stored
+	}
+
+	if !result.Verification.Sound() {
+		failure := fmt.Errorf("%w: %s", ErrNotVerified, result.Verification.why())
+		s.journal(request, StepVerification, failure,
+			Fact{"checksum_ok", result.Verification.ChecksumOK},
+			Fact{"structure_ok", result.Verification.StructureOK},
+		)
+
+		return failure
+	}
+
+	result.markEvenIfDeferred(StepVerification)
+	s.journal(request, StepVerification, nil,
+		Fact{"checksum_ok", true},
+		Fact{"structure_ok", true},
+		Fact{"detail", detail},
+	)
+
+	return nil
+}
+
+// rereadChecksum hashes what is really on the destination.
+func (s *Service) rereadChecksum(ctx context.Context, destination Destination, path string) (string, error) {
+	stored, err := destination.Store.Read(ctx, path)
+	if err != nil {
+		return "", fmt.Errorf("re-read the archive on %s: %w", destination.ID, err)
+	}
+	defer func() { _ = stored.Close() }()
+
+	digest := sha256.New()
+	if _, err := io.Copy(digest, stored); err != nil {
+		return "", fmt.Errorf("re-read the archive on %s: %w", destination.ID, err)
+	}
+
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 // depositManifest writes the manifest beside the archive, on **every**
@@ -427,6 +582,15 @@ func (s *Service) dumpAndWrite(
 		return Packed{}, fmt.Errorf("dump %s: %w", request.Database, err)
 	}
 
+	// ADR-0017 — the structure is read **while the dump goes by**: koffr holds
+	// only a public key, so this is the one moment it sees the plaintext. The
+	// watcher is fed by a tee, never by a second read: E-025 forbids
+	// materialising the dump, and reading it twice would double the load on a
+	// production server.
+	if s.watch != nil {
+		dump = watchedDump{ReadCloser: dump, through: io.TeeReader(dump, s.watch)}
+	}
+
 	result.mark(StepDump)
 	s.journal(request, StepDump, nil,
 		Fact{"staging", string(mode)},
@@ -439,6 +603,16 @@ func (s *Service) dumpAndWrite(
 	}
 
 	return s.stream(ctx, request, dump, path, result)
+}
+
+// watchedDump lets a watcher see the dump go by without consuming it.
+type watchedDump struct {
+	io.ReadCloser
+	through io.Reader
+}
+
+func (w watchedDump) Read(into []byte) (int, error) {
+	return w.through.Read(into) //nolint:wrapcheck // a pass-through of the tee
 }
 
 // stage writes the packed stream to a staging file, **closes the dump** — which
@@ -564,7 +738,7 @@ func freshSteps() []StepOutcome {
 
 	for _, step := range Steps {
 		outcome := StepOutcome{Step: step}
-		if step == StepVerification || step == StepManifest {
+		if step == StepVerification {
 			outcome.Deferred = deferredToLot3
 		}
 
