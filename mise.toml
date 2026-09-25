@@ -43,6 +43,10 @@ run = "./scripts/check-age-interop.sh"
 description = "Scenario 6: back up a real fleet and open the archive with age, zstd and pg_restore"
 run = "./scripts/check-backup-e2e.sh"
 
+[tasks.inventory]
+description = "E-059: inventory an archive repository with jq alone, without koffr and without a key"
+run = "./scripts/check-inventory.sh"
+
 [tasks.release]
 description = "Build the three targets of ADR-0011 and check E-117: no cgo, static ELF, under 30 MB"
 run = "./scripts/check-release.sh"
@@ -55,5 +59,6 @@ run = [
   "mise run test",
   "mise run interop",
   "mise run e2e",
+  "mise run inventory",
   "mise run build",
 ]

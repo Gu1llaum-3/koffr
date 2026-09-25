@@ -630,3 +630,74 @@ func TestTheManifestIsDepositedAndReadsWithoutAKey(t *testing.T) {
 		}
 	}
 }
+
+// The exit criterion of the lot — E-059, E-114: a repository of archives is
+// inventoried **without koffr and without the private key**, from the manifests
+// alone. This test lays out a real repository; scripts/check-inventory.sh
+// inventories it with jq alone, because only a tool that is not ours can show
+// that ours is not needed (the bargain of N-8, lot 2).
+func TestWriteTheInventoryFixture(t *testing.T) {
+	if *fixtureDir == "" {
+		t.Skip("no -fixture-dir: run scripts/check-inventory.sh to check the inventory")
+	}
+
+	for _, engine := range []struct {
+		name  string
+		start func(*testing.T) fleetServer
+	}{
+		{"postgresql", func(t *testing.T) fleetServer { return startPostgresServer(t, 500) }},
+		{"mariadb", startMariaDBServer},
+	} {
+		site := newFleetSite(t, engine.start(t))
+
+		run(t, site.args("backup", fleetDatabase)...)
+
+		if err := os.CopyFS(filepath.Join(*fixtureDir, engine.name), os.DirFS(site.destination)); err != nil {
+			t.Fatalf("lay out the repository: %v", err)
+		}
+	}
+}
+
+// E-114 — and what a stolen repository gives up, checked on a real one: the
+// manifests carry metadata, and nothing that opens a database.
+func TestAStolenRepositoryCarriesNoCredential(t *testing.T) {
+	server := startPostgresServer(t, 500)
+	site := newFleetSite(t, server)
+
+	run(t, site.args("backup", fleetDatabase)...)
+
+	var manifests []string
+
+	err := filepath.WalkDir(site.destination, func(path string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() && strings.HasSuffix(path, ".json") {
+			manifests = append(manifests, path)
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+
+	if len(manifests) == 0 {
+		t.Fatal("the repository holds no manifest, so it cannot be inventoried")
+	}
+
+	for _, path := range manifests {
+		written, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+
+		for what, value := range map[string]string{
+			"the password":  fleetPassword,
+			"the user":      fleetUser,
+			"the host":      server.host,
+			"a private key": "AGE-SECRET-KEY",
+		} {
+			if strings.Contains(string(written), value) {
+				t.Errorf("%s is in %s:\n%s", what, filepath.Base(path), written)
+			}
+		}
+	}
+}

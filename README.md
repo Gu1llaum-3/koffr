@@ -141,6 +141,22 @@ Each database is encrypted for the fleet's recipients, unless it declares its ow
 `recipients_file` — which then **replaces** the fleet list rather than adding to it, so that one
 can say for whom an archive is encrypted by looking at one place.
 
+### Inventory a repository without koffr
+
+Every archive has a manifest beside it, unencrypted and holding no credential. A repository is
+therefore inventoried with `jq` alone — no koffr, no private key, no database:
+
+```sh
+jq -r '[.database_id, .started_at, .size_stored,
+        (if .verified.checksum and .verified.structure then "verified" else "NOT VERIFIED" end)]
+       | @tsv' /srv/backups/*/*/*/*.json
+```
+
+A manifest says what the archive is, how it was written and what can read it back: the engine and
+its version, the tool with its version and its arguments, the pipeline, both checksums, and the
+public keys it was encrypted for. It says nothing that opens a database — no host, no user, no
+password. That is the whole point: a stolen repository gives up metadata and nothing else.
+
 ### Open an archive without koffr
 
 This is the point of the format, and it is checked by `mise run e2e` on every build. Two standard

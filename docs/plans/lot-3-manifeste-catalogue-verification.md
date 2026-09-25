@@ -216,15 +216,15 @@ de forme.
 
 ### Vague 6 — Un dépôt s'inventorie sans koffr (`lot3/wave-6-end-to-end`)
 
-- [ ] **6.1** Test d'intégration : sauvegarder une **vraie** PostgreSQL et une **vraie** MariaDB,
+- [x] **6.1** Test d'intégration : sauvegarder une **vraie** PostgreSQL et une **vraie** MariaDB,
       puis inventorier le dépôt **avec `jq` seul** — sans koffr, sans clé privée — et retrouver
       base, taille, horodatage et état de vérification de chaque archive.
-- [ ] **6.2** Test — `E-114` : les manifestes ne livrent que des **métadonnées**. Le script cherche
+- [x] **6.2** Test — `E-114` : les manifestes ne livrent que des **métadonnées**. Le script cherche
       toute valeur ressemblant à un identifiant dans l'ensemble des `*.json`.
-- [ ] **6.3** `scripts/check-inventory.sh` sur le modèle de `N-8` du lot 2 : le test Go dépose, le
+- [x] **6.3** `scripts/check-inventory.sh` sur le modèle de `N-8` du lot 2 : le test Go dépose, le
       script inventorie avec `jq`. Ajouté à `verify`, sauté bruyamment sans `jq`, exigé en CI.
-- [ ] **6.4** Mesurer le binaire et **noter l'écart**. Marge actuelle : 16,5 Mio.
-- [ ] **6.5** `README` : comment inventorier un dépôt d'archives sans koffr.
+- [x] **6.4** Mesurer le binaire et **noter l'écart**. Marge actuelle : 16,5 Mio.
+- [x] **6.5** `README` : comment inventorier un dépôt d'archives sans koffr.
 - [ ] **6.6** Vague verte : `verify`, commit `chore: inventory an archive repository without koffr`.
 
 ## Vérification de bout en bout
