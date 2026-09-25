@@ -63,6 +63,7 @@ func NewRoot(options ...Option) *cobra.Command {
 	root.AddCommand(
 		newVersionCommand(), newConfigCommand(), newToolsCommand(),
 		newDoctorCommand(), newKeygenCommand(), newBackupCommand(),
+		newListCommand(), newVerifyCommand(),
 	)
 
 	return root

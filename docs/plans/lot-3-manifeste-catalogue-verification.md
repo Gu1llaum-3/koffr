@@ -201,17 +201,17 @@ de forme.
 
 ### Vague 5 — `koffr list` et `koffr verify` (`lot3/wave-5-cli`)
 
-- [ ] **5.1** Test d'abord `internal/cli/list_test.go` — `E-103c` : `koffr list [<db>]
+- [x] **5.1** Test d'abord `internal/cli/list_test.go` — `E-103c` : `koffr list [<db>]
       [--destination ID]` liste les archives du catalogue, les plus récentes d'abord.
-- [ ] **5.2** Test — **`VRF-04`**, `E-064` : une archive vérifiée est **visuellement distincte**
+- [x] **5.2** Test — **`VRF-04`**, `E-064` : une archive vérifiée est **visuellement distincte**
       d'une non vérifiée, et l'absence de vérification n'est jamais rendue comme un succès. Le test
       lit la sortie que l'exploitant lit.
-- [ ] **5.3** Test `internal/cli/verify_test.go` — `koffr verify <backup-id>` relit la destination,
+- [x] **5.3** Test `internal/cli/verify_test.go` — `koffr verify <backup-id>` relit la destination,
       recalcule l'empreinte, met le catalogue à jour, et **dit** qu'il ne peut pas rejouer la
       structure sans la clé privée (ADR-0017).
-- [ ] **5.4** Test — un identifiant inconnu **nomme les archives récentes** de la base plutôt que de
+- [x] **5.4** Test — un identifiant inconnu **nomme les archives récentes** de la base plutôt que de
       répondre « introuvable ».
-- [ ] **5.5** `internal/domain/verify/rules.md` : `VRF-04`.
+- [x] **5.5** `internal/domain/verify/rules.md` : `VRF-04`.
 - [ ] **5.6** Vague verte : `verify`, commit `feat(cli): list archives and verify one on demand`.
 
 ### Vague 6 — Un dépôt s'inventorie sans koffr (`lot3/wave-6-end-to-end`)

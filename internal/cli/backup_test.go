@@ -327,9 +327,11 @@ func TestACatalogueThatFailsDoesNotFailTheBackup(t *testing.T) {
 }
 
 type fakeCatalog struct {
-	databases []catalog.Database
-	backups   []catalog.Backup
-	fail      error
+	databases        []catalog.Database
+	backups          []catalog.Backup
+	lastFilter       catalog.Filter
+	lastVerification catalog.Verification
+	fail             error
 }
 
 func (f *fakeCatalog) RecordDatabase(_ context.Context, database catalog.Database, _ time.Time) error {
@@ -352,12 +354,45 @@ func (f *fakeCatalog) RecordBackup(_ context.Context, backup catalog.Backup) err
 	return nil
 }
 
-func (f *fakeCatalog) SetVerification(context.Context, string, catalog.Verification, time.Time) error {
-	return f.fail
+func (f *fakeCatalog) SetVerification(
+	_ context.Context, id string, verified catalog.Verification, at time.Time,
+) error {
+	if f.fail != nil {
+		return f.fail
+	}
+
+	f.lastVerification = verified
+
+	for index := range f.backups {
+		if f.backups[index].ID == id {
+			f.backups[index].Verified = verified
+			f.backups[index].VerifiedAt = at
+
+			return nil
+		}
+	}
+
+	return catalog.ErrNoSuchBackup
 }
 
-func (f *fakeCatalog) Backups(context.Context, catalog.Filter) ([]catalog.Backup, error) {
-	return f.backups, f.fail
+func (f *fakeCatalog) Backups(_ context.Context, filter catalog.Filter) ([]catalog.Backup, error) {
+	f.recordFilter(filter)
+
+	if f.fail != nil {
+		return nil, f.fail
+	}
+
+	kept := make([]catalog.Backup, 0, len(f.backups))
+
+	for _, backup := range f.backups {
+		if filter.Database != "" && backup.Database != filter.Database {
+			continue
+		}
+
+		kept = append(kept, backup)
+	}
+
+	return kept, nil
 }
 
 // failingWith runs a command against a wired catalogue and returns what it said.
@@ -373,5 +408,29 @@ func failingWith(t *testing.T, book catalog.Catalog, args ...string) (string, er
 	root.SetErr(&errs)
 	root.SetArgs(args)
 
-	return out.String(), root.Execute()
+	// Execute **then** read: `return out.String(), root.Execute()` evaluates
+	// the output before running the command, and hands back an empty string
+	// whatever happens.
+	err := root.Execute()
+
+	return out.String(), err
+}
+
+// executeWith runs a command against a wired catalogue and hands back both
+// streams. Execute **then** read: the other way round returns empty strings.
+func executeWith(t *testing.T, book catalog.Catalog, args ...string) (string, string, error) {
+	t.Helper()
+
+	var out, errs bytes.Buffer
+
+	root := NewRoot(WithCatalog(func(string) (catalog.Catalog, func() error, error) {
+		return book, func() error { return nil }, nil
+	}))
+	root.SetOut(&out)
+	root.SetErr(&errs)
+	root.SetArgs(args)
+
+	err := root.Execute()
+
+	return out.String(), errs.String(), err
 }
