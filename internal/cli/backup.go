@@ -450,12 +450,18 @@ type manifester struct {
 }
 
 func (m manifester) Render(done backup.Result) ([]byte, error) {
+	// The manifest is rendered **after** the verification (E-024), so it
+	// carries what it concluded rather than a hard-coded "not verified".
 	indexed := catalog.Backup{
 		ID: done.JobID, Database: done.Database,
 		StartedAt: done.At, FinishedAt: done.At.Add(done.Duration),
 		RawBytes: done.RawBytes, StoredBytes: done.StoredBytes,
 		SHA256Raw: done.SHA256Raw, SHA256Stored: done.SHA256Stored,
-		Verified: catalog.NotVerified,
+		Verified: verificationOf(done),
+	}
+
+	if indexed.Verified.Verified() {
+		indexed.VerifiedAt = done.At.Add(done.Duration)
 	}
 
 	run := catalog.Run{

@@ -696,3 +696,24 @@ func (r *recordingManifester) Render(result backup.Result) ([]byte, error) {
 
 	return []byte(`{"backup_id":"` + result.JobID + `"}`), nil
 }
+
+// E-024 — the manifest is rendered after the verification, so what it says
+// about it is what happened. A manifest that hard-coded "not verified" would
+// contradict the archive it describes.
+func TestTheManifestCarriesWhatTheVerificationConcluded(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{}
+	recorder := &recordingManifester{}
+	world.manifester = recorder
+
+	if _, err := world.service().Run(t.Context(), request()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !recorder.seen.Verification.Sound() {
+		t.Errorf("the manifest was rendered with %+v, want a sound verification", recorder.seen.Verification)
+	}
+	if !recorder.seen.Steps[5].Done {
+		t.Error("the manifest was rendered before the verification step was marked")
+	}
+}
