@@ -30,6 +30,13 @@ illisible — rend `Checked` faux, et **ne passe jamais** pour un succès. Le ca
 alors `none` et non `failed` : « personne n'a regardé » et « on a regardé, c'est mauvais » sont deux
 situations différentes pour un exploitant.
 
+## Ce qu'un exploitant voit
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| VRF-04 | Une archive **vérifiée**, une archive **en échec** et une archive que **personne n'a regardée** se lisent différemment dans `koffr list`, et l'absence de vérification n'est **jamais** rendue comme un succès : elle dit **non**, en toutes lettres, plutôt que de laisser un blanc qu'un œil fatigué lit comme « ça va ». | `E-064`, § 5.4 `F4.3`, § 2 `P4` | `cli/list_test.go › TestVRF04VerifiedAndUnverifiedAreVisuallyDistinct` |
+| VRF-05 | `koffr verify` relit l'archive **depuis sa destination**, recalcule l'empreinte, met le catalogue à jour — et **dit ce qu'il ne fait pas** : il ne rejoue pas la structure, parce que la clé privée qui ouvrirait l'archive n'est pas sur la machine. Un exploitant qui croirait que tout a été revérifié se tromperait. Une archive disparue ou modifiée passe en `failed` : c'est exactement ce à quoi sert une vérification. | `E-103c`, `E-062`, ADR-0017 | `cli/verify_test.go › TestVerifyRecomputesTheChecksumAndSaysWhatItCannotDo`, `› TestVerifyFailsOnAnArchiveThatChanged`, `› TestVerifyReportsAnArchiveThatIsNoLongerThere`, `› TestVerifyNamesTheArchivesItKnows` |
+
 ## Divergences avec le cahier des charges
 
 - **`F4.2` demande de relire la structure de l'archive *écrite* ; koffr la contrôle *au vol*,
