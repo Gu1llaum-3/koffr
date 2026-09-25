@@ -1,6 +1,8 @@
 # Plan lot 3 — Manifeste, catalogue et vérification
 
-> Statut : **validé par le propriétaire le 2026-09-23**. Exécuté par `/executer-plan`. Les règles
+> Statut : **terminé le 2026-09-25** — six vagues mergées, `verify` et CI verts. Validé par le
+> propriétaire le 2026-09-23. Exécuté par `/executer-plan`. Reste la **recette**
+> (`docs/recette/lot-3-scenario.md`), puis `/cloturer-lot 3`. Les règles
 > communes à tous les plans sont dans `METHODE.md` § « Exécution d'un plan » et ne sont pas
 > répétées ici.
 
@@ -225,7 +227,7 @@ de forme.
       script inventorie avec `jq`. Ajouté à `verify`, sauté bruyamment sans `jq`, exigé en CI.
 - [x] **6.4** Mesurer le binaire et **noter l'écart**. Marge actuelle : 16,5 Mio.
 - [x] **6.5** `README` : comment inventorier un dépôt d'archives sans koffr.
-- [ ] **6.6** Vague verte : `verify`, commit `chore: inventory an archive repository without koffr`.
+- [x] **6.6** Vague verte : `verify`, commit `chore: inventory an archive repository without koffr`.
 
 ## Vérification de bout en bout
 
@@ -270,6 +272,23 @@ Sur l'instance Multipass, parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-25 — vague 6, un dépôt s'inventorie sans koffr
+
+- **Le critère de sortie est tenu, et prouvé par un outil qui n'est pas le nôtre** : deux archives
+  — une PostgreSQL et une MariaDB — inventoriées **avec `jq` seul**, sans koffr et sans clé privée.
+  Cinquième emploi du marché de `N-8` : le test dépose, le script exécute.
+- Le script vérifie aussi ce qu'un inventaire doit permettre : chaque manifeste porte de quoi
+  **décider quoi restaurer**, l'archive qu'il décrit **existe** et fait la taille annoncée, et aucun
+  manifeste ne déclare de champ qui ouvrirait une base.
+- **`misspell` m'a repris deux fois**, et il avait raison les deux fois : du français dans la sortie
+  du script — que lit un exploitant, donc anglais par ADR-0003 — et du français dans un commentaire
+  Go. Même reprise qu'au lot 2 ; la règle est dans `CLAUDE.md` et je l'ai quand même manquée.
+- **`6.4` — le binaire : 17,3 / 16,4 / 16,7 Mio**, contre 13,5 avant ce lot. **+3,9 Mio**, et la
+  cause est nette : `internal/state` et SQLite entrent enfin dans le binaire, parce que `cmd/koffr`
+  câble le catalogue (`N-3`). Marge restante avant le seuil de `E-117` : **12,7 Mio**. Le lot 4 y
+  ajoutera le SDK S3 ; c'est le moment de le surveiller.
+- `mise run verify` : **0** en local et sur l'instance, `inventory` compris.
 
 ### 2026-09-25 — vague 5, `koffr list` et `koffr verify`
 
