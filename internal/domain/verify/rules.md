@@ -19,6 +19,17 @@ sauvegardé tant que ce n'est pas vérifié.
 échec de l'archive : `P4` veut qu'« non vérifié » et « vérifié et mauvais » ne se confondent jamais.
 `verify.Structure` porte donc `Checked` **et** `OK`.
 
+## L'empreinte
+
+| # | Règle (une phrase, vérifiable) | Source | Test |
+| --- | --- | --- | --- |
+| VRF-03 | L'empreinte est **recalculée en relisant la destination**, jamais depuis ce que la chaîne a retenu en mémoire — sans quoi koffr ne prouverait que son accord avec lui-même. Une archive corrompue **après** son écriture fait échouer le job. Une archive qui ne passe pas ses contrôles n'est **pas** une sauvegarde : `P4`. | `E-062`, `E-008`, § 5.4 `F4.1` | `backup/service_test.go › TestVRF03TheChecksumIsRecomputedFromTheDestination`, `› TestVRF03ASoundArchivePassesItsChecksum`, `› TestAnArchiveWhoseStructureIsRefusedFailsTheJob` |
+
+**Trois états, encore.** Un contrôle impossible — pas de `pg_restore` sur la machine, destination
+illisible — rend `Checked` faux, et **ne passe jamais** pour un succès. Le catalogue l'enregistre
+alors `none` et non `failed` : « personne n'a regardé » et « on a regardé, c'est mauvais » sont deux
+situations différentes pour un exploitant.
+
 ## Divergences avec le cahier des charges
 
 - **`F4.2` demande de relire la structure de l'archive *écrite* ; koffr la contrôle *au vol*,
