@@ -136,6 +136,10 @@ Constaté dans le code et le schéma, pas supposé.
   vérité (ADR-0006). Perdre l'index est un **avertissement**. *Exclut* : appeler échec une archive
   intacte parce qu'une base locale n'a pas répondu.
 
+- **N-11 (2026-09-25) — une archive écrite est indexée même si sa vérification a échoué.**
+  *Raison* : `P4` veut l'échec **visible**. `N-10` n'indexait que sur succès, ce qui aurait effacé
+  exactement ce qu'un exploitant doit voir. *Exclut* : indexer un job qui n'a rien écrit.
+
 ## Vagues
 
 ### Vague 1 — La structure se vérifie au vol (`lot3/wave-1-structure-in-flight`)
@@ -184,16 +188,16 @@ de forme.
 
 ### Vague 4 — Les sept étapes sont sept (`lot3/wave-4-seven-steps`)
 
-- [ ] **4.1** Test d'abord `internal/domain/backup/service_test.go` — **`BKP-06` amendée** : les
+- [x] **4.1** Test d'abord `internal/domain/backup/service_test.go` — **`BKP-06` amendée** : les
       étapes `verification` et `manifest` sont **faites**, plus jamais `deferred`. Le test qui
       exigeait qu'elles soient déclarées absentes est **retourné**, pas supprimé.
-- [ ] **4.2** Test — **`VRF-03`** : l'empreinte est recalculée en **relisant la destination**, pas
+- [x] **4.2** Test — **`VRF-03`** : l'empreinte est recalculée en **relisant la destination**, pas
       depuis ce que le pipeline a retenu en mémoire (`E-062`). Le test **corrompt l'archive sur le
       disque** entre l'écriture et la vérification et attend `failed`.
-- [ ] **4.3** Test — une archive non vérifiée n'est **jamais** comptée comme un succès : le job
+- [x] **4.3** Test — une archive non vérifiée n'est **jamais** comptée comme un succès : le job
       échoue, le catalogue passe à `failed`, et le manifeste écrit le dit (`P4`, `E-008`).
-- [ ] **4.4** `rules.md` : `VRF-03`, `BKP-06` amendée.
-- [ ] **4.5** Vague verte : `verify`, commit `feat(backup): verify the archive and write its manifest`.
+- [x] **4.4** `rules.md` : `VRF-03`, `BKP-06` amendée.
+- [x] **4.5** Vague verte : `verify`, commit `feat(backup): verify the archive and write its manifest`.
 
 ### Vague 5 — `koffr list` et `koffr verify` (`lot3/wave-5-cli`)
 
@@ -266,6 +270,27 @@ Sur l'instance Multipass, parc réel :
 ## Journal d'exécution
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
+
+### 2026-09-25 — vague 4, les sept étapes sont sept
+
+- **`P4` est tenu.** Une archive qui ne passe pas ses contrôles fait **échouer** le job, et les
+  sept étapes de `E-024` s'exécutent toutes. Plus rien n'est déclaré absent.
+- **Les deux moitiés de la vérification, chacune à son moment** : la structure pendant que le dump
+  passe (ADR-0017), l'empreinte après, **en relisant la destination**. Le test corrompt l'archive
+  **sur la destination** entre l'écriture et la vérification : une empreinte recalculée de mémoire
+  passerait, et ne prouverait que l'accord de koffr avec lui-même.
+- **`N-11` ajoutée** : une archive écrite est indexée **même quand sa vérification a échoué**, avec
+  l'état `failed`. `P4` veut cet échec **visible**, pas absent. Seul un job qui n'a rien écrit ne
+  laisse aucune trace. Sans cette décision, `N-10` — qui n'indexe que sur succès — aurait effacé
+  précisément ce qu'il faut voir.
+- **Un contrôle impossible n'est pas un échec de l'archive** : pas de `pg_restore` sur la machine
+  rend `Checked` faux, le catalogue enregistre `none` et non `failed`. La distinction est celle de
+  `RSV-11` et de `VRF-01`, pour la troisième fois.
+- **La leçon de la vague 3 a servi** : `verify` **complet** joué sur l'instance, pas seulement les
+  nouveaux tests. Il a attrapé trois tests des vagues précédentes à retourner — ce que la tâche
+  `4.1` prévoyait — **et un vrai défaut** : `manifester.Render` codait `NotVerified` en dur alors
+  qu'il est rendu **après** la vérification. Le manifeste contredisait l'archive qu'il décrivait.
+- `mise run verify` : **0** en local et sur l'instance, conteneurs compris.
 
 ### 2026-09-23 — vague 3, le manifeste
 

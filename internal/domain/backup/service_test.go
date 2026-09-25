@@ -3,7 +3,10 @@ package backup_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -206,6 +209,7 @@ type world struct {
 	second      *fakeDestination
 	journal     backup.Journal
 	manifester  backup.Manifester
+	verifier    backup.Verifier
 }
 
 func newWorld(t *testing.T) *world {
@@ -241,6 +245,7 @@ func (w *world) service() *backup.Service {
 		History:        w.history,
 		Journal:        w.journal,
 		Manifester:     w.manifester,
+		Verifier:       w.verifier,
 		Destinations:   destinations,
 	})
 }
@@ -302,14 +307,19 @@ func (f *fakePacker) Pack(_ context.Context, into io.Writer, from io.Reader) (ba
 		return backup.Packed{}, f.fail
 	}
 
-	written, err := io.Copy(into, from)
+	// The checksum is the real one of what was written: VRF-03 re-reads the
+	// destination and compares, so a literal here would make the test agree
+	// with itself and prove nothing.
+	digest := sha256.New()
+
+	written, err := io.Copy(io.MultiWriter(into, digest), from)
 	if err != nil {
 		return backup.Packed{}, err
 	}
 
 	return backup.Packed{
 		RawBytes: written, StoredBytes: written,
-		SHA256Raw: "raw", SHA256Stored: "stored",
+		SHA256Raw: "raw", SHA256Stored: hex.EncodeToString(digest.Sum(nil)),
 		Pipeline: []string{"zstd:3", "age:x25519"},
 	}, nil
 }
@@ -332,6 +342,11 @@ type fakeDestination struct {
 	mutex   sync.Mutex
 	written map[string][]byte
 	order   []string
+
+	// corruptAfterWrite flips a byte once the archive is in place, as a disk or
+	// a network would: the only way to tell a checksum recomputed from the
+	// destination from one recomputed from memory.
+	corruptAfterWrite bool
 }
 
 func newDestination() *fakeDestination {
@@ -347,14 +362,27 @@ func (f *fakeDestination) Write(_ context.Context, path string, from io.Reader) 
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
+	if f.corruptAfterWrite && !strings.HasSuffix(path, ".json") && len(contents) > 0 {
+		contents = slices.Clone(contents)
+		contents[len(contents)/2] ^= 0xFF
+	}
+
 	f.written[path] = contents
 	f.order = append(f.order, path)
 
 	return int64(len(contents)), nil
 }
 
-func (f *fakeDestination) Read(context.Context, string) (io.ReadCloser, error) {
-	return nil, errors.New("not needed here")
+func (f *fakeDestination) Read(_ context.Context, path string) (io.ReadCloser, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	contents, held := f.written[path]
+	if !held {
+		return nil, fmt.Errorf("nothing at %s", path)
+	}
+
+	return io.NopCloser(bytes.NewReader(contents)), nil
 }
 
 func (f *fakeDestination) List(context.Context, string) ([]backup.Entry, error) { return nil, nil }
@@ -536,5 +564,156 @@ func TestTheDurationReachesTheCaller(t *testing.T) {
 
 	if result.Duration <= 0 {
 		t.Errorf("Duration = %s, want the time the job took", result.Duration)
+	}
+}
+
+// VRF-03, E-062 — the checksum is recomputed by **re-reading the destination**,
+// never from what the pipeline kept in memory. The test corrupts the archive on
+// the destination between the write and the verification: a check that trusted
+// its own memory would pass, and the job must fail.
+func TestVRF03TheChecksumIsRecomputedFromTheDestination(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{}
+	world.destination.corruptAfterWrite = true
+
+	result, err := world.service().Run(t.Context(), request())
+	if err == nil {
+		t.Fatal("a job whose archive was corrupted on the destination reported success")
+	}
+	if !strings.Contains(err.Error(), "checksum") {
+		t.Errorf("the failure does not say what went wrong:\n%v", err)
+	}
+
+	if result.Verification.ChecksumOK {
+		t.Error("the verification claims the checksum matched")
+	}
+	if result.Steps[5].Done {
+		t.Error("the verification step reports itself done although it failed")
+	}
+}
+
+// VRF-03 — and on a sound archive it passes, having read the bytes that are
+// really there.
+func TestVRF03ASoundArchivePassesItsChecksum(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{}
+
+	result, err := world.service().Run(t.Context(), request())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !result.Verification.ChecksumOK || !result.Verification.StructureOK {
+		t.Errorf("a sound archive did not pass: %+v", result.Verification)
+	}
+}
+
+// E-008, P4 — a structure the engine refuses fails the job too. An archive that
+// is intact and is not a dump is the failure a checksum cannot see.
+func TestAnArchiveWhoseStructureIsRefusedFailsTheJob(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{refuse: "pg_restore read no table of contents from it"}
+
+	result, err := world.service().Run(t.Context(), request())
+	if err == nil {
+		t.Fatal("a job whose dump was not a dump reported success")
+	}
+	if !strings.Contains(err.Error(), "table of contents") {
+		t.Errorf("the failure does not carry what the engine said:\n%v", err)
+	}
+	if result.Verification.StructureOK {
+		t.Error("the verification claims the structure was sound")
+	}
+}
+
+// BKP-06 amended — the seven steps are seven. Nothing is declared absent any
+// more, and the two that were are **done**.
+func TestBKP06TheSevenStepsAllRunNow(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{}
+
+	result, err := world.service().Run(t.Context(), request())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, outcome := range result.Steps {
+		if !outcome.Done {
+			t.Errorf("the step %q did not run", outcome.Step)
+		}
+		if outcome.Deferred != "" {
+			t.Errorf("the step %q still says it is not in this release: %q", outcome.Step, outcome.Deferred)
+		}
+	}
+}
+
+// E-024 — and the order holds: the verification comes after the write and
+// before the manifest, which is why the manifest can carry its state.
+func TestTheVerificationHappensBetweenTheWriteAndTheManifest(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{}
+	world.manifester = &recordingManifester{}
+
+	result, err := world.service().Run(t.Context(), request())
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	seen := world.manifester.(*recordingManifester).seen
+	if !seen.Verification.ChecksumOK || !seen.Verification.StructureOK {
+		t.Errorf("the manifest was rendered before the verification: %+v", seen.Verification)
+	}
+	if !result.Verification.Checked {
+		t.Error("the result does not say the archive was checked")
+	}
+}
+
+type fakeVerifier struct{ refuse string }
+
+func (f *fakeVerifier) Watch(backup.Resolution) (backup.StructureWatcher, error) {
+	return &fakeWatch{refuse: f.refuse}, nil
+}
+
+type fakeWatch struct {
+	refuse string
+	seen   int
+}
+
+func (f *fakeWatch) Write(p []byte) (int, error) { f.seen += len(p); return len(p), nil }
+
+func (f *fakeWatch) Conclude(context.Context) (bool, string) {
+	if f.refuse != "" {
+		return false, f.refuse
+	}
+
+	return true, "TOC Entries: 24"
+}
+
+type recordingManifester struct{ seen backup.Result }
+
+func (r *recordingManifester) Render(result backup.Result) ([]byte, error) {
+	r.seen = result
+
+	return []byte(`{"backup_id":"` + result.JobID + `"}`), nil
+}
+
+// E-024 — the manifest is rendered after the verification, so what it says
+// about it is what happened. A manifest that hard-coded "not verified" would
+// contradict the archive it describes.
+func TestTheManifestCarriesWhatTheVerificationConcluded(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{}
+	recorder := &recordingManifester{}
+	world.manifester = recorder
+
+	if _, err := world.service().Run(t.Context(), request()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !recorder.seen.Verification.Sound() {
+		t.Errorf("the manifest was rendered with %+v, want a sound verification", recorder.seen.Verification)
+	}
+	if !recorder.seen.Steps[5].Done {
+		t.Error("the manifest was rendered before the verification step was marked")
 	}
 }

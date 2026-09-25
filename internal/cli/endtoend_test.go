@@ -67,14 +67,11 @@ func TestBackupOfARealPostgreSQLWritesAnEncryptedArchive(t *testing.T) {
 			t.Errorf("the command does not report %q:\n%s", said, out)
 		}
 	}
-	// E-024 — what is not implemented is declared, not skipped in silence. The
-	// manifest is written since the wave 3 of the lot 3; the verification
-	// arrives at the wave 4, and says so until then.
-	if !strings.Contains(out, "pending  verification") {
-		t.Errorf("the command does not declare the verification as pending:\n%s", out)
-	}
-	if strings.Contains(out, "pending  manifest") {
-		t.Errorf("the command still declares the manifest as pending, and it writes one:\n%s", out)
+	// E-024 — the seven steps are seven since the wave 4 of the lot 3. Nothing
+	// is declared absent any more, and a command that still announced a
+	// "pending" step would be describing a release that no longer exists.
+	if strings.Contains(out, "pending ") {
+		t.Errorf("the command still declares a step as pending:\n%s", out)
 	}
 
 	site.layOutFixture(t, "postgresql", archive)
@@ -556,8 +553,14 @@ func TestASuccessfulBackupIsIndexed(t *testing.T) {
 	if len(indexed.Locations) != 1 || indexed.Locations[0].Destination != "local" {
 		t.Errorf("the index does not say where the copy is: %+v", indexed.Locations)
 	}
-	if indexed.Verified != catalog.NotVerified {
-		t.Errorf("a backup nobody has verified is indexed as %q — P4", indexed.Verified)
+	// P4, since the wave 4 — a backup that passed both checks is indexed as
+	// verified, and a backup that failed them would be indexed as `failed`.
+	// What is never indexed is a claim nobody checked.
+	if indexed.Verified != catalog.Structure {
+		t.Errorf("a verified backup is indexed as %q, want %q", indexed.Verified, catalog.Structure)
+	}
+	if indexed.VerifiedAt.IsZero() {
+		t.Error("the index does not say when it was verified")
 	}
 }
 
@@ -606,9 +609,13 @@ func TestTheManifestIsDepositedAndReadsWithoutAKey(t *testing.T) {
 		t.Errorf("recipients = %v, want the two keys of the fleet", manifest.Recipients)
 	}
 
-	// P4 — nothing has verified it yet, and it says so rather than staying silent.
-	if manifest.Verified.Checksum || manifest.Verified.Structure {
-		t.Error("an archive nobody has verified claims a verification in its manifest")
+	// P4 — the manifest carries the verification, because it is written after
+	// it (E-024). Both halves passed, so both say so.
+	if !manifest.Verified.Checksum || !manifest.Verified.Structure {
+		t.Errorf("a verified archive does not say so in its manifest: %+v", manifest.Verified)
+	}
+	if manifest.Verified.At == "" {
+		t.Error("the manifest does not say when the archive was verified")
 	}
 
 	// E-059, E-114 — and not a credential in sight, argv included.

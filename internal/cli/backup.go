@@ -51,7 +51,10 @@ func newBackupCommand() *cobra.Command {
 			done, err := service.Run(cmd.Context(), request)
 			renderBackup(cmd, done)
 
-			if err == nil {
+			// N-11 — an archive that was written is indexed **even when its
+			// verification failed**: `P4` wants that failure visible, not
+			// absent. Only a job that wrote nothing leaves no trace.
+			if done.Path != "" && done.StoredBytes > 0 {
 				recordInCatalogue(cmd, done, declared)
 			}
 
@@ -116,6 +119,7 @@ func backupService(
 		Journal:        slogJournal{logger: loggerOf(cmd)},
 		Packer:         pipelinePacker{recipients: recipients},
 		Manifester:     manifester{database: declared, recipients: recipients},
+		Verifier:       structureVerifier{onHost: finderFor(cmd, searchPath)},
 		Destinations:   destinations,
 	})
 
@@ -416,7 +420,13 @@ func recordInCatalogue(cmd *cobra.Command, done backup.Result, declared config.D
 		StartedAt: done.At, FinishedAt: done.At.Add(done.Duration),
 		RawBytes: done.RawBytes, StoredBytes: done.StoredBytes,
 		SHA256Raw: done.SHA256Raw, SHA256Stored: done.SHA256Stored,
-		Verified: catalog.NotVerified,
+		Verified: verificationOf(done),
+	}
+
+	if !done.Verification.Checked || !entry.Verified.Verified() {
+		entry.VerifiedAt = time.Time{}
+	} else {
+		entry.VerifiedAt = done.At.Add(done.Duration)
 	}
 
 	for _, destination := range done.Destinations {
@@ -440,12 +450,18 @@ type manifester struct {
 }
 
 func (m manifester) Render(done backup.Result) ([]byte, error) {
+	// The manifest is rendered **after** the verification (E-024), so it
+	// carries what it concluded rather than a hard-coded "not verified".
 	indexed := catalog.Backup{
 		ID: done.JobID, Database: done.Database,
 		StartedAt: done.At, FinishedAt: done.At.Add(done.Duration),
 		RawBytes: done.RawBytes, StoredBytes: done.StoredBytes,
 		SHA256Raw: done.SHA256Raw, SHA256Stored: done.SHA256Stored,
-		Verified: catalog.NotVerified,
+		Verified: verificationOf(done),
+	}
+
+	if indexed.Verified.Verified() {
+		indexed.VerifiedAt = done.At.Add(done.Duration)
 	}
 
 	run := catalog.Run{
@@ -484,4 +500,68 @@ func databaseSnapshot(declared config.Database) catalog.Database {
 			Weekly: declared.Retention.Weekly, Monthly: declared.Retention.Monthly,
 		},
 	}
+}
+
+// verificationOf turns what step 06 concluded into the state the catalogue
+// keeps. `P4` again: an archive nobody could check is `none`, one that was
+// checked and refused is `failed`, and the two are never the same thing.
+func verificationOf(done backup.Result) catalog.Verification {
+	switch {
+	case !done.Verification.Checked:
+		return catalog.NotVerified
+
+	case done.Verification.Sound():
+		return catalog.Structure
+
+	default:
+		return catalog.Failed
+	}
+}
+
+// structureVerifier hands the domain a watcher built on the engine. It lives
+// here because `AR-03` keeps `domain/backup` from knowing `domain/verify`, and
+// because only `internal/engine` may run pg_restore (`AR-07`).
+type structureVerifier struct {
+	onHost resolve.ToolFinder
+}
+
+func (v structureVerifier) Watch(resolution backup.Resolution) (backup.StructureWatcher, error) {
+	family := resolve.Family(resolution.Engine)
+
+	var restore resolve.Candidate
+
+	if family == resolve.PostgreSQL {
+		found, err := v.onHost.Find(context.Background(), family, resolve.Restore)
+		if err != nil {
+			return nil, fmt.Errorf("look for a %s tool: %w", resolve.Restore, err)
+		}
+		if len(found) == 0 {
+			return nil, fmt.Errorf(
+				"no pg_restore on this machine, so the structure of the archive cannot be checked "+
+					"and P4 refuses to call it a backup: install the PostgreSQL client of major %s",
+				resolution.ServerVersion)
+		}
+
+		restore = found[0]
+	}
+
+	watcher, err := engine.WatchStructure(family, restore)
+	if err != nil {
+		return nil, fmt.Errorf("watch the structure: %w", err)
+	}
+
+	return structureWatch{watcher}, nil
+}
+
+// structureWatch translates the verdict of `domain/verify` into the two values
+// `domain/backup` declared, which is the whole point of the port: neither
+// module of the domain has to know the other (`AR-03`).
+type structureWatch struct {
+	engine.StructureWatcher
+}
+
+func (s structureWatch) Conclude(ctx context.Context) (bool, string) {
+	verdict := s.StructureWatcher.Conclude(ctx)
+
+	return verdict.Checked && verdict.OK, verdict.Detail
 }
