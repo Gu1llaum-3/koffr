@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -23,4 +24,22 @@ func say(cmd *cobra.Command, format string, args ...any) {
 // stays clean.
 func warn(cmd *cobra.Command, format string, args ...any) {
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), format, args...)
+}
+
+// moment is how koffr writes an instant on screen: in the zone the operator
+// declared, with its offset, and **in one format everywhere**.
+//
+// ADR-0006 keeps one representation in the base — UTC — and converts at the
+// display. `A-23`: everything was rendered in UTC although `agent.timezone` was
+// declared, and `koffr list` and `koffr verify` disagreed on the shape besides.
+func moment(at time.Time, in *time.Location) string {
+	if at.IsZero() {
+		return ""
+	}
+
+	if in == nil {
+		in = time.UTC
+	}
+
+	return at.In(in).Format("2006-01-02 15:04 -07:00")
 }

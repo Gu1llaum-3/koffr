@@ -1,6 +1,8 @@
 package arch
 
 import (
+	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -286,4 +288,91 @@ func TestTheCheckAcceptsWhatTheRulesAllow(t *testing.T) {
 				found.rule, found.what, found.file, found.imp)
 		}
 	}
+}
+
+// A-23 — **no source reads the clock's zone from the machine.** `time.Local`
+// and `time.Now().Local()` take whatever `/etc/localtime` and `TZ` say, and
+// `E-036` is precisely that the zone is declared, never inherited: a backup
+// window that moves because a machine was reimaged is not a backup window.
+//
+// The zone comes from `agent.timezone`, resolved by `internal/config`, and
+// travels as a `*time.Location`. This is a call and not an import, so it is
+// read from the source like the four guards already in place.
+func TestNoSourceInheritsTheZoneOfTheMachine(t *testing.T) {
+	if offences := zoneOffences(t, repoRoot); len(offences) > 0 {
+		t.Errorf("the zone is read from the machine in:\n  %s\n"+
+			"It is declared in agent.timezone and travels as a *time.Location (E-036, A-23).",
+			strings.Join(offences, "\n  "))
+	}
+}
+
+// And the guard catches one when there is one: a control nobody has seen fail
+// proves nothing.
+func TestTheZoneGuardCatchesAViolation(t *testing.T) {
+	planted := t.TempDir()
+
+	body := "package planted\n\nimport \"time\"\n\nfunc when() time.Time { return time.Now().In(time.Local) }\n"
+	if err := os.WriteFile(filepath.Join(planted, "offence.go"), []byte(body), 0o600); err != nil {
+		t.Fatalf("plant the violation: %v", err)
+	}
+
+	if offences := zoneOffences(t, planted); len(offences) == 0 {
+		t.Error("the guard did not see a source reading the zone of the machine")
+	}
+}
+
+// zoneOffences names the files that take their zone from the machine.
+//
+// It reads the **syntax tree**, not the text: a guard that grepped its own
+// prose would report the sentence that explains it.
+func zoneOffences(t *testing.T, root string) []string {
+	t.Helper()
+
+	var offences []string
+
+	fset := token.NewFileSet()
+
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", ".spike", "dist", "vendor", "testdata":
+				return fs.SkipDir
+			}
+
+			return nil
+		}
+		if !strings.HasSuffix(entry.Name(), ".go") {
+			return nil
+		}
+
+		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+
+		rel, _ := filepath.Rel(root, path)
+
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			selector, ok := node.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "Local" {
+				return true
+			}
+
+			// `time.Local`, and `something.Local()` — a moment turned into the
+			// zone of whatever machine happens to run this.
+			offences = append(offences, fmt.Sprintf("%s:%d", rel, fset.Position(selector.Pos()).Line))
+
+			return true
+		})
+
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+
+	return offences
 }

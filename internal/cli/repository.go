@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -67,10 +68,10 @@ const (
 // Every destination, not only those a database names: an archive whose database
 // has since left the configuration still lies on the disk, and `A-19` is about
 // seeing what is there.
-func listerFor(cmd *cobra.Command, book catalog.Catalog) (catalog.Lister, error) {
+func listerFor(cmd *cobra.Command, book catalog.Catalog) (catalog.Lister, *time.Location, error) {
 	loaded, err := loadShape(cmd)
 	if err != nil {
-		return catalog.Lister{}, err
+		return catalog.Lister{}, nil, err
 	}
 
 	destinations := make([]catalog.Destination, 0, len(loaded.Destinations))
@@ -86,5 +87,5 @@ func listerFor(cmd *cobra.Command, book catalog.Catalog) (catalog.Lister, error)
 		})
 	}
 
-	return catalog.Lister{Catalog: book, Destinations: destinations}, nil
+	return catalog.Lister{Catalog: book, Destinations: destinations}, loaded.Location(), nil
 }

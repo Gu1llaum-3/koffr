@@ -118,7 +118,7 @@ func backupService(
 		History:        noHistory{},
 		Journal:        slogJournal{logger: loggerOf(cmd)},
 		Packer:         pipelinePacker{recipients: recipients},
-		Manifester:     manifester{database: declared, recipients: recipients},
+		Manifester:     manifester{database: declared, recipients: recipients, in: loaded.Location()},
 		Verifier:       structureVerifier{onHost: finderFor(cmd, searchPath)},
 		Destinations:   destinations,
 	})
@@ -438,6 +438,10 @@ func recordInCatalogue(cmd *cobra.Command, done backup.Result, declared config.D
 type manifester struct {
 	database   config.Database
 	recipients crypto.Recipients
+
+	// in is the zone `agent.timezone` declares. The manifest carries the local
+	// offset, as the § 5.3 shows and ADR-0006 says (`A-23`).
+	in *time.Location
 }
 
 func (m manifester) Render(done backup.Result) ([]byte, error) {
@@ -464,13 +468,14 @@ func (m manifester) Render(done backup.Result) ([]byte, error) {
 			Path:    done.Resolution.ToolPath,
 			Argv:    done.Resolution.Argv,
 		},
-		Format:     done.Resolution.Extension,
+		Format:     catalog.FormatOf(done.Resolution.Engine),
 		Pipeline:   done.Pipeline,
 		Staging:    string(done.Staging),
 		Recipients: m.recipients.Public(),
 	}
 
-	rendered, err := json.MarshalIndent(catalog.ManifestOf(indexed, databaseSnapshot(m.database), run), "", "  ")
+	rendered, err := json.MarshalIndent(
+		catalog.ManifestOf(indexed, databaseSnapshot(m.database), run, m.in), "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("render the manifest of %s: %w", done.Database, err)
 	}
