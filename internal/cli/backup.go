@@ -407,11 +407,11 @@ func recordInCatalogue(cmd *cobra.Command, done backup.Result, declared config.D
 	}
 
 	entry := catalog.Backup{
-		ID: done.JobID, Database: done.Database,
+		ID: done.JobID, Database: done.Database, Job: done.JobID,
 		StartedAt: done.At, FinishedAt: done.At.Add(done.Duration),
 		RawBytes: done.RawBytes, StoredBytes: done.StoredBytes,
 		SHA256Raw: done.SHA256Raw, SHA256Stored: done.SHA256Stored,
-		Verified: verificationOf(done),
+		Manifest: done.Manifest, Verified: verificationOf(done),
 	}
 
 	if !done.Verification.Checked || !entry.Verified.Verified() {

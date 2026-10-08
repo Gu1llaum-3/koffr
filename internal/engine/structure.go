@@ -200,5 +200,28 @@ func (t *tableOfContents) Conclude(context.Context) verify.Structure {
 			"%s read no table of contents from it%s", t.command.Path, t.said.suffix()))
 	}
 
-	return verify.Sound(listing)
+	return verify.Sound(summarise(listing))
+}
+
+// summarise keeps what the check **concluded**, never what it read.
+//
+// `A-29`: the whole of `pg_restore --list` went into one field of one journal
+// line — thirty lines of JSON — and that table of contents names the **owner**
+// of every object, which is the connection user. The manifest refuses to carry
+// that identifier (`E-059`); the journal has no more business with it.
+//
+// Truncating would be worse than summarising: it would keep the first lines,
+// which is exactly where the owners are.
+func summarise(listing string) string {
+	entries := 0
+
+	for line := range strings.SplitSeq(listing, "\n") {
+		// An entry of the table of contents begins with its dump id; the rest
+		// is the header, commented with a semicolon.
+		if trimmed := strings.TrimSpace(line); trimmed != "" && trimmed[0] >= '0' && trimmed[0] <= '9' {
+			entries++
+		}
+	}
+
+	return fmt.Sprintf("%d table-of-contents entries", entries)
 }

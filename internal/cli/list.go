@@ -85,13 +85,15 @@ func renderArchives(cmd *cobra.Command, found []catalog.Listed, in *time.Locatio
 
 	table := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 
-	_, _ = fmt.Fprintln(table, "ARCHIVE\tDATABASE\tTAKEN\tSTORED\tVERIFIED\tWHERE")
+	_, _ = fmt.Fprintln(table, "ARCHIVE\tDATABASE\tTAKEN\tTOOK\tDUMPED\tSTORED\tVERIFIED\tWHERE")
 
 	for _, archive := range found {
-		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			archive.ID,
 			archive.Database,
 			moment(archive.StartedAt, in),
+			tookFor(archive),
+			humanBytes(archive.RawBytes),
 			humanBytes(archive.StoredBytes),
 			verificationLabel(archive),
 			destinationsOfArchive(archive),
@@ -122,10 +124,30 @@ func destinationsOfArchive(archive catalog.Listed) string {
 	return joined
 }
 
+// tookFor is how long the job lasted. A backup that lengthens month after month
+// is the warning before a window overflows — decided at the acceptance session
+// of 2026-10-08.
+func tookFor(archive catalog.Listed) string {
+	if archive.FinishedAt.IsZero() || !archive.FinishedAt.After(archive.StartedAt) {
+		return ""
+	}
+
+	took := archive.FinishedAt.Sub(archive.StartedAt).Round(time.Second)
+	if took < time.Minute {
+		return took.String()
+	}
+
+	return fmt.Sprintf("%dm%02ds", int(took.Minutes()), int(took.Seconds())%60)
+}
+
 // humanBytes is what an operator reads at a glance. Binary units, because a
 // disk is measured that way and a backup lives on a disk.
 func humanBytes(count int64) string {
 	const unit = 1024
+
+	if count == 0 {
+		return ""
+	}
 
 	if count < unit {
 		return fmt.Sprintf("%d B", count)

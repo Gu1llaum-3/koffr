@@ -1,5 +1,7 @@
 package backup
 
+import "strings"
+
 // Journal records what a job did, step by step. The domain declares the port
 // and knows nothing of slog: `internal/cli` writes it to the file of E-026
 // (`N-1`, AR-01).
@@ -32,6 +34,29 @@ type JobStep struct {
 type Fact struct {
 	Name  string
 	Value any
+}
+
+// factLimit is how long a fact may be. A journal line is read by a person, and
+// the file of E-026 is the only trace a job run by cron at two in the morning
+// leaves behind: one conclusion per line, never a transcript.
+const factLimit = 200
+
+// Conclusion makes a fact of something a sub-process said. It keeps the first
+// line and bounds it, so that a component which answers with a listing cannot
+// pour it into the journal (`BKP-26`, `A-29`).
+//
+// The engines summarise what they conclude; this is the domain refusing to
+// carry a transcript whatever they decide to say next.
+func Conclusion(name, said string) Fact {
+	if cut := strings.IndexByte(said, '\n'); cut >= 0 {
+		said = said[:cut]
+	}
+
+	if len(said) > factLimit {
+		said = said[:factLimit] + "…"
+	}
+
+	return Fact{Name: name, Value: said}
 }
 
 // silentJournal is what a Service without a journal uses. Nothing in the domain

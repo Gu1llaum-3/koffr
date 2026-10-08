@@ -201,20 +201,20 @@ Les deux bloquantes d'abord, et la plus simple des deux en premier : elle est le
 
 ### Vague 4 — Ce que le journal et le catalogue gardent (`lot3c/wave-4-journal-and-jobs`)
 
-- [ ] **4.1** Test d'abord `internal/domain/backup/journal_test.go` — **`BKP-26`**, `A-29` : la
+- [x] **4.1** Test d'abord `internal/domain/backup/journal_test.go` — **`BKP-26`**, `A-29` : la
       ligne de vérification porte le **nombre d'entrées** de la table des matières et, en cas de
       refus, ce qui cloche ; elle ne porte **jamais** le texte. Le test injecte une table des
       matières nommant un propriétaire et vérifie que ce nom n'apparaît dans aucun champ — la
       leçon de `BKP-21`, appliquée au journal.
-- [ ] **4.2** Migration : `backups.duration_ms` (`INTEGER`, `N-7`). **SQL relu avant commit**, et
+- [x] **4.2** Migration : `backups.duration_ms` (`INTEGER`, `N-7`). **SQL relu avant commit**, et
       le test de `internal/state` passe sur une vraie base.
-- [ ] **4.3** Test `internal/state/catalog_test.go` — **`CAT-10`**, `A-28` : une sauvegarde écrit sa
+- [x] **4.3** Test `internal/state/catalog_test.go` — **`CAT-10`**, `A-28` : une sauvegarde écrit sa
       ligne dans **`jobs`**, `backups.job_id` la référence, et `backups.manifest` garde le manifeste
       déposé. Le test relit les trois.
-- [ ] **4.4** Test `internal/cli/list_test.go` : `koffr list` montre la **durée** et la **taille
+- [x] **4.4** Test `internal/cli/list_test.go` : `koffr list` montre la **durée** et la **taille
       brute** à côté de la taille stockée, décision de la session du 2026-10-08.
-- [ ] **4.5** `rules.md` : `BKP-26` dans `backup`, `CAT-10` dans `catalog`.
-- [ ] **4.6** Vague verte : `verify`, commit `feat(catalog): record the job, the manifest and the duration`.
+- [x] **4.5** `rules.md` : `BKP-26` dans `backup`, `CAT-10` dans `catalog`.
+- [x] **4.6** Vague verte : `verify`, commit `feat(catalog): record the job, the manifest and the duration`.
 
 ### Vague 5 — Ce que koffr dit quand il ne peut pas (`lot3c/wave-5-say-what-is-missing`)
 
@@ -361,5 +361,28 @@ rien (`CLAUDE.md`).
 
 **`storesFor` ne résout plus les secrets non plus** : relire une archive demande un chemin, et
 l'archive est chiffrée pour des clés que koffr ne détient pas. Même raison que `N-9`.
+
+### Vague 4 — 2026-10-08
+
+**`N-7` tombe, et la tâche `4.2` avec elle : aucune migration.** Le plan voulait ajouter
+`backups.duration_ms`. Vérification faite dans le schéma du lot 0 : `jobs.duration_ms` existe déjà,
+`backups.size_bytes` porte la taille brute et `backups.finished_at` l'heure de fin. Les deux
+colonnes demandées en séance se lisent donc de ce qui est là. **Une migration qu'on n'écrit pas est
+une migration qu'on n'a pas à relire.** La tâche `4.2` est cochée sur ce constat, pas sur du SQL.
+
+**`A-29` se corrige à la source, et se garde à l'arrivée.** `tableOfContents.Conclude` rendait tout
+le texte de `pg_restore --list` ; il rend maintenant `« 16 table-of-contents entries »`. Et le
+domaine borne ce qu'il journalise par `Conclusion()` — une ligne, 200 caractères — pour qu'un futur
+observateur ne puisse pas y déverser un roman. **Tronquer aurait été pire que résumer** : on aurait
+gardé les premières lignes, qui sont justement celles qui nomment les propriétaires.
+
+**Écart au plan** : le test `VRF-01` du lot 3 vérifiait que le verdict **nommait la table semée**.
+Il ne le peut plus, par construction. Il est **retourné** : il vérifie que le verdict compte les
+entrées, et qu'il ne porte **ni** le nom de la table **ni** l'en-tête du listing.
+
+**Constaté sur la machine de recette** : `jobs` reçoit ses lignes avec leur durée (903 ms, 386 ms),
+`backups.job_id` les désigne, `backups.manifest` garde 1 031 octets, la ligne de journal de la
+vérification dit `"detail":"16 table-of-contents entries"`, et `koffr list` montre `TOOK` et
+`DUMPED`.
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.

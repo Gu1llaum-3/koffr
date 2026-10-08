@@ -266,6 +266,12 @@ type Result struct {
 	Pipeline     []string
 	Destinations []string
 
+	// Manifest is what was deposited beside the archive, as it was written. The
+	// catalogue keeps a copy so that a listing needs no round trip to the
+	// destination — the manifest stays the truth, the copy stays an index
+	// (ADR-0006, `A-28`).
+	Manifest string
+
 	Warnings []string
 	Steps    []StepOutcome
 
@@ -466,7 +472,7 @@ func (s *Service) verifyArchive(ctx context.Context, request Request, result *Re
 	s.journal(request, StepVerification, nil,
 		Fact{"checksum_ok", true},
 		Fact{"structure_ok", true},
-		Fact{"detail", detail},
+		Conclusion("detail", detail),
 	)
 
 	return nil
@@ -516,6 +522,7 @@ func (s *Service) depositManifest(ctx context.Context, request Request, result *
 		}
 	}
 
+	result.Manifest = string(rendered)
 	result.mark(StepManifest)
 	s.journal(request, StepManifest, nil, Fact{"path", beside})
 

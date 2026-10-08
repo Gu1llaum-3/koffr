@@ -188,3 +188,47 @@ func (r *recordingJournal) String() string {
 
 	return written.String()
 }
+
+// BKP-26 — **a journal line carries a conclusion, never a transcript.** No fact
+// spans more than one line, and none is longer than a line an operator reads.
+//
+// `A-29`: the whole of `pg_restore --list` went into the `detail` fact of the
+// verification — thirty lines inside one JSON field — and that table of
+// contents names the owner of every object, which is the connection user. The
+// engine now summarises; this guard says the domain does not carry a transcript
+// whatever a future watcher decides to say.
+func TestBKP26AJournalLineCarriesAConclusionNotATranscript(t *testing.T) {
+	const maxFactLength = 200
+
+	world := newWorld(t)
+	journal := &recordingJournal{}
+	world.journal = journal
+
+	// A watcher that answers with a whole listing, owners and all.
+	world.verifier = &fakeVerifier{detail: strings.Repeat(
+		"220; 1259 16390 TABLE public commande koffr_backup\n", 40)}
+
+	if _, err := world.service().Run(t.Context(), request()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, entry := range journal.entries {
+		for _, fact := range entry.Facts {
+			value := fmt.Sprintf("%v", fact.Value)
+
+			if strings.Contains(value, "\n") {
+				t.Errorf("the step %q journals %q over several lines:\n%s", entry.Step, fact.Name, value)
+			}
+			if len(value) > maxFactLength {
+				t.Errorf("the step %q journals %q over %d characters, want at most %d",
+					entry.Step, fact.Name, len(value), maxFactLength)
+			}
+		}
+	}
+
+	// Keeping the **names** out is the engine's job, not the domain's: it is
+	// what summarises a table of contents rather than forwarding it
+	// (`internal/engine/structure_test.go › TestVRF01…`). The domain cannot
+	// know that a string names an owner; it can refuse to carry a transcript,
+	// and that is what this guard is.
+}

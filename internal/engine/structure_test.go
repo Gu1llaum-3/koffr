@@ -3,6 +3,7 @@ package engine_test
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -33,8 +34,19 @@ func TestVRF01ARealPostgreSQLDumpHasACoherentTableOfContents(t *testing.T) {
 	if !verdict.OK {
 		t.Fatalf("a real dump was refused: %s", verdict.Detail)
 	}
-	if !strings.Contains(verdict.Detail, seededTable) {
-		t.Errorf("the table of contents does not name the table that was seeded:\n%s", verdict.Detail)
+	// The verdict carries **how many** entries were read, not the listing:
+	// a table of contents names the owner of every object, which is the
+	// connection user, and `A-29` keeps that out of the journal.
+	if !strings.Contains(verdict.Detail, "table-of-contents entries") {
+		t.Errorf("the verdict does not say what it read:\n%s", verdict.Detail)
+	}
+	if strings.Contains(verdict.Detail, seededTable) || strings.Contains(verdict.Detail, "TOC Entries") {
+		t.Errorf("the verdict carries the listing itself, owners and all:\n%s", verdict.Detail)
+	}
+
+	entries := 0
+	if _, err := fmt.Sscanf(verdict.Detail, "%d table-of-contents entries", &entries); err != nil || entries == 0 {
+		t.Errorf("the verdict counts %d entries of a dump that has some: %q", entries, verdict.Detail)
 	}
 }
 

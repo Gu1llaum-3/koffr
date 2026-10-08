@@ -222,3 +222,71 @@ func aBackup() catalog.Backup {
 		}},
 	}
 }
+
+// CAT-10 — a backup leaves a **job** behind, and the archive points at it.
+//
+// `A-28`: `jobs` had no row after eleven backups, `backups.job_id` and
+// `backups.manifest` were empty, and the three columns had been in the schema
+// since the lot 0. The scheduler of the lot 5 and the alerts of the lot 6 read
+// that table; a history that starts empty starts wrong.
+func TestCAT10ABackupLeavesItsJobAndItsManifest(t *testing.T) {
+	opened := open(t)
+	book := NewCatalog(opened)
+	at := time.Date(2026, 10, 8, 2, 0, 3, 0, time.UTC)
+
+	if err := book.RecordDatabase(t.Context(), aDatabase(), at); err != nil {
+		t.Fatalf("RecordDatabase: %v", err)
+	}
+
+	const manifest = `{"backup_id":"01M4DP260Q2ZK5PKFYYNSQRG08","database_id":"boutique"}`
+
+	recorded := catalog.Backup{
+		ID: "01M4DP260Q2ZK5PKFYYNSQRG08", Database: "boutique",
+		Job:       "01M4DP260Q2ZK5PKFYYNSQRG08",
+		StartedAt: at, FinishedAt: at.Add(1500 * time.Millisecond),
+		RawBytes: 53248457, StoredBytes: 20290801,
+		SHA256Raw: "raw", SHA256Stored: "stored",
+		Manifest: manifest, Verified: catalog.Structure, VerifiedAt: at.Add(2 * time.Second),
+		Locations: []catalog.Location{{
+			Destination: "disque-local", Bytes: 20290801, StoredAt: at.Add(2 * time.Second),
+			Path: "boutique/2026/10/boutique_20261008T020003Z_01M4DP260Q2ZK5PKFYYNSQRG08.pgc.zst.age",
+		}},
+	}
+
+	if err := book.RecordBackup(t.Context(), recorded); err != nil {
+		t.Fatalf("RecordBackup: %v", err)
+	}
+
+	var (
+		kind, status, database string
+		duration               int64
+	)
+
+	row := opened.DB().QueryRow(
+		`SELECT kind, status, database_id, COALESCE(duration_ms, 0) FROM jobs WHERE id = ?`, recorded.ID)
+	if err := row.Scan(&kind, &status, &database, &duration); err != nil {
+		t.Fatalf("the backup left no job behind: %v", err)
+	}
+
+	if kind != "backup" || status != "succeeded" || database != "boutique" {
+		t.Errorf("the job is %q/%q on %q, want backup/succeeded on boutique", kind, status, database)
+	}
+	if duration != 1500 {
+		t.Errorf("the job lasted %d ms, want 1500", duration)
+	}
+
+	read, err := book.Backups(t.Context(), catalog.Filter{})
+	if err != nil {
+		t.Fatalf("Backups: %v", err)
+	}
+
+	if len(read) != 1 {
+		t.Fatalf("read %d backups, want 1", len(read))
+	}
+	if read[0].Job != recorded.ID {
+		t.Errorf("the archive points at the job %q, want %q", read[0].Job, recorded.ID)
+	}
+	if read[0].Manifest != manifest {
+		t.Errorf("the manifest was not kept:\n%q", read[0].Manifest)
+	}
+}

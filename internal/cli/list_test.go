@@ -193,6 +193,8 @@ func threeArchives() []catalog.Backup {
 	return []catalog.Backup{
 		{
 			ID: "01K5C", Database: "boutique", StartedAt: at.Add(48 * time.Hour),
+			FinishedAt:  at.Add(48*time.Hour + 2*time.Minute),
+			RawBytes:    295239908,
 			StoredBytes: 23101758, Verified: catalog.Structure, VerifiedAt: at.Add(48 * time.Hour),
 			Locations: []catalog.Location{{
 				Destination: "local",
@@ -263,5 +265,32 @@ func TestListRendersTheDeclaredTimezone(t *testing.T) {
 	}
 	if strings.Contains(line, "02:00Z") {
 		t.Errorf("the listing still renders UTC:\n%s", line)
+	}
+}
+
+// Decided at the acceptance session of 2026-10-08: the listing shows the
+// **duration** of the job and the **raw size** of the dump, beside the stored
+// size. A backup that lengthens month after month is the warning before a
+// window overflows, and a database that swells shows in the ratio of the two.
+func TestListShowsTheDurationAndTheRawSize(t *testing.T) {
+	site := newSite(t)
+	book := &fakeCatalog{backups: threeArchives()}
+	site.place(t, book.backups...)
+
+	out := listWith(t, book, site.args("list")...)
+
+	header := strings.SplitN(out, "\n", 2)[0]
+	for _, want := range []string{"TOOK", "DUMPED", "STORED"} {
+		if !strings.Contains(header, want) {
+			t.Errorf("the header has no %s column:\n%s", want, header)
+		}
+	}
+
+	line := lineOf(out, "01K5C")
+	if !strings.Contains(line, "2m00s") {
+		t.Errorf("the listing does not show how long the job took:\n%s", line)
+	}
+	if !strings.Contains(line, "281.6 MiB") {
+		t.Errorf("the listing does not show the raw size of the dump:\n%s", line)
 	}
 }
