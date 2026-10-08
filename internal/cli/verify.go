@@ -104,12 +104,30 @@ func verifyArchive(cmd *cobra.Command, book catalog.Catalog, archive catalog.Bac
 		return fmt.Errorf("record the verification: %w", err)
 	}
 
-	say(cmd, "structure  not replayed: the archive is encrypted and the private key that would\n"+
-		"           open it is not on this machine, by design. It was checked while the dump\n"+
-		"           streamed past, when the backup was taken (ADR-0017)\n")
+	say(cmd, "structure  %s", structureSentence(archive))
 	say(cmd, "verified   %s\n", moment(at, in))
 
 	return nil
+}
+
+// structureSentence says why the structure is not replayed — and says it
+// **truthfully**.
+//
+// koffr holds only a public key, so it cannot open the archive to read its
+// structure again (ADR-0017, E-113). What it may add depends on the archive:
+// one this release wrote had its structure read while the dump streamed past,
+// one it inherited never did, and `A-25` is the command telling the second it
+// was checked. An operator reading that would believe `P4` was satisfied.
+func structureSentence(archive catalog.Backup) string {
+	const why = "not replayed: the archive is encrypted and the private key that would\n" +
+		"           open it is not on this machine, by design (ADR-0017).\n"
+
+	if archive.Verified == catalog.Structure {
+		return why + "           It was checked while the dump streamed past, when the backup was taken\n"
+	}
+
+	return why + "           Its structure was never checked: nothing recorded one for this\n" +
+		"           archive, and nothing can check it now\n"
 }
 
 // failVerification records the failure and reports it. P4 wants a failure

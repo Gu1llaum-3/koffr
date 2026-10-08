@@ -154,3 +154,40 @@ func TestVerifyRendersTheDeclaredTimezone(t *testing.T) {
 		t.Errorf("the verification still renders UTC:\n%s", out)
 	}
 }
+
+// A-25 — on an archive whose structure was **never** checked, `koffr verify`
+// says that, instead of claiming it was read while the dump streamed past. That
+// sentence is true of an archive this release wrote and false of one it
+// inherited, and an operator reading it would believe `P4` was satisfied.
+func TestVerifySaysWhenTheStructureWasNeverChecked(t *testing.T) {
+	site := newSite(t)
+
+	never := plantedArchive(t, site, "never")
+	never.Verified = catalog.NotVerified
+
+	checked := plantedArchive(t, site, "checked")
+	checked.Verified = catalog.Structure
+
+	book := &fakeCatalog{backups: []catalog.Backup{never, checked}}
+
+	out, errs, err := executeWith(t, book, site.args("verify", "01K5NEVER")...)
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, errs)
+	}
+
+	if !strings.Contains(strings.ToLower(out), "never") {
+		t.Errorf("an archive nobody checked is told it was checked at backup time:\n%s", out)
+	}
+	if strings.Contains(out, "streamed past") {
+		t.Errorf("the command claims a check that never happened:\n%s", out)
+	}
+
+	out, errs, err = executeWith(t, book, site.args("verify", "01K5CHECKED")...)
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, errs)
+	}
+
+	if !strings.Contains(out, "streamed past") {
+		t.Errorf("an archive whose structure was checked lost that fact:\n%s", out)
+	}
+}

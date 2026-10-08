@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -263,5 +264,62 @@ func TestDoctorSignalsAToolAheadOfItsServer(t *testing.T) {
 	}
 	if strings.Contains(written, "erp: mariadb-dump") {
 		t.Errorf("doctor warned about a client of the server's own major:\n%s", written)
+	}
+}
+
+// A-26, RSV-14 — doctor carries a VERIFIABLE column, and says what is missing
+// underneath. A machine where every PostgreSQL backup is going to fail must not
+// read as a healthy fleet.
+func TestDoctorSaysWhenAnArchiveCouldNotBeChecked(t *testing.T) {
+	var out, errs bytes.Buffer
+
+	root := NewRoot()
+	root.SetOut(&out)
+	root.SetErr(&errs)
+
+	renderDiagnoses(root, []resolve.Diagnosis{
+		{
+			ID:     "boutique",
+			Server: resolve.ServerInfo{Reachable: true, Family: resolve.PostgreSQL, Version: resolve.ParseVersion("18.6")},
+			Tool: resolve.Candidate{
+				Family: resolve.PostgreSQL, Tool: resolve.Dump,
+				Path: "/usr/bin/pg_dump", Version: resolve.ParseVersion("18.6"), Source: resolve.Host,
+			},
+			NotVerifiable: errors.New("no pg_restore on this machine, so the structure of an archive " +
+				"cannot be checked and P4 refuses to call it a backup: install the PostgreSQL client of major 18.6"),
+		},
+		{
+			ID:     "erp",
+			Server: resolve.ServerInfo{Reachable: true, Family: resolve.MariaDB, Version: resolve.ParseVersion("11.8.3")},
+			Tool: resolve.Candidate{
+				Family: resolve.MariaDB, Tool: resolve.Dump,
+				Path: "/usr/bin/mariadb-dump", Version: resolve.ParseVersion("11.8.3"), Source: resolve.Host,
+			},
+		},
+	})
+
+	written := out.String()
+
+	if !strings.Contains(written, "VERIFIABLE") {
+		t.Errorf("doctor has no VERIFIABLE column:\n%s", written)
+	}
+
+	lines := strings.Split(written, "\n")
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "boutique"):
+			if !strings.Contains(line, "no") {
+				t.Errorf("the database that cannot be checked does not say so:\n%s", line)
+			}
+
+		case strings.HasPrefix(line, "erp"):
+			if !strings.Contains(line, "yes") {
+				t.Errorf("a MariaDB database needs no pg_restore and is reported as a problem:\n%s", line)
+			}
+		}
+	}
+
+	if !strings.Contains(written, "install the PostgreSQL client") {
+		t.Errorf("doctor does not say what to install:\n%s", written)
 	}
 }
