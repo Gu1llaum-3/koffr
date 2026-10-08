@@ -1,6 +1,6 @@
 # Plan lot 3 — Corrections de recette
 
-> Statut : **brouillon**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **validé par le propriétaire le 2026-10-08**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 Travail issu de la session de recette du lot 3 (2026-10-08). Cinq des six critères de sortie du lot
