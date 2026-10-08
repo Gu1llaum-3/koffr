@@ -18,21 +18,21 @@ rétrospective (`docs/retro/`), pas au fil de l'eau.
 ## Le cycle
 
 ```
-cahier des charges ──/demarrer-projet──► exigences E-nn, questions Q-nn, décisions D-nn,
-                                          ADR proposés, ROADMAP par lots
+cahier des charges ──démarrage──► exigences E-nn, questions Q-nn, décisions D-nn,
+                                     ADR proposés, ROADMAP par lots
                                                    │
                   ┌────────────────────────────────┘
                   ▼
-      lot suivant de ROADMAP.md ──/ecrire-plan──► docs/plans/lot-N-<nom>.md (validé par le propriétaire)
+      lot suivant de ROADMAP.md ──plan──► docs/plans/lot-N-<nom>.md (validé par le propriétaire)
                                                    │
-                                           /executer-plan : une vague = une branche, TDD,
+                                           exécution : une vague = une branche, TDD,
                                            vérification verte, merge ; pause entre les vagues
                                                    │
                                            recette avec un utilisateur (docs/recette/)
                                                    │
-                                  /cloturer-lot ──► docs/retro/lot-N.md, roadmap cochée,
-                                                    leçons fondues dans le skill de stack,
-                                                    METHODE.md amendée si besoin
+                                  clôture ──► docs/retro/lot-N.md, roadmap cochée,
+                                              leçons fondues dans CLAUDE.md,
+                                              METHODE.md amendée si besoin
 ```
 
 Un seul plan en exécution à la fois. Un travail transverse (sécurité, passe d'interface,
@@ -54,8 +54,7 @@ corrections de recette) a lui aussi un plan et une ligne dans la roadmap ; il ne
 | `docs/cdc/exigences.md`         | Le registre `E-nn` : chaque exigence du CDC, sa source, son lot, son état                 | Des interprétations non validées                          |
 | `<module>/rules.md`             | Les règles métier du module, une par test, avec leur source                              | De la doc technique, du récit                             |
 | `docs/recette/`                 | Scénarios de recette, anomalies `A-nn`, décisions attendues de la session                 |                                                           |
-| `docs/retro/lot-N.md`           | Ce qui a marché, ce qui a coûté, ce qu'on change dans la méthode et dans les skills       | L'état du lot (roadmap)                                   |
-| `.claude/skills/*`              | Le savoir-faire répétable, thématique, au présent                                         | L'histoire du projet (« leçons du lot N »)                |
+| `docs/retro/lot-N.md`           | Ce qui a marché, ce qui a coûté, ce qu'on change dans la méthode                          | L'état du lot (roadmap)                                   |
 | Mémoire persistante de Claude   | Préférences et retours du propriétaire                                                    | L'état du projet, qui vit dans le dépôt                   |
 
 ## Les registres
@@ -79,8 +78,8 @@ dans `docs/README.md` ; tout nouveau registre s'y déclare avant d'exister.
 - **Code** : identifiants, commentaires, noms de fichiers de code, noms de branches, messages de
   commit, noms de tables et de colonnes : **anglais**.
 - **Pilotage** : tout fichier que Claude lit ou écrit pour piloter le projet (`CLAUDE.md`,
-  `ARCHITECTURE.md`, `ROADMAP.md`, `METHODE.md`, ADR, plans, registres, rétros, `rules.md`,
-  skills) : **français**.
+  `ARCHITECTURE.md`, `ROADMAP.md`, `METHODE.md`, ADR, plans, registres, rétros, `rules.md`) :
+  **français**.
 - **Interface et messages aux utilisateurs** : la langue des utilisateurs, fixée par un ADR.
 - Un glossaire métier FR → EN vit dans `CLAUDE.md` ; un identifiant, une fois choisi, ne change
   plus.
@@ -102,7 +101,7 @@ il n'écrit que ce qui lui est propre.
    **Un vert qu'on n'a pas vu rouge ne compte pas** : il passe pour de mauvaises raisons plus
    souvent qu'on ne le croit — un fichier vide qui « ne contient aucune ligne de journal », un
    harnais qui intervertit les deux flux qu'il compare, un `kill` qui frappe un processus déjà
-   terminé. Le geste détaillé est dans le skill `implementer`.
+   terminé.
 4. **Vérification complète à la fin de chaque vague** (la commande `verify` de `CLAUDE.md`), codes
    de retour lus, pas seulement la dernière ligne. Quand une CI existe, on attend sa **fin** avant
    de merger, en s'assurant d'abord que l'exécution qu'on surveille **existe** : une commande de
@@ -151,7 +150,7 @@ il n'écrit que ce qui lui est propre.
    a donné lieu à des corrections, le scénario est **rejoué en entier** après elles : une recette
    corrigée mais non rejouée ne voit pas ce que ses propres corrections ont cassé.
 8. `docs/retro/lot-N.md` écrite, roadmap cochée, ADR écrits pour toute décision structurante prise
-   en route, skill de stack amendé, `METHODE.md` amendée si la rétro le demande.
+   en route, `CLAUDE.md` amendé, `METHODE.md` amendée si la rétro le demande.
 
 ## Règles de pilotage
 

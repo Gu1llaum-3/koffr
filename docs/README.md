@@ -7,14 +7,14 @@ jamais deux registres avec la même lettre. Un nouveau registre se déclare ici 
 
 | Préfixe    | Registre                             | Fichier                     | Qui l'alimente                       |
 | ---------- | ------------------------------------ | --------------------------- | ------------------------------------ |
-| `E-nn`     | Exigences du cahier des charges      | `cdc/exigences.md`          | `/demarrer-projet`, puis à la main   |
-| `ADR-NNNN` | Décisions figées                     | `adr/`                      | `/ecrire-adr`                        |
+| `E-nn`     | Exigences du cahier des charges      | `cdc/exigences.md`          | Démarrage du projet, puis à la main  |
+| `ADR-NNNN` | Décisions figées                     | `adr/`                      | Quiconque fige une décision          |
 | `D-nn`     | Décisions en attente                 | `decisions.md`              | Quiconque bute sur un arbitrage      |
 | `Q-nn`     | Questions au métier                  | `questions.md`              | Quiconque bute sur une inconnue      |
 | `B-nn`     | Backlog                              | `backlog.md`                | Quiconque a une idée hors périmètre  |
 | `A-nn`     | Anomalies de recette                 | `recette/anomalies.md`      | Les sessions de recette              |
-| `N-n`      | Décisions d'implémentation d'un plan | `plans/lot-N-*.md`          | `/ecrire-plan`, `/executer-plan`     |
-| `<MOD>-nn` | Règles métier d'un module            | `src/**/<module>/rules.md`  | `/implementer`                       |
+| `N-n`      | Décisions d'implémentation d'un plan | `plans/lot-N-*.md`          | L'écriture et l'exécution du plan    |
+| `<MOD>-nn` | Règles métier d'un module            | `src/**/<module>/rules.md`  | Le code du module, test d'abord      |
 
 Une entrée ne se supprime jamais : elle se barre, avec la date et le renvoi vers ce qui l'a
 tranchée.

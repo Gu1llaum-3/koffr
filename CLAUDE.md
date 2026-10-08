@@ -36,8 +36,6 @@ prouve qu'une règle est appliquée.
 - **On ne coche pas une tâche dont le test n'a pas tourné**, et on ne merge pas une vague sans
   `verify` vert.
 
-Le mode opératoire détaillé (fixtures, base réelle, nommage) est dans le skill `implementer`.
-
 ## Commandes
 
 Toutes les tâches passent par `mise` (`N-3` du plan du lot 0) ; il n'y a pas de `Makefile`.
@@ -235,15 +233,15 @@ Fixé par ADR-0006, et **opposable dans le schéma**, pas seulement écrit ici :
 
 ## Langues et nommage
 
-- Documentation, ADR, roadmap, plans, registres, skills, `rules.md`, ce fichier : **français**.
+- Documentation, ADR, roadmap, plans, registres, `rules.md`, ce fichier : **français**.
 - Code, identifiants, commentaires, noms de fichiers de code, **noms de branches**, **messages de
   commit**, tables et colonnes : **anglais**.
 - Textes d'interface, messages d'erreur affichés, journaux, e-mails : **anglais** (ADR-0003).
 
 ### Glossaire métier FR → EN
 
-Un terme métier, un identifiant, pour toujours. Alimenté par `/demarrer-projet` depuis le cahier
-des charges, complété au fil des lots.
+Un terme métier, un identifiant, pour toujours. Alimenté depuis le cahier des charges au
+démarrage du projet, complété au fil des lots.
 
 Le CDC **fixe déjà** la plupart des identifiants : clés de configuration (§ 5.1), noms de composants
 (§ 4.2), tables (§ 4.4), champs du manifeste (§ 5.3), noms d'événements (§ 5.10), commandes (§ 5.12).

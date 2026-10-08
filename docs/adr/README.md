@@ -2,7 +2,7 @@
 
 Une décision structurante = un fichier `NNNN-titre-kebab.md`, numéro croissant, jamais réutilisé.
 On ne modifie pas un ADR accepté : on en écrit un nouveau qui le remplace ou l'amende, et on met à
-jour le statut de l'ancien dans cette table. Gabarit : `0000-template.md`. Skill : `/ecrire-adr`.
+jour le statut de l'ancien dans cette table. Gabarit : `0000-template.md`.
 
 Un ADR **proposé** par Claude (depuis le cahier des charges ou en cours de lot) ne vaut rien tant
 que le propriétaire ne l'a pas passé en **accepté** ; on ne code pas dessus.

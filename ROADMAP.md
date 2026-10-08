@@ -73,8 +73,7 @@ Ce que tout projet livre avant sa première ligne métier, plus ce que la pile a
 - **Spike `E-130` — le risque n° 1 du CDC** : extraire `pg_dump` avec ses bibliothèques partagées,
   ajuster le `RPATH`, et l'exécuter réellement sur **Debian, Rocky et Alpine**. Le CDC le place
   « avant `L0` » ; il conditionne `E-043` et les scénarios 2 et 3.
-- `ARCHITECTURE.md` complété, `CLAUDE.md` § Commandes et § Conventions, `.claude/skills/implementer/`
-  remplis pour Go.
+- `ARCHITECTURE.md` complété, `CLAUDE.md` § Commandes et § Conventions remplis pour Go.
 
 **Sortie** : `verify` vert en local **et** en CI ; un binaire statique de moins de 30 Mo pour les
 **trois** cibles ; `koffr config validate` rejette une clé inconnue et accepte la configuration cible

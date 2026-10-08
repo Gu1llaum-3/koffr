@@ -4,7 +4,7 @@ Ce que nous lisons dans `KEEPER-CDC.md`, avant toute décision. Ce document n'in
 classe, cite et signale. Tout ce que le CDC ne dit pas est une `Q-nn` ; tout arbitrage qu'il laisse
 ouvert est une `D-nn`. Le registre des exigences est dans `exigences.md`.
 
-Produit le 2026-09-18 par `/demarrer-projet`. À relire par le propriétaire (arrêt 1).
+Produit le 2026-09-18, au démarrage du projet. À relire par le propriétaire (arrêt 1).
 
 ---
 
