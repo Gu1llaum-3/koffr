@@ -117,6 +117,14 @@ sauvegarde.
 | 5 **Le dépôt s'inventorie sans koffr** | ✅ **critère de sortie n° 3 atteint.** `jq` seul rend l'inventaire complet ; `jq` + `sha256sum` détectent même l'archive corrompue. Et l'exercice complet a été fait **depuis une machine sans koffr**, avec la **clé de séquestre** : `age -d \| zstd -d \| pg_restore` rend 400 000 commandes et 300 000 lignes, sommes identiques à l'originale ; `age -d \| zstd -d \| mariadb` rend 250 000 factures, somme identique. `A-22`, `A-23`, `A-24` sur la forme du manifeste |
 | 6 Ce qu'un stockage compromis livre | ✅ **critère de sortie n° 4 atteint.** Aucune occurrence de mot de passe, d'utilisateur, d'hôte, de port ni de clé privée dans tout le dépôt. Sans la clé : `age: no identity matched any of the recipients`, `zstd` et `pg_restore` refusent. Métadonnées livrées : noms de bases, moteur et **version exacte du serveur**, horodatages, tailles, chemin de l'outil, clés publiques |
 
+**La clé privée n'est nulle part** — `grep -rl AGE-SECRET-KEY /` sur toute la machine, après les
+onze sauvegardes, ne rapporte que les **binaires** (`koffr`, `koffr-lot2`, `age`, `age-keygen`) et
+les `/proc/<pid>/cmdline` de la recherche elle-même, qui se journalise en se faisant — le faux
+positif que le scénario du lot 2 annonçait. **Aucune des deux clés générées en séance n'est sur la
+machine.** Piège à retenir : `age-keygen` embarque **une clé privée complète et bien formée** dans
+son propre binaire (`AGE-SECRET-KEY-1N9JEPW6…`), qui n'est aucune des nôtres ; un `grep` qui
+cherche la forme, et non la valeur, la trouve et fait croire à une fuite.
+
 **Changement de comportement confirmé** : `koffr backup` d'une PostgreSQL **refuse** quand aucun
 `pg_restore` n'est joignable, avec un message qui nomme `P4` et la majeure à installer. Voulu. Le
 premier essai n'avait rien prouvé : cacher `/usr/bin/pg_restore` ne suffit pas, le résolveur trouve
