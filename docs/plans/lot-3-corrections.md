@@ -164,21 +164,21 @@ Les deux bloquantes d'abord, et la plus simple des deux en premier : elle est le
 
 ### Vague 2 — Le dépôt se voit, même sans catalogue (`lot3c/wave-2-list-the-repository`)
 
-- [ ] **2.1** Test d'abord `internal/domain/catalog/repository_test.go` — **`CAT-05`** : le port
+- [x] **2.1** Test d'abord `internal/domain/catalog/repository_test.go` — **`CAT-05`** : le port
       `Repository` de `N-2` rend les archives d'une destination, et les entrées sont triées, les
       plus récentes d'abord (`CLAUDE.md` : une sortie ordonnée).
-- [ ] **2.2** Test `internal/cli/list_test.go` — **`CAT-06`**, `A-19` : une archive présente sur la
+- [x] **2.2** Test `internal/cli/list_test.go` — **`CAT-06`**, `A-19` : une archive présente sur la
       destination et **absente du catalogue** apparaît dans `koffr list`, marquée
       `not in the catalogue`, et les colonnes qu'on ne peut pas remplir restent vides. Le cas
       inverse — une ligne de catalogue dont l'archive a disparu du dépôt — est **aussi** couvert.
-- [ ] **2.3** Test — **`CAT-07`**, `A-27` : `list --destination <inconnue>` refuse en nommant les
+- [x] **2.3** Test — **`CAT-07`**, `A-27` : `list --destination <inconnue>` refuse en nommant les
       destinations connues, **code 1** ; `list` sur un dépôt réellement vide garde son message et le
       **code 0**. Les deux cas ne se confondent plus.
-- [ ] **2.4** Câbler le port dans `cmd/koffr` : `internal/store` y est déjà connu, `internal/cli`
+- [x] **2.4** Câbler le port dans `cmd/koffr` : `internal/store` y est déjà connu, `internal/cli`
       reçoit le port construit (`AR-04`, `N-3` du plan du lot 3). `internal/arch` reste vert **sans
       modification** — c'est lui qui le prouve.
-- [ ] **2.5** `internal/domain/catalog/rules.md` : `CAT-05`, `CAT-06`, `CAT-07`.
-- [ ] **2.6** Vague verte : `verify`, commit `feat(catalog): show the archives a destination holds, catalogued or not`.
+- [x] **2.5** `internal/domain/catalog/rules.md` : `CAT-05`, `CAT-06`, `CAT-07`.
+- [x] **2.6** Vague verte : `verify`, commit `feat(catalog): show the archives a destination holds, catalogued or not`.
 
 ### Vague 3 — L'heure est celle qu'on a déclarée (`lot3c/wave-3-declared-timezone`)
 
@@ -320,5 +320,25 @@ code et la même séance de test ; les séparer aurait laissé `main` avec une b
 `step done dump` avec sa décision de tampon, puis `step failed dump`. La première est ce qu'un job
 tué laisse derrière lui — la raison d'être de `BKP-20` —, la seconde est ce qu'`A-21` demande.
 L'étape est **reprise** dans le résultat (`Done: false`), de sorte que l'écran ne la compte pas.
+
+### Vague 2 — 2026-10-08
+
+**`N-9` ajoutée en route — `koffr list` ne résout aucun secret.** Lire une destination demande la
+configuration, et `loadResolved` ouvre les `password_file` au passage : une machine dont un fichier
+de mot de passe a disparu n'aurait plus pu **lister ses archives**. `CFG-09` sépare justement les
+deux étapes ; `list` emploie désormais `loadShape`, qui ne lit que la forme. Un test le constate en
+cassant un secret. *Exclut* : faire dépendre une commande de lecture de ce qu'il faut pour écrire.
+
+**Constaté sur la machine de recette**, avec le vrai binaire du lot 2 : une archive écrite par lui
+apparaît maintenant dans `koffr list`, marquée `not in the catalogue` ; et
+`koffr list --destination nexistepas` répond `no destination has this identifier: "nexistepas";
+the configuration declares disque-local`, code 1.
+
+**Écart au plan, mineur** : le plan prévoyait que les tests de la vague montrent une archive
+« dont les colonnes qu'on ne peut pas remplir restent vides ». Les fixtures des tests de `list`
+pointaient sur des chemins (`boutique/2026/09/a.pgc.zst.age`) que `F5.5` ne décrit pas, et que la
+lecture du dépôt ne sait donc pas identifier. Elles ont été réécrites au chemin déterministe, et
+**les fichiers sont réellement déposés** : une fixture qui ne remplissait que le catalogue
+décrivait un dépôt ayant perdu ses fichiers.
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.

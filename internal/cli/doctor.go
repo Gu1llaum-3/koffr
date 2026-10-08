@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -211,6 +212,26 @@ func loadResolved(cmd *cobra.Command) (*config.Config, error) {
 	path := configPath(cmd)
 
 	loaded, err := config.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return loaded, nil
+}
+
+// loadShape reads the configuration **without** resolving its secrets, for a
+// command that needs only its shape — where the destinations are, what they are
+// called. `koffr list` reads no database, so a password file it cannot open is
+// none of its business: CFG-09 makes the two steps separate exactly for this.
+func loadShape(cmd *cobra.Command) (*config.Config, error) {
+	path := configPath(cmd)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read the configuration: %w", err)
+	}
+
+	loaded, err := config.Parse(raw, path)
 	if err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
