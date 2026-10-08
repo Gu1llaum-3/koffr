@@ -28,7 +28,12 @@ func newListCommand() *cobra.Command {
 				filter.Database = args[0]
 			}
 
-			found, err := book.Backups(cmd.Context(), filter)
+			lister, err := listerFor(cmd, book)
+			if err != nil {
+				return err
+			}
+
+			found, err := lister.List(cmd.Context(), filter)
 			if err != nil {
 				return fmt.Errorf("list the archives: %w", err)
 			}
@@ -43,14 +48,19 @@ func newListCommand() *cobra.Command {
 	return cmd
 }
 
-// verificationLabel is how E-064 is met: the three states read differently, and
-// none of them reads like a success it is not.
+// verificationLabel is how E-064 is met: the states read differently, and none
+// of them reads like a success it is not.
 //
 // « Absence de vérification n'est jamais assimilée à un succès » — so an
 // archive nobody looked at says **no**, in as many letters, rather than leaving
-// a blank that a tired eye reads as fine.
-func verificationLabel(of catalog.Verification) string {
-	switch of {
+// a blank that a tired eye reads as fine. An archive koffr has no record of at
+// all says that, which is a third thing again (`A-19`).
+func verificationLabel(line catalog.Listed) string {
+	if !line.Catalogued {
+		return "not in the catalogue"
+	}
+
+	switch line.Verified {
 	case catalog.Structure:
 		return "yes, in full"
 
@@ -65,9 +75,9 @@ func verificationLabel(of catalog.Verification) string {
 	}
 }
 
-func renderArchives(cmd *cobra.Command, found []catalog.Backup) {
+func renderArchives(cmd *cobra.Command, found []catalog.Listed) {
 	if len(found) == 0 {
-		say(cmd, "no backup in the catalogue yet\n")
+		say(cmd, "no archive, neither in the catalogue nor on the destinations\n")
 
 		return
 	}
@@ -82,7 +92,7 @@ func renderArchives(cmd *cobra.Command, found []catalog.Backup) {
 			archive.Database,
 			archive.StartedAt.UTC().Format("2006-01-02 15:04Z"),
 			humanBytes(archive.StoredBytes),
-			verificationLabel(archive.Verified),
+			verificationLabel(archive),
 			destinationsOfArchive(archive),
 		)
 	}
@@ -90,7 +100,10 @@ func renderArchives(cmd *cobra.Command, found []catalog.Backup) {
 	_ = table.Flush()
 }
 
-func destinationsOfArchive(archive catalog.Backup) string {
+// destinationsOfArchive names where the copies are — and says when the
+// destination no longer holds what the catalogue says it does. A file that
+// disappears quietly is the failure retention exists to avoid.
+func destinationsOfArchive(archive catalog.Listed) string {
 	if len(archive.Locations) == 0 {
 		return "nowhere"
 	}
@@ -100,7 +113,12 @@ func destinationsOfArchive(archive catalog.Backup) string {
 		names = append(names, location.Destination)
 	}
 
-	return joinWith(names, ", ")
+	joined := joinWith(names, ", ")
+	if archive.Catalogued && !archive.Present {
+		joined += " (gone)"
+	}
+
+	return joined
 }
 
 // humanBytes is what an operator reads at a glance. Binary units, because a

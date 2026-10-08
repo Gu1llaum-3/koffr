@@ -434,3 +434,46 @@ func executeWith(t *testing.T, book catalog.Catalog, args ...string) (string, st
 
 	return out.String(), errs.String(), err
 }
+
+// breakSecret points the database at a password file that is not there. Nothing
+// that reads a database may survive it; everything that does not, must.
+func (s site) breakSecret(t *testing.T) {
+	t.Helper()
+
+	raw, err := os.ReadFile(s.config)
+	if err != nil {
+		t.Fatalf("read the configuration: %v", err)
+	}
+
+	body := strings.Replace(string(raw), "    staging: auto\n",
+		"    staging: auto\n    password_file: /nowhere/at/all\n", 1)
+
+	if err := os.WriteFile(s.config, []byte(body), 0o600); err != nil {
+		t.Fatalf("write the configuration: %v", err)
+	}
+}
+
+// place writes, on the destination, the archives the catalogue claims are
+// there. A listing reads the destination now (`A-19`), so a fixture that only
+// filled the catalogue described a repository that had lost its files.
+func (s site) place(t *testing.T, archives ...catalog.Backup) {
+	t.Helper()
+
+	for _, archive := range archives {
+		for _, location := range archive.Locations {
+			s.placeFile(t, location.Path, archive.StoredBytes)
+		}
+	}
+}
+
+func (s site) placeFile(t *testing.T, path string, bytes int64) {
+	t.Helper()
+
+	full := filepath.Join(s.destination, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+		t.Fatalf("make the archive directory: %v", err)
+	}
+	if err := os.WriteFile(full, make([]byte, bytes), 0o600); err != nil {
+		t.Fatalf("write the archive %s: %v", path, err)
+	}
+}
