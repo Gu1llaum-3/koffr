@@ -4,7 +4,7 @@
   sa date dans le nom si elles n'y sont pas. Si le document est confidentiel, il est gitignoré et
   son chemin est dans `CLAUDE.local.md`.
 - `analyse.md` : la lecture qu'on en fait (périmètre, acteurs, objets, flux, intégrations,
-  silences, contradictions). Produite par `/demarrer-projet`, relue par le propriétaire.
+  silences, contradictions). Produite au démarrage du projet, relue par le propriétaire.
 - `exigences.md` : le registre `E-nn`. **C'est la table de traçabilité du projet** : chaque
   exigence, son § source, son type, son lot, son état. Un lot, un plan, une règle `MOD-nn` et un
   test citent leur `E-nn` ; le critère de sortie du dernier lot est « toutes les `E-nn` sont
