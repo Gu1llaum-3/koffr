@@ -218,17 +218,17 @@ Les deux bloquantes d'abord, et la plus simple des deux en premier : elle est le
 
 ### Vague 5 — Ce que koffr dit quand il ne peut pas (`lot3c/wave-5-say-what-is-missing`)
 
-- [ ] **5.1** Test d'abord `internal/cli/doctor_test.go` — **`RSV-14`**, `A-26` : sans `pg_restore`,
+- [x] **5.1** Test d'abord `internal/cli/doctor_test.go` — **`RSV-14`**, `A-26` : sans `pg_restore`,
       `doctor` dit que cette base ne pourra **pas** être sauvegardée et nomme la majeure à
       installer ; avec, il dit `yes`. MySQL et MariaDB disent `yes` sans `pg_restore` : elles n'en
       ont pas besoin (`N-6`).
-- [ ] **5.2** Test `internal/cli/verify_test.go` — **`VRF-06`**, `A-25` : sur une archive dont le
+- [x] **5.2** Test `internal/cli/verify_test.go` — **`VRF-06`**, `A-25` : sur une archive dont le
       catalogue dit `none`, `koffr verify` dit que la structure n'a **jamais** été vérifiée ; sur
       une archive à `structure`, il garde la phrase d'ADR-0017. La phrase ne se dit que si le
       contrôle a eu lieu.
-- [ ] **5.3** `internal/domain/resolve/rules.md` : `RSV-14`. `internal/domain/verify/rules.md` :
+- [x] **5.3** `internal/domain/resolve/rules.md` : `RSV-14`. `internal/domain/verify/rules.md` :
       `VRF-06`.
-- [ ] **5.4** Vague verte : `verify`, commit `fix(cli): say what is missing instead of looking fine`.
+- [x] **5.4** Vague verte : `verify`, commit `fix(cli): say what is missing instead of looking fine`.
 
 ### Vague 6 — Le dépôt se lit sans nous (`lot3c/wave-6-document-the-repository`)
 
@@ -384,5 +384,23 @@ entrées, et qu'il ne porte **ni** le nom de la table **ni** l'en-tête du listi
 `backups.job_id` les désigne, `backups.manifest` garde 1 031 octets, la ligne de journal de la
 vérification dit `"detail":"16 table-of-contents entries"`, et `koffr list` montre `TOOK` et
 `DUMPED`.
+
+### Vague 5 — 2026-10-08
+
+**La vérifiabilité est une question du domaine, pas de l'écran.** Le plan plaçait `A-26` dans
+`doctor` ; elle est posée dans `resolve.Diagnosis`, par un champ `NotVerifiable` et par `Healthy()`
+qui en tient compte. Raison : `P4` dit que rien n'est sauvegardé tant que ce n'est pas vérifié —
+une base qu'on peut dumper sans pouvoir la contrôler n'est donc pas prête, et c'est une règle
+métier, pas une colonne. L'écran la montre ; il ne la décide pas. `doctor` **échoue** désormais sur
+ce cas, par `errFleetInTrouble`, ce qui est un changement de comportement à annoncer.
+
+**Le `fakeFinder` de `resolve` ignorait le genre d'outil demandé** et répondait la même liste pour
+`Dump` et pour `Restore`. Aucun test ne pouvait distinguer une machine qui a `pg_dump` sans
+`pg_restore` — celle d'`A-26`. Il filtre maintenant sur le genre.
+
+**Constaté sur la machine de recette** : avec `pg_restore`, la colonne dit `yes` et le code est 0 ;
+sans, elle dit `no` pour PostgreSQL, `yes` pour MariaDB, la phrase nomme la majeure à installer et
+le code est 1. Et `koffr verify` sur une archive à `verified = none` dit que sa structure n'a
+jamais été contrôlée, au lieu d'affirmer qu'elle l'a été au vol.
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.

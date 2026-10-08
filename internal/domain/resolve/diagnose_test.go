@@ -105,8 +105,22 @@ type fakeFinder struct {
 	failure    error
 }
 
-func (f fakeFinder) Find(context.Context, resolve.Family, resolve.Tool) ([]resolve.Candidate, error) {
-	return f.candidates, f.failure
+// Find answers with the candidates of the kind it is asked for. The kind
+// matters since `RSV-14`: a machine can hold `pg_dump` and not `pg_restore`.
+func (f fakeFinder) Find(_ context.Context, _ resolve.Family, kind resolve.Tool) ([]resolve.Candidate, error) {
+	if f.failure != nil {
+		return nil, f.failure
+	}
+
+	var of []resolve.Candidate
+
+	for _, candidate := range f.candidates {
+		if candidate.Tool == kind {
+			of = append(of, candidate)
+		}
+	}
+
+	return of, nil
 }
 
 // fakeContainers answers per container name.
@@ -127,3 +141,79 @@ var (
 	_ resolve.ToolFinder          = fakeFinder{}
 	_ resolve.ContainerToolFinder = fakeContainers{}
 )
+
+// RSV-14 — a PostgreSQL database whose machine has **no `pg_restore`** cannot be
+// backed up, and the diagnosis says so **before** the night job finds out.
+//
+// `A-26`: since ADR-0017 the structure is checked while the dump streams past,
+// by `pg_restore --list`. Without it `P4` refuses to call the result a backup —
+// and `koffr doctor` showed an entirely green line on a machine where every
+// PostgreSQL backup was going to fail. The command that exists to say "this
+// will work" has to see a guaranteed failure.
+func TestRSV14ADatabaseThatCannotBeVerifiedIsReported(t *testing.T) {
+	dump := resolve.Candidate{
+		Family: resolve.PostgreSQL, Tool: resolve.Dump,
+		Version: resolve.ParseVersion("18.6"), Source: resolve.Host, Path: "/usr/bin/pg_dump",
+	}
+	restore := resolve.Candidate{
+		Family: resolve.PostgreSQL, Tool: resolve.Restore,
+		Version: resolve.ParseVersion("18.6"), Source: resolve.Host, Path: "/usr/bin/pg_restore",
+	}
+
+	probe := fakeProbe{servers: map[string]resolve.ServerInfo{
+		"pg":    {Reachable: true, Family: resolve.PostgreSQL, Version: resolve.ParseVersion("18.6")},
+		"maria": {Reachable: true, Family: resolve.MariaDB, Version: resolve.ParseVersion("11.8.3")},
+	}}
+	subjects := []resolve.Subject{
+		{ID: "boutique", Target: resolve.Target{Engine: resolve.PostgreSQL, Host: "pg"}},
+		{ID: "erp", Target: resolve.Target{Engine: resolve.MariaDB, Host: "maria"}},
+	}
+
+	t.Run("without pg_restore", func(t *testing.T) {
+		diagnoses := resolve.Diagnose(t.Context(), probe,
+			fakeFinder{candidates: []resolve.Candidate{dump, mariaDump()}}, fakeContainers{}, subjects)
+
+		boutique, erp := diagnoses[0], diagnoses[1]
+
+		if boutique.NotVerifiable == nil {
+			t.Fatal("a PostgreSQL database with no pg_restore is reported as fine")
+		}
+		if !strings.Contains(boutique.NotVerifiable.Error(), "pg_restore") {
+			t.Errorf("the reason does not name what is missing: %v", boutique.NotVerifiable)
+		}
+		if !strings.Contains(boutique.NotVerifiable.Error(), "18") {
+			t.Errorf("the reason does not say which major to install: %v", boutique.NotVerifiable)
+		}
+		if boutique.Healthy() {
+			t.Error("a database that cannot be backed up is reported healthy")
+		}
+
+		// MySQL and MariaDB look for their end marker in the dump itself: they
+		// need no second tool, and must not be dragged down by this.
+		if erp.NotVerifiable != nil {
+			t.Errorf("a MariaDB database was asked for a pg_restore: %v", erp.NotVerifiable)
+		}
+		if !erp.Healthy() {
+			t.Errorf("a MariaDB database with its tool is reported in trouble: %+v", erp)
+		}
+	})
+
+	t.Run("with pg_restore", func(t *testing.T) {
+		diagnoses := resolve.Diagnose(t.Context(), probe,
+			fakeFinder{candidates: []resolve.Candidate{dump, restore, mariaDump()}}, fakeContainers{}, subjects)
+
+		if diagnoses[0].NotVerifiable != nil {
+			t.Errorf("pg_restore is there and the diagnosis says otherwise: %v", diagnoses[0].NotVerifiable)
+		}
+		if !diagnoses[0].Healthy() {
+			t.Errorf("a database with both its tools is reported in trouble: %+v", diagnoses[0])
+		}
+	})
+}
+
+func mariaDump() resolve.Candidate {
+	return resolve.Candidate{
+		Family: resolve.MariaDB, Tool: resolve.Dump,
+		Version: resolve.ParseVersion("11.8.3"), Source: resolve.Host, Path: "/usr/bin/mariadb-dump",
+	}
+}

@@ -22,11 +22,24 @@ type Diagnosis struct {
 	// Tool is the one that would run, and NoTool says why none would.
 	Tool   Candidate
 	NoTool error
+
+	// NotVerifiable says why an archive of this database could not be checked,
+	// and is nil when it could.
+	//
+	// Since ADR-0017 a PostgreSQL dump has its structure read by `pg_restore
+	// --list` while it streams past, and `P4` refuses to call an unchecked
+	// archive a backup. A machine with `pg_dump` and without `pg_restore` is
+	// therefore a machine where every PostgreSQL backup fails — and doctor,
+	// which exists to say "this will work", used to show it entirely green
+	// (`A-26`, `RSV-14`).
+	NotVerifiable error
 }
 
-// Healthy reports whether this database could be backed up right now.
+// Healthy reports whether this database could be backed up right now — which
+// includes being **checkable**: `P4` says nothing is a backup until it has been
+// checked, so a database koffr could dump and not verify is not ready.
 func (d Diagnosis) Healthy() bool {
-	return d.Unreachable == nil && d.NoTool == nil
+	return d.Unreachable == nil && d.NoTool == nil && d.NotVerifiable == nil
 }
 
 // Subject is one database to diagnose, with the identifier its operator gave
@@ -129,6 +142,33 @@ func diagnoseOne(
 		return diagnosis
 	}
 	diagnosis.Tool = tool
+	diagnosis.NotVerifiable = verifiabilityOf(ctx, onHost, subject, server)
 
 	return diagnosis
+}
+
+// verifiabilityOf says what is missing for an archive of this database to be
+// checked at all.
+//
+// Only PostgreSQL needs a second tool: MySQL and MariaDB look for their end
+// marker in the dump itself. A database that resolves inside a container is
+// left alone — its tools travel with it, and the host's absence says nothing.
+func verifiabilityOf(ctx context.Context, onHost ToolFinder, subject Subject, server ServerInfo) error {
+	if server.Family != PostgreSQL || subject.Container != "" {
+		return nil
+	}
+
+	found, err := onHost.Find(ctx, PostgreSQL, Restore)
+	if err != nil {
+		return fmt.Errorf("look for a %s tool on the host: %w", Restore, err)
+	}
+
+	if len(found) == 0 {
+		return fmt.Errorf(
+			"no pg_restore on this machine, so the structure of an archive cannot be checked "+
+				"and P4 refuses to call it a backup: install the PostgreSQL client of major %s",
+			server.Version)
+	}
+
+	return nil
 }
