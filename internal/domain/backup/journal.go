@@ -22,10 +22,6 @@ type JobStep struct {
 	// is the last one journalled: the trace stops where the job stopped.
 	Failed error
 
-	// Deferred is set on a step this release does not implement, so that a
-	// trace showing seven steps is never mistaken for seven steps that ran.
-	Deferred string
-
 	// Facts are what the step produced, **in a fixed order**: two runs of the
 	// same database have to be comparable line by line, and a map would shuffle
 	// them. They never carry a secret (BKP-21, E-115).

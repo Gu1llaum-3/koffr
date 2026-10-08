@@ -36,9 +36,6 @@ var Steps = []Step{
 	StepEncryption, StepWrite, StepVerification, StepManifest,
 }
 
-// deferredToLot3 is what the two last steps say until the lot 3 brings them.
-const deferredToLot3 = "not in this release: verification arrives at the lot 3"
-
 // manifestSuffix is how a manifest is named: beside its archive, sorted next to
 // it in a listing, and found by reading every *.json of a repository — which is
 // what E-059 asks of an inventory (`N-4`).
@@ -86,10 +83,6 @@ func (v Verdict) why() string {
 type StepOutcome struct {
 	Step Step
 	Done bool
-
-	// Deferred is non-empty when the step is not implemented yet. It is never
-	// set on a step that merely failed: a failure is an error, not an absence.
-	Deferred string
 }
 
 // Request is one backup to run.
@@ -253,19 +246,6 @@ func (s *Service) journal(request Request, step Step, failed error, facts ...Fac
 	})
 }
 
-// journalDeferred records a step this release does not implement, so that a
-// trace of seven steps is never mistaken for seven steps that ran.
-func (s *Service) journalDeferred(request Request) {
-	if s.watch != nil {
-		return
-	}
-
-	s.wiring.Journal.Step(JobStep{
-		Job: request.JobID, Database: request.Database,
-		Step: StepVerification, Deferred: deferredToLot3,
-	})
-}
-
 // Result is what a job did. It is filled as the job goes, and returned even
 // when the job fails: what ran before the failure is what an operator needs.
 type Result struct {
@@ -421,8 +401,6 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 		return result, err
 	}
 
-	s.journalDeferred(request)
-
 	// The duration is known before the manifest is written, because the
 	// manifest carries it (E-058).
 	result.Duration = time.Since(started)
@@ -443,8 +421,15 @@ func (s *Service) Run(ctx context.Context, request Request) (Result, error) {
 // from the destination — never from what the pipeline kept in memory, which
 // would only prove that koffr agrees with itself (E-062).
 func (s *Service) verifyArchive(ctx context.Context, request Request, result *Result) error {
+	// `P4` — without a watcher nothing looked at this archive, and an archive
+	// nobody looked at is not a backup. This used to be papered over by a step
+	// declared absent (`A-20`); with that gone, the hole has to be closed
+	// rather than left silent (`BKP-28`).
 	if s.watch == nil {
-		return nil
+		err := fmt.Errorf("%w: nothing was wired to check it", ErrNotVerified)
+		s.journal(request, StepVerification, err)
+
+		return err
 	}
 
 	sound, detail := s.watch.Conclude(ctx)
@@ -477,7 +462,7 @@ func (s *Service) verifyArchive(ctx context.Context, request Request, result *Re
 		return failure
 	}
 
-	result.markEvenIfDeferred(StepVerification)
+	result.mark(StepVerification)
 	s.journal(request, StepVerification, nil,
 		Fact{"checksum_ok", true},
 		Fact{"structure_ok", true},
@@ -531,7 +516,7 @@ func (s *Service) depositManifest(ctx context.Context, request Request, result *
 		}
 	}
 
-	result.markEvenIfDeferred(StepManifest)
+	result.mark(StepManifest)
 	s.journal(request, StepManifest, nil, Fact{"path", beside})
 
 	return nil
@@ -636,10 +621,14 @@ func (s *Service) stage(ctx context.Context, request Request, dump io.ReadCloser
 	// dump holds a production server must not depend on a destination.
 	closeErr := dump.Close()
 
-	if err := errors.Join(packErr, closeErr); err != nil {
-		s.journal(request, StepCompression, err)
+	if err := s.dumpDied(request, result, closeErr); err != nil {
+		return Packed{}, err
+	}
 
-		return Packed{}, fmt.Errorf("pack the dump of %s: %w", result.Database, err)
+	if packErr != nil {
+		s.journal(request, StepCompression, packErr)
+
+		return Packed{}, fmt.Errorf("pack the dump of %s: %w", result.Database, packErr)
 	}
 
 	result.mark(StepCompression, StepEncryption)
@@ -664,9 +653,9 @@ func (s *Service) stage(ctx context.Context, request Request, dump io.ReadCloser
 
 // stream sends straight to the one destination E-030 allows in this mode.
 func (s *Service) stream(ctx context.Context, request Request, dump io.ReadCloser, path string, result *Result) (Packed, error) {
-	defer func() { _ = dump.Close() }()
-
 	if len(s.wiring.Destinations) != 1 {
+		_ = dump.Close()
+
 		return Packed{}, fmt.Errorf("streaming to %d destinations: E-030 allows one", len(s.wiring.Destinations))
 	}
 
@@ -687,6 +676,17 @@ func (s *Service) stream(ctx context.Context, request Request, dump io.ReadClose
 
 	packed, packErr := <-packing, <-failed
 
+	// Close is what waits for the sub-process and turns a non-zero exit into an
+	// error. A deferred close threw that error away, and a `pg_dump` that died
+	// after its pipe reached EOF left a truncated archive that koffr wrote,
+	// verified and called a backup (`A-30`, `BKP-27`). It is closed here,
+	// once the pipeline has finished reading it.
+	closeErr := dump.Close()
+
+	if err := s.dumpDied(request, result, closeErr); err != nil {
+		return Packed{}, err
+	}
+
 	if err := errors.Join(packErr, writeErr); err != nil {
 		s.journal(request, StepCompression, err)
 
@@ -697,6 +697,25 @@ func (s *Service) stream(ctx context.Context, request Request, dump io.ReadClose
 	s.journalPacked(request, packed)
 
 	return packed, nil
+}
+
+// dumpDied turns the exit status of the dump sub-process into a failure of the
+// **dump** step, whatever the pipeline was doing when it surfaced.
+//
+// `A-21`: the journal used to write `step dump: done`, then `step compression:
+// failed — /usr/bin/pg_dump failed: exit status 1`. Both were true, and
+// together they sent the operator to the wrong step. The dump keeps its first
+// line — it did start, and its staging decision is what a killed job leaves
+// behind — and the step is taken back, because it did not finish (`BKP-25`).
+func (s *Service) dumpDied(request Request, result *Result, closeErr error) error {
+	if closeErr == nil {
+		return nil
+	}
+
+	result.unmark(StepDump)
+	s.journal(request, StepDump, closeErr)
+
+	return fmt.Errorf("dump %s: %w", request.Database, closeErr)
 }
 
 // stagingFile opens the buffer of § 4.5. Its name carries the pid of this
@@ -732,41 +751,38 @@ func (s *Service) journalPacked(request Request, packed Packed) {
 	)
 }
 
-// freshSteps lists the seven steps, none done, the last two declared absent.
+// freshSteps lists the seven steps, none of them done yet. None is ever
+// declared absent: at this release the seven run, and a job that fails before
+// reaching one simply has not reached it (`BKP-24`, `A-20`).
 func freshSteps() []StepOutcome {
 	outcomes := make([]StepOutcome, 0, len(Steps))
 
 	for _, step := range Steps {
-		outcome := StepOutcome{Step: step}
-		if step == StepVerification {
-			outcome.Deferred = deferredToLot3
-		}
-
-		outcomes = append(outcomes, outcome)
+		outcomes = append(outcomes, StepOutcome{Step: step})
 	}
 
 	return outcomes
 }
 
-// markEvenIfDeferred records a step that used to be declared absent and is now
-// implemented: it clears the note along with setting the flag.
-func (r *Result) markEvenIfDeferred(step Step) {
-	for index := range r.Steps {
-		if r.Steps[index].Step == step {
-			r.Steps[index].Done = true
-			r.Steps[index].Deferred = ""
+// mark records that a step ran.
+func (r *Result) mark(steps ...Step) {
+	for _, step := range steps {
+		for index := range r.Steps {
+			if r.Steps[index].Step == step {
+				r.Steps[index].Done = true
+			}
 		}
 	}
 }
 
-// mark records that a step ran. A deferred step is never marked: it is not
-// implemented, and saying otherwise would be the lie P3 is about.
-func (r *Result) mark(steps ...Step) {
-	for _, step := range steps {
-		for index := range r.Steps {
-			if r.Steps[index].Step == step && r.Steps[index].Deferred == "" {
-				r.Steps[index].Done = true
-			}
+// unmark takes a step back. A dump is journalled when it starts, because its
+// staging decision is what an operator needs when a job is killed; if the
+// sub-process then exits non-zero, the step did not happen after all
+// (`BKP-25`).
+func (r *Result) unmark(step Step) {
+	for index := range r.Steps {
+		if r.Steps[index].Step == step {
+			r.Steps[index].Done = false
 		}
 	}
 }

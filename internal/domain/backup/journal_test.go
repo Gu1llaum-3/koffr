@@ -53,10 +53,11 @@ func TestBKP20TheSevenStepsAreJournalledInOrder(t *testing.T) {
 		}
 	}
 
-	// And the one that is not implemented says so rather than looking done.
-	if !strings.Contains(journal.detailOf(backup.StepVerification), "3") {
-		t.Errorf("the verification does not say which lot brings it: %q",
-			journal.detailOf(backup.StepVerification))
+	// And the verification is a step like the others: it carries what it
+	// concluded. It used to carry a note saying it was not in this release —
+	// `A-20` turned that round.
+	if facts := journal.factsOf(backup.StepVerification); !slices.Contains(facts, "checksum_ok") {
+		t.Errorf("the verification does not say what it concluded; it carries %v", facts)
 	}
 }
 
@@ -102,6 +103,7 @@ func TestBKP21TheJournalOnlyCarriesFactsThatWereDeclared(t *testing.T) {
 		"staging", "staging_reason",
 		"pipeline", "raw_bytes", "stored_bytes", "sha256_raw", "sha256_stored",
 		"path", "destinations", "destination",
+		"checksum_ok", "structure_ok", "detail",
 	}
 
 	world := newWorld(t)
@@ -169,16 +171,6 @@ func (r *recordingJournal) factsOf(step backup.Step) []string {
 	}
 
 	return names
-}
-
-func (r *recordingJournal) detailOf(step backup.Step) string {
-	for _, entry := range r.entries {
-		if entry.Step == step {
-			return entry.Deferred
-		}
-	}
-
-	return ""
 }
 
 func (r *recordingJournal) String() string {

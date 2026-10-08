@@ -150,17 +150,17 @@ Constaté dans le code, dans le catalogue d'une vraie session de recette et sur 
 
 Les deux bloquantes d'abord, et la plus simple des deux en premier : elle est le critère de sortie.
 
-- [ ] **1.1** Test d'abord `internal/domain/backup/service_test.go` — **`BKP-24`** : sur un job qui
+- [x] **1.1** Test d'abord `internal/domain/backup/service_test.go` — **`BKP-24`** : sur un job qui
       **échoue à l'étape du dump**, aucune étape rendue ne porte de mention d'absence. Le test
       parcourt les sept et vérifie que le champ est vide partout, chemin d'échec compris.
-- [ ] **1.2** Retirer `deferredToLot3`, le champ `Deferred` et `journalDeferred`. Le test de la
+- [x] **1.2** Retirer `deferredToLot3`, le champ `Deferred` et `journalDeferred`. Le test de la
       vague 4 du lot 3 qui les retournait est **retourné à nouveau**, pas supprimé.
-- [ ] **1.3** Test — **`BKP-25`**, `A-21` : quand un sous-process meurt en cours de flux, l'étape
+- [x] **1.3** Test — **`BKP-25`**, `A-21` : quand un sous-process meurt en cours de flux, l'étape
       rapportée est **`dump`**, pas celle qui lisait le flux. Le test ferme le flux en erreur
       pendant la compression et lit l'étape rendue **et** la ligne de journal.
-- [ ] **1.4** `internal/domain/backup/rules.md` : `BKP-24`, `BKP-25`, avec leur source (`E-024`,
+- [x] **1.4** `internal/domain/backup/rules.md` : `BKP-24`, `BKP-25`, avec leur source (`E-024`,
       `A-20`, `A-21`).
-- [ ] **1.5** Vague verte : `verify`, commit `fix(backup): no step is declared absent, not even when a job fails`.
+- [x] **1.5** Vague verte : `verify`, commit `fix(backup): no step is declared absent, not even when a job fails`.
 
 ### Vague 2 — Le dépôt se voit, même sans catalogue (`lot3c/wave-2-list-the-repository`)
 
@@ -294,5 +294,31 @@ scénario — c'est le schéma des corrections des lots 0, 1 et 2.
 - **`D-08`**, **`B-01`**, **`B-07`**, **`B-09`**, **`B-10`**.
 
 ## Journal d'exécution
+
+### Vague 1 — 2026-10-08
+
+**`N-8` ajoutée en route — une archive que rien n'a contrôlée n'est pas une sauvegarde.** En
+retirant la mention d'absence, le trou qu'elle masquait est apparu : un service construit **sans
+vérificateur** produisait un job qui **réussissait**, étape 06 muette. `P4` dit le contraire. Le
+job échoue désormais (`BKP-28`), et le monde de test câble un vérificateur par défaut, comme la
+production le fait depuis le lot 3. *Exclut* : laisser le domaine réussir sur un câblage incomplet.
+
+**`A-30` trouvée en corrigeant `A-21`** — et c'est la plus grave des deux. En mode **flux**, la
+fermeture du dump était avalée par un `defer func() { _ = dump.Close() }()`. Or `Close` est ce qui
+attend le sous-process et transforme un code de sortie non nul en erreur. Un `pg_dump` mort après
+que son tube a atteint la fin de fichier laissait donc une archive **tronquée** que koffr écrivait,
+vérifiait et appelait sauvegarde — `pg_restore --list` rend 0 sur un dump tronqué, mesuré au lot 3.
+Le test l'a constaté noir sur blanc : sept étapes faites, `Verification:{Checked:true
+ChecksumOK:true StructureOK:true}`, sur un dump mort. Corrigée dans la même vague (`BKP-27`), et
+inscrite au registre.
+
+**Écart au plan, assumé** : la vague livre quatre règles au lieu des deux prévues — `BKP-24` et
+`BKP-25` du plan, plus `BKP-27` (`A-30`) et `BKP-28` (`N-8`). Les deux ajoutées sont dans le même
+code et la même séance de test ; les séparer aurait laissé `main` avec une brèche `P4` connue.
+
+**Le dump garde sa première ligne de journal.** Un job qui meurt en cours de dump écrit
+`step done dump` avec sa décision de tampon, puis `step failed dump`. La première est ce qu'un job
+tué laisse derrière lui — la raison d'être de `BKP-20` —, la seconde est ce qu'`A-21` demande.
+L'étape est **reprise** dans le résultat (`Done: false`), de sorte que l'écran ne la compte pas.
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.
