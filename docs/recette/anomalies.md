@@ -20,6 +20,17 @@
 | A-16 | lot 2, 2026-09-22 | 6.2 — verrou orphelin | koffr **reprend bien** le verrou d'un processus tué (`kill -9`), mais **laisse le fichier de tampon** : 13 Mo dans `/var/lib/koffr/tmp`, que la relance ne purge pas. `internal/state.Open` **sait** purger ce répertoire (`E-026`), mais `koffr backup` n'ouvre jamais l'état (`N-13`), donc le chemin n'est jamais emprunté. Sur une machine où les jobs sont interrompus — arrêt, OOM, `SIGTERM` de `F3.9` —, le disque se remplit sans borne : exactement ce que `E-061` existe pour éviter. | **bloquant** | Le répertoire de tampon est **purgé au démarrage d'un job**, et le fichier de tampon retiré même quand le job échoue | `lot2c/wave-2-purge-staging` (PR #30) |
 | A-17 | lot 2, 2026-09-22 | décision `Q-04` | `N-2` du plan promettait que le champ de **destinataires par base** serait « **ajouté au schéma dès ce lot**, même vide, pour ne pas casser la configuration plus tard ». Il **n'existe pas** dans `config.Database`. Rien ne le testait, donc rien ne l'a signalé. C'est précisément le champ dont `Q-04` doit trancher la sémantique. | gênant | Corrigée par **ADR-0016** (`Q-04`) : le champ par base existe dès le plan de corrections, et **remplace** la liste globale | `lot2c/wave-5-adr-0016` (PR #33) |
 | A-18 | lot 2, 2026-09-22 | 7 — journal | Le journal ne contient que **`command started`**, 21 lignes pour 21 commandes. **Aucune trace du résultat d'une sauvegarde** : ni l'archive écrite, ni les tailles, ni l'empreinte, ni la destination, ni l'échec. Pour un agent lancé par `cron` à 2 h du matin, le fichier de `E-026` est la **seule** trace qui subsiste — et avec `A-12`, la sortie du terminal part dans le courrier de `cron` ou nulle part. | **bloquant** | **Une ligne par étape** des sept de `E-024`, plus la ligne d'échec nommant l'étape. Un job tué laisse ainsi la trace de ce qu'il avait fait | `lot2c/wave-4-job-journal` (PR #32) |
+| A-19 | lot 3, 2026-10-08 | 2.1 — `koffr list` | **Les archives écrites avant le lot 3 sont invisibles.** Une sauvegarde prise avec le binaire du lot 2 est bien sur le disque — `boutique_20261008T120000Z_01M4DP4Y8K35XDW9MBMKA6SGD4.pgc.zst.age` — et `koffr list` ne la montre **pas du tout** : rien ne l'inscrit au catalogue, et rien ne balaie le dépôt. Le scénario attendait l'inverse en toutes lettres (« `koffr list` doit les montrer **non vérifiées**, pas les cacher »). Un exploitant qui met à jour perd de vue tout son historique, et la rétention du lot 6 comptera des copies qu'elle ne voit pas. | **bloquant** | **`koffr list` lit aussi le dépôt** : une archive présente sur une destination et absente du catalogue est montrée, marquée « not in the catalogue ». Le manifeste la renseigne quand il est là ; sinon seul le nom du fichier parle | |
+| A-20 | lot 3, 2026-10-08 | 4.1 — étape déclarée absente | Sur un job qui **échoue avant la vérification**, `koffr backup` affiche encore `pending  verification — not in this release: verification arrives at the lot 3`, en exécutant le lot 3. `freshSteps()` pré-remplit `Deferred` avec `deferredToLot3` (`internal/domain/backup/service.go:40,742`) et seul le chemin nominal l'efface. Le **critère de sortie n° 6** du lot — « `koffr backup` ne déclare plus aucune étape absente » — n'est donc tenu que quand tout va bien. | **bloquant** | Le champ `Deferred` **disparaît** : au lot 3 aucune des sept étapes n'est absente, sur aucun chemin | |
+| A-21 | lot 3, 2026-10-08 | 4.1 — l'étape nommée | Quand `pg_dump` meurt en cours de flux, l'étape rapportée est **`compression`** : le journal écrit `step dump: done`, puis `step compression: failed — /usr/bin/pg_dump failed: exit status 1`. C'est inhérent au flux — le dump est « fait » dès qu'il est lancé, et son échec n'apparaît qu'à la lecture — mais l'exploitant est envoyé sur la mauvaise étape, et le parcours demande justement « l'étape qui a cassé, nommée ». | gênant | L'échec d'un sous-process est rapporté sur l'étape **`dump`**, quel que soit le moment où il est lu | |
+| A-22 | lot 3, 2026-10-08 | 5.3 — champ `format` du manifeste | Le manifeste écrit `"format": "pgc"` ; le § 5.3 du CDC écrit `"pg_custom"`. koffr réutilise l'**extension de fichier** comme valeur du champ (`extensionFor`, `internal/cli/backup.go:257`). `E-058` demande les dix-sept champs « dans la forme exacte du § 5.3 », et le test unitaire du manifeste emploie bien `pg_custom` : c'est le câblage qui diverge, pas la règle. | gênant | Le manifeste écrit **`pg_custom`**, comme le § 5.3. L'extension du fichier reste `pgc` — ce sont deux choses différentes | |
+| A-23 | lot 3, 2026-10-08 | 1.1 et 5.3 — fuseau horaire | `koffr list` affiche `2026-10-08 11:58Z` et le manifeste `"started_at": "2026-10-08T11:58:30Z"`, **en UTC**, alors que la configuration déclare `agent.timezone: Europe/Paris`. ADR-0006 dit « la conversion vers `agent.timezone` se fait **à l'affichage et à l'écriture du manifeste** », et le § 5.3 montre `"2026-09-18T02:00:03+02:00"`. Le stockage en UTC est juste ; c'est la restitution qui manque. Accessoirement `koffr verify` rend `2026-10-08T12:00:13Z` et `koffr list` `2026-10-08 11:58Z` — deux formats pour la même donnée. | gênant | **ADR-0006 appliqué partout** : la base reste en UTC, l'affichage et le manifeste rendent `agent.timezone`, et un seul format d'horodatage sert à toute l'interface | |
+| A-24 | lot 3, 2026-10-08 | 3.2 et 5.2 — manifeste figé | `koffr verify` fait passer le catalogue à `failed`, mais **ne touche pas le manifeste**, qui continue d'annoncer `"verified": {"checksum": true, "structure": true}`. L'inventaire sans koffr — le **critère de sortie n° 3** — rend donc « vérifiée » une archive que koffr sait corrompue. Atténuation mesurée : le manifeste porte `sha256_stored`, et `jq` + `sha256sum` démasquent la corruption sans koffr et sans clé (vérifié en séance, l'archive corrompue ressort `EMPREINTE DIFFERENTE`). | gênant | **Le manifeste reste figé** — c'est l'instantané de la sauvegarde. Le `README` documente le contrôle `jq` + `sha256sum`, qui démasque la corruption sans koffr et sans clé | |
+| A-25 | lot 3, 2026-10-08 | 3.1 — ce que dit `koffr verify` | Sur une archive dont la structure n'a **jamais** été contrôlée — celle du lot 2, `verified = none` —, `koffr verify` affirme « It was checked while the dump streamed past, when the backup was taken (ADR-0017) ». C'est **faux pour cette archive**. L'état retenu, lui, est juste : le catalogue passe à `checksum` et `koffr list` affiche `yes, checksum only`. Seule la phrase sur-promet. | gênant | `koffr verify` ne parle du contrôle au vol **que s'il a eu lieu** ; sinon il dit que la structure n'a jamais été vérifiée | |
+| A-26 | lot 3, 2026-10-08 | prérequis — `doctor` muet sur `pg_restore` | Sans `pg_restore` nulle part sur la machine, **toute** sauvegarde PostgreSQL échoue — ce qui est voulu (ADR-0017, `P4`) et dit parfaitement : « no pg_restore on this machine, so the structure of the archive cannot be checked and P4 refuses to call it a backup: install the PostgreSQL client of major 18.6 ». Mais `koffr doctor` affiche une ligne **entièrement verte** : la commande faite pour dire « ça marchera » ne voit pas une panne garantie. Même classe qu'`A-11`. | gênant | **`doctor` le signale** : sans `pg_restore`, la ligne dit que cette base ne pourra pas être sauvegardée et nomme la majeure à installer | |
+| A-27 | lot 3, 2026-10-08 | 5 — destination inconnue | `koffr list --destination nexistepas` répond **`no backup in the catalogue yet`** et **code 0**. Une faute de frappe sur l'identifiant produit une liste vide rassurante, indiscernable d'un dépôt réellement vide. Même famille qu'`A-11` : une réponse nulle qui ne se distingue pas d'une absence. | gênant | `list --destination` sur un identifiant absent de la configuration **refuse** en nommant les destinations connues, code 1 | |
+| A-28 | lot 3, 2026-10-08 | 1.2 — colonnes jamais écrites | `backups.manifest` et `backups.job_id` restent **vides**, et la table `jobs` n'a **aucune ligne** alors que chaque sauvegarde porte un identifiant de job (visible dans le journal). Le schéma du lot 0 prévoyait les trois. Sans incidence sur ce lot, mais `jobs` est ce sur quoi le planificateur du lot 5 et les alertes du lot 6 s'appuieront, et le § 5.10 veut l'historique des exécutions. | gênant | La table **`jobs` reçoit sa ligne**, `backups.job_id` la référence, et `backups.manifest` garde le manifeste déposé | |
+| A-29 | lot 3, 2026-10-08 | journal — la table des matières entière | La ligne de journal `step done / verification` recopie **toute** la sortie de `pg_restore --list` dans son champ `detail` — ici 30 lignes dans un seul champ JSON. Deux problèmes : le journal devient illisible, et cette table des matières **nomme le propriétaire des objets**, c'est-à-dire l'utilisateur de connexion (`koffr_backup`) — précisément l'identifiant que le manifeste refuse de porter (`E-059`, `E-115`). | gênant | Le journal garde une **synthèse** de la table des matières — nombre d'entrées, et ce qui cloche s'il y a lieu — jamais son texte | |
 
 `A-12` à `A-18` tranchées le **2026-09-22** par le propriétaire, en session interactive, en même
 temps que `Q-01`, `Q-04`, `Q-07` et `Q-08` (**ADR-0016**). Corrections regroupées dans
@@ -81,3 +92,61 @@ voyaient.
 **Écart d'environnement, sans effet sur ce lot** : l'instance n'a pas Docker, que le scénario
 demande. Le lot 0 n'en a besoin que pour rejouer le spike (parcours 5 se contente de lire le
 rapport). À installer avant la recette du lot 1.
+
+## Session du lot 3 — 2026-10-08
+
+**Écart de dispositif, à acter** : l'instance Multipass de `D-01` est restée injoignable — le démon
+`multipassd` n'atteint plus ses propres instances (`exec` et `transfer` répondent `No route to
+host`) alors qu'un client TCP ordinaire du même poste ouvre le port 22 sans difficulté, et le
+redémarrage de l'instance ne termine jamais. La recette a donc été jouée sur un **parc Docker
+équivalent** : un conteneur `ubuntu:26.04` sans Go ni compilateur, deux binaires statiques
+`linux/arm64` — celui du lot 3 et celui du **lot 2** (`90b3f32`), pour produire de vraies archives
+d'avant —, PostgreSQL 18.6 et MariaDB 11.8.3 en conteneurs voisins, et une **seconde machine nue**
+sans koffr pour les parcours 5 et 6.
+
+Parc : `boutique` 400 000 commandes et 300 000 lignes (90 Mo), `erp` 250 000 factures. Deux clés
+`age` — opérationnelle et séquestre —, **les deux privées sorties de la machine** avant la première
+sauvegarde.
+
+| Parcours | Résultat |
+| --- | --- |
+| 1 Le catalogue existe enfin | ⚠️ `koffr list` montre l'archive, sa base, sa date, sa taille et son état ; `databases` et `backup_locations` sont remplies ; l'empreinte de configuration **change** quand l'hôte change (`9f74349a…` → `4fcf0a37…`, `CAT-01`, `E-028`). Mais `A-23` (fuseau) et `A-28` (colonnes vides) |
+| 2 Vérifié ou non, ça se voit | ⚠️ **quatre états, distincts par les mots seuls**, sans couleur et après redirection : `yes, in full`, `yes, checksum only`, `no — never checked`, `FAILED`. `E-064` tenue. Mais `A-19` : l'archive du lot 2 n'apparaît **pas du tout** |
+| 3 L'archive est vraiment relue | ✅ **critère de sortie n° 5 atteint.** Un octet changé au décalage 5000 → `koffr verify` échoue, affiche les deux empreintes, le catalogue passe à `failed`, `koffr list` affiche `FAILED`. Le refus de rejouer la structure est dit et motivé (ADR-0017). `A-24` et `A-25` sur les bords |
+| 4 Un dump qui n'en est pas un est refusé | ⚠️ le backend `pg_dump` tué en cours de flux → job en échec, **rien** sur le disque, **rien** dans le catalogue, **rien** dans le tampon, et le journal nomme une étape. Mais `A-20` (étape déclarée absente) et `A-21` (la mauvaise étape nommée) |
+| 5 **Le dépôt s'inventorie sans koffr** | ✅ **critère de sortie n° 3 atteint.** `jq` seul rend l'inventaire complet ; `jq` + `sha256sum` détectent même l'archive corrompue. Et l'exercice complet a été fait **depuis une machine sans koffr**, avec la **clé de séquestre** : `age -d \| zstd -d \| pg_restore` rend 400 000 commandes et 300 000 lignes, sommes identiques à l'originale ; `age -d \| zstd -d \| mariadb` rend 250 000 factures, somme identique. `A-22`, `A-23`, `A-24` sur la forme du manifeste |
+| 6 Ce qu'un stockage compromis livre | ✅ **critère de sortie n° 4 atteint.** Aucune occurrence de mot de passe, d'utilisateur, d'hôte, de port ni de clé privée dans tout le dépôt. Sans la clé : `age: no identity matched any of the recipients`, `zstd` et `pg_restore` refusent. Métadonnées livrées : noms de bases, moteur et **version exacte du serveur**, horodatages, tailles, chemin de l'outil, clés publiques |
+
+**La clé privée n'est nulle part** — `grep -rl AGE-SECRET-KEY /` sur toute la machine, après les
+onze sauvegardes, ne rapporte que les **binaires** (`koffr`, `koffr-lot2`, `age`, `age-keygen`) et
+les `/proc/<pid>/cmdline` de la recherche elle-même, qui se journalise en se faisant — le faux
+positif que le scénario du lot 2 annonçait. **Aucune des deux clés générées en séance n'est sur la
+machine.** Piège à retenir : `age-keygen` embarque **une clé privée complète et bien formée** dans
+son propre binaire (`AGE-SECRET-KEY-1N9JEPW6…`), qui n'est aucune des nôtres ; un `grep` qui
+cherche la forme, et non la valeur, la trouve et fait croire à une fuite.
+
+**Changement de comportement confirmé** : `koffr backup` d'une PostgreSQL **refuse** quand aucun
+`pg_restore` n'est joignable, avec un message qui nomme `P4` et la majeure à installer. Voulu. Le
+premier essai n'avait rien prouvé : cacher `/usr/bin/pg_restore` ne suffit pas, le résolveur trouve
+`/usr/lib/postgresql/18/bin/pg_restore` — ce qui est le comportement juste (`A-09`).
+
+**Critères de sortie du lot** : n° 1 atteint (sous réserve d'`A-19`), n° 2 atteint, n° 3 atteint,
+n° 4 atteint, n° 5 atteint, **n° 6 non atteint** (`A-20`).
+
+**Décisions attendues, en l'état** :
+
+1. **Lisibilité de `koffr list`** — les quatre états se lisent sans explication. Manque-t-il la
+   **durée**, le **nom de l'outil** ou l'**empreinte** ? Et `A-23`, le fuseau.
+2. **Champs du manifeste** — les seize clés de haut niveau plus les cinq de `tool` portent de quoi
+   décider une restauration six mois plus tard : base, moteur, version du serveur, outil et son
+   `argv`, chaîne de traitement, tailles et **les deux empreintes**. Rien n'a manqué à l'exercice
+   réel. Reste `A-22` (`pgc` au lieu de `pg_custom`) et `A-24` (le manifeste ne se met pas à jour).
+3. **Métadonnées en clair d'un dépôt volé** — position à confirmer, en sachant que `server_version`
+   donne la version **exacte** du serveur et `tool.path` l'arborescence de la machine.
+4. `Q-02` reste ouverte, comme prévu : elle demande S3, donc la recette du lot 4.
+
+**`A-19` à `A-29` tranchées le 2026-10-08** par le propriétaire, en session interactive, avec les
+deux décisions que le scénario lui réservait : les **métadonnées en clair** d'un dépôt volé sont
+confirmées telles quelles — un manifeste lisible est ce qui rend le dépôt exploitable quand koffr a
+disparu — et `koffr list` gagne **la durée du job** et **la taille brute du dump**, à côté de la
+taille stockée. Corrections regroupées dans **`docs/plans/lot-3-corrections.md`**.
