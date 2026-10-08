@@ -21,7 +21,7 @@ corriger avant de les envoyer.
 | #    | Question (titre) | Posée à | Posée le | Bloque | Répondue le |
 | ---- | ---------------- | ------- | -------- | ------ | ----------- |
 | ~~Q-01~~ | ~~Quel mode de tampon par défaut : `stage` ou `auto` ?~~ | rédacteur | 2026-09-18 | `E-053`, `E-029` | **2026-09-22 → ADR-0016** : `auto` |
-| Q-02 | La vérification relit-elle la destination ou le fichier tampon ? | rédacteur | 2026-09-18 | `E-062`, `E-068`, `E-079` | |
+| Q-02 | La vérification relit-elle la destination ou le fichier tampon ? | rédacteur | 2026-09-18 | `E-062`, `E-068`, `E-079` | **La destination**, tranché au lot 3 (`VRF-03`). **Laquelle** quand il y en a plusieurs : ouverte, lot 4 |
 | ~~Q-03~~ | ~~Par où entre la clé privée lors d'une restauration ?~~ | rédacteur | 2026-09-18 | `E-074`, `E-084`, `E-101` | **2026-09-18 → ADR-0007** |
 | ~~Q-04~~ | ~~Les destinataires de chiffrement sont-ils déclarés par base ou globalement ?~~ | rédacteur | 2026-09-18 | `E-073`, `E-037`, `E-132` | **2026-09-22 → ADR-0016** : globaux, une liste par base les **remplace** |
 | Q-05 | `min_interval` est-il un intervalle minimal ou maximal ? | rédacteur | 2026-09-18 | `E-091` | |
@@ -73,6 +73,13 @@ corrompue à l'envoi ne se voit pas) ;
 — la destination distante à chaque fois (egress nocturne facturé) ;
 — le fichier tampon avant envoi, plus l'empreinte renvoyée par la destination quand elle en fournit
 une (`ETag` S3), sans retéléchargement.
+
+**Tranché en partie au lot 3 (2026-10-08)** : la **destination est relue**, jamais le tampon ni ce
+que le pipeline a retenu en mémoire — `VRF-03` corrompt l'archive sur le disque entre l'écriture et
+la vérification et attend un échec. Reste ouverte : **laquelle**, quand il y en a plusieurs.
+`N-5` du plan du lot 3 pose un seul état de vérification par archive en attendant, et le coût de
+l'hypothèse est connu — une colonne nullable ajoutée à `backup_locations` par migration. Se tranche
+à la recette du **lot 4**, qui apporte S3 et donc l'egress réel.
 **Sous-question** : une archive vérifiée sur une destination et absente d'une autre est-elle
 « vérifiée » au sens de la rétention (`F7.3`), et le catalogue affiche-t-il l'état par destination ?
 **Hypothèse en attendant** : vérification sur la copie locale ou le tampon, vérification distante

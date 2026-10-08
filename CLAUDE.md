@@ -151,6 +151,12 @@ déjà.
 - **`golangci-lint` est au schéma v2** (`version: "2"`, sections `linters.settings`, `formatters`).
   Les formateurs sont rapportés par `golangci-lint run`, pas seulement par `fmt` : le format est
   donc bloquant.
+- **`_ = quelque chose.Close()` jette une erreur : dire laquelle.** Pour un sous-process, `Close`
+  est ce qui **attend** le processus et transforme un code de sortie non nul en erreur — c'est la
+  seule lecture de ce code. Un `defer func() { _ = dump.Close() }()` se lit comme un nettoyage et
+  jetait, au lot 3, la mort de `pg_dump` : koffr écrivait, vérifiait et appelait sauvegarde une
+  archive **tronquée**. Soit on lit l'erreur, soit on écrit en commentaire ce qu'on jette et
+  pourquoi.
 - **Outils gérés (spike `E-130`)** : `DT_RUNPATH` **ne s'hérite pas**. Poser un `runpath` sur le
   seul binaire laisse ses bibliothèques chercher les leurs dans le système ; il en faut un sur
   **chaque bibliothèque** du bundle. Et `PT_INTERP` est **absolu** — un bundle ne se déplace pas,
@@ -178,6 +184,11 @@ Les neuf règles d'ADR-0010, `AR-01` à `AR-09`, sont décrites avec ce qui les 
 - `protocol/` n'importe **rien** du dépôt : c'est ce que `koffr-server` importera.
 - Chaque module du domaine a un `rules.md` : règle, source (`E-nnn`, `Q-nn`, ADR ou `N-n`), test.
   Les adaptateurs n'en ont pas.
+- **Une garde de source lit l'arbre syntaxique, pas le texte.** Les gardes qui portent sur un
+  **appel** et non sur un import — `cmd.Print*`, `ulid.Make`, `time.Local`, la liste blanche des
+  faits de journal — parcourent l'AST avec `go/parser` et `ast.Inspect`. Écrite en `grep`, une
+  garde se signale sur sa propre phrase de commentaire, celle qui explique ce qu'elle interdit. Et
+  chacune a sa **fixture violante** : un contrôle qu'on n'a pas vu échouer ne prouve rien.
 - **Une violation fait échouer `verify`.** Toute règle ajoutée ici s'accompagne de sa fixture
   violante dans `internal/arch/testdata/`, sinon le contrôle ne prouve rien.
 

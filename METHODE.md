@@ -137,14 +137,20 @@ il n'écrit que ce qui lui est propre.
 1. Toutes les vagues du plan sont mergées, `verify` vert sur `main`, CI verte.
 2. Chaque exigence `E-nn` du lot est soit couverte (test + ligne de `rules.md` avec sa source),
    soit renvoyée par une décision écrite (`D-nn` ou ADR).
-3. Aucune règle métier sans test, aucun test sans règle nommée.
-4. Toute mutation vérifie les droits dans la couche métier, jamais dans la couche transport.
-5. Toute évolution de schéma a sa migration relue.
-6. Recette faite avec un utilisateur, **sur une machine distincte du poste de développement**,
+3. Aucune règle métier sans test, aucun test sans règle nommée. Une règle qui porte sur **ce que
+   le produit dit** se teste aussi sur le **chemin d'échec** : un cas nominal ne prouve rien de ce
+   qu'un job affiche quand il casse.
+4. **Aucune valeur par défaut n'affirme quoi que ce soit.** Un champ vide dit « pas encore » ; une
+   mention pré-remplie dit quelque chose, et survit au jour où elle devient fausse sans que rien ne
+   le signale. Au lot 3, une mention « pas dans cette version » semée dans chaque résultat neuf a
+   survécu à la version qui l'implémentait.
+5. Toute mutation vérifie les droits dans la couche métier, jamais dans la couche transport.
+6. Toute évolution de schéma a sa migration relue.
+7. Recette faite avec un utilisateur, **sur une machine distincte du poste de développement**,
    anomalies `A-nn` consignées, décisions attendues prises ou inscrites en `D-nn`. Quand la recette
    a donné lieu à des corrections, le scénario est **rejoué en entier** après elles : une recette
    corrigée mais non rejouée ne voit pas ce que ses propres corrections ont cassé.
-7. `docs/retro/lot-N.md` écrite, roadmap cochée, ADR écrits pour toute décision structurante prise
+8. `docs/retro/lot-N.md` écrite, roadmap cochée, ADR écrits pour toute décision structurante prise
    en route, skill de stack amendé, `METHODE.md` amendée si la rétro le demande.
 
 ## Règles de pilotage
@@ -155,5 +161,9 @@ il n'écrit que ce qui lui est propre.
   créneau tenu deux fois de suite, le lot est en risque et la roadmap le dit.
 - **Pas de chiffrage en semaines dans la roadmap** : on pilote par lots livrés et critères de sortie.
   Un chiffrage, s'il est demandé, vit dans le plan et se relit à la rétro.
+- **Une hypothèse de diagnostic se défend avant le geste irréversible**, pas après. Quand on tient
+  une explication de ce qui ne marche pas, on la dit et on la teste **avant** de supprimer,
+  réinstaller ou recréer. Au lot 3, une machine virtuelle a été détruite pour rien alors que la
+  bonne hypothèse était déjà formulée.
 - **Le cahier des charges est une source, pas une vérité** : une exigence qui contredit une mesure
   ou un usage observé devient une `Q-nn` ou une `D-nn`, pas une ligne de code.

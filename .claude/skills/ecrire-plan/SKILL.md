@@ -18,15 +18,20 @@ puis exécuté mécaniquement par `/executer-plan`. Un bon plan rend l'exécutio
    plan depuis le résumé.
 3. Lire les ADR acceptés qui touchent le lot, `ARCHITECTURE.md`, les `rules.md` des modules
    concernés, la rétro du lot précédent (`docs/retro/`).
-4. **Vérifier l'état de départ dans le code et la base** : les fichiers existent-ils, les tables
-   ont-elles des lignes, les tests passent-ils. Écrire ce qu'on a constaté, daté. Un plan bâti sur
-   une supposition fausse coûte une vague.
+4. **Vérifier l'état de départ dans le code et dans le schéma** : les fichiers existent-ils, les
+   tables ont-elles des lignes, **les colonnes existent-elles déjà**, les tests passent-ils. Écrire
+   ce qu'on a constaté, daté. Un plan bâti sur une supposition fausse coûte une vague — et au
+   lot 3, une migration prévue était inutile parce que la colonne était au schéma depuis le lot 0.
+   Une migration qu'on n'écrit pas est une migration qu'on n'a pas à relire.
 5. **Mesurer** si des données existent : comptages, valeurs distinctes, cas limites présents.
    Coller les chiffres dans le plan.
 
 ## Écrire
 
-Depuis `docs/plans/0000-template.md`, dans `docs/plans/lot-N-<nom-kebab>.md`. Les règles communes
+**Ouvrir `docs/plans/0000-template.md` et écrire dedans** — jamais de mémoire : un plan écrit de
+mémoire perd des sections et, surtout, emploie des listes numérotées là où `/executer-plan` cherche
+des cases `- [ ]`, de sorte qu'il ne voit aucune tâche. Le fichier va dans
+`docs/plans/lot-N-<nom-kebab>.md`. Les règles communes
 sont dans `METHODE.md` § « Exécution d'un plan » : **on ne les répète pas et on n'hérite pas d'un
 autre plan** (« celles du lot précédent, plus… » est interdit). Le plan n'écrit que ce qui lui est
 propre.
