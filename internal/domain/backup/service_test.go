@@ -853,3 +853,22 @@ func TestBKP28AnArchiveNothingCheckedIsNotABackup(t *testing.T) {
 		t.Error("the verification reported itself done, and nothing ran it")
 	}
 }
+
+// A job that wrote nothing does not describe an archive. `A-20` was the screen
+// claiming a step it had not run; this is the screen claiming a file that is
+// not there — `archive …`, `0 bytes stored`, an empty checksum and an empty
+// list of destinations, under the error that says the dump died.
+func TestAFailedJobDescribesNoArchive(t *testing.T) {
+	world := newWorld(t)
+	world.dumper.closeFail = errors.New("/usr/bin/pg_dump failed: exit status 1")
+
+	result, err := world.service().Run(t.Context(), request())
+	if err == nil {
+		t.Fatal("a job whose dump died reported success")
+	}
+
+	if result.Wrote() {
+		t.Errorf("the job claims it wrote an archive: %d bytes, checksum %q, destinations %v",
+			result.StoredBytes, result.SHA256Stored, result.Destinations)
+	}
+}
