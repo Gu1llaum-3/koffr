@@ -72,7 +72,19 @@ while read -r manifest; do
   done
 done <<<"$manifests"
 
-# And the archive it describes is there, at the size it announces.
+# And the archive it describes is there, at the size **and the checksum** it
+# announces. The size alone misses a byte that changed in place, which is what
+# the acceptance session of 2026-10-08 did to one archive with `dd`: the
+# manifest carries `sha256_stored` precisely so that a repository can be checked
+# without koffr, and the script that proves the promise has to use it.
+if command -v sha256sum >/dev/null 2>&1; then
+  checksum() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  checksum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  checksum() { echo "no-sha256-tool"; }
+fi
+
 while read -r manifest; do
   archive="${manifest%.json}"
   [ -f "$archive" ] || { echo "  $manifest describes an archive that is not there" >&2; exit 1; }
@@ -81,6 +93,18 @@ while read -r manifest; do
   actual=$(wc -c <"$archive" | tr -d ' ')
   [ "$announced" = "$actual" ] ||
     { echo "  $manifest announces $announced bytes, the archive has $actual" >&2; exit 1; }
+
+  announced=$(jq -r '.sha256_stored' "$manifest")
+  actual=$(checksum "$archive")
+
+  if [ "$actual" = "no-sha256-tool" ]; then
+    echo "  (no sha256sum here, the checksums were not recomputed)" >&2
+  elif [ "$announced" != "$actual" ]; then
+    echo "  $manifest announces the checksum $announced, the archive hashes to $actual" >&2
+
+    exit 1
+  fi
 done <<<"$manifests"
 
-echo "  ok    $count archives inventoried with jq alone, without koffr and without a private key" >&2
+echo "  ok    $count archives inventoried and checksummed with jq alone," >&2
+echo "        without koffr and without a private key" >&2

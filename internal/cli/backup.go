@@ -320,7 +320,7 @@ func renderPlan(cmd *cobra.Command, planned backup.Result) {
 }
 
 func renderBackup(cmd *cobra.Command, done backup.Result) {
-	if done.Path == "" {
+	if !done.Wrote() {
 		return
 	}
 

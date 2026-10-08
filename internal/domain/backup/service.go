@@ -246,6 +246,14 @@ func (s *Service) journal(request Request, step Step, failed error, facts ...Fac
 	})
 }
 
+// Wrote says whether an archive really landed. A job that failed mid-way has a
+// path — it is chosen before the first byte — and nothing at the end of it; a
+// screen that describes the archive anyway sends an operator looking for a file
+// that is not there.
+func (r Result) Wrote() bool {
+	return r.StoredBytes > 0 && r.SHA256Stored != "" && len(r.Destinations) > 0
+}
+
 // Result is what a job did. It is filled as the job goes, and returned even
 // when the job fails: what ran before the failure is what an operator needs.
 type Result struct {

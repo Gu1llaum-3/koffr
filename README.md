@@ -155,7 +155,49 @@ jq -r '[.database_id, .started_at, .size_stored,
 A manifest says what the archive is, how it was written and what can read it back: the engine and
 its version, the tool with its version and its arguments, the pipeline, both checksums, and the
 public keys it was encrypted for. It says nothing that opens a database — no host, no user, no
-password. That is the whole point: a stolen repository gives up metadata and nothing else.
+password.
+
+### Check an archive without koffr
+
+The manifest carries `sha256_stored`, the checksum of the file beside it. That is enough to find a
+corrupted archive with no koffr and no key:
+
+```sh
+for manifest in /srv/backups/*/*/*/*.json; do
+  archive="${manifest%.json}"
+  announced=$(jq -r .sha256_stored "$manifest")
+  actual=$(sha256sum "$archive" | cut -d' ' -f1)
+  [ "$announced" = "$actual" ] && echo "ok   $archive" || echo "WRONG $archive"
+done
+```
+
+Run it. It is the check `koffr verify` performs, done by hand — and in the acceptance session of
+2026-10-08 it caught an archive in which a single byte had been changed.
+
+**A manifest does not change after the backup.** It is the snapshot of what the job did, which is
+why a repository stays readable when koffr is gone. So when `koffr verify` later finds an archive
+corrupted, it records the failure in its own catalogue and leaves the manifest alone: the manifest
+still says the archive was verified — **when it was written**, which was true. The loop above is
+what tells you about the file as it is now.
+
+### What a stolen repository gives up
+
+The manifests are unencrypted, deliberately, and that is a trade made with open eyes. Someone who
+takes the repository and nothing else reads:
+
+- the **names** of the databases, and which engine each one runs;
+- the **exact version** of each server — `18.6`, not `18`;
+- **when** each backup was taken, how long it took and how big it was;
+- the **path** of the tool that produced it, which says something about the machine;
+- the **public keys** the archive was encrypted for.
+
+They do not read a host, a user, a password, a key file, or one byte of your data: the archive is
+encrypted for keys koffr does not hold, and `age` refuses it with `no identity matched any of the
+recipients`.
+
+This was confirmed on a real repository at the acceptance session of 2026-10-08 and the position
+stands: a manifest that could not be read would make the repository unusable the day koffr is
+gone, which is the failure this product exists to prevent.
 
 ### Open an archive without koffr
 

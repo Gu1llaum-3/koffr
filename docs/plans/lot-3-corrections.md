@@ -1,6 +1,7 @@
 # Plan lot 3 — Corrections de recette
 
-> Statut : **validé par le propriétaire le 2026-10-08**. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
+> Statut : **terminé le 2026-10-08** — six vagues mergées, `verify` et CI verts, les six parcours
+> rejoués sur le parc de recette. Validé par le propriétaire le 2026-10-08. Exécuté par `/executer-plan`. Les règles communes à tous les plans sont
 > dans `METHODE.md` § « Exécution d'un plan » et ne sont pas répétées ici.
 
 Travail issu de la session de recette du lot 3 (2026-10-08). Cinq des six critères de sortie du lot
@@ -232,18 +233,18 @@ Les deux bloquantes d'abord, et la plus simple des deux en premier : elle est le
 
 ### Vague 6 — Le dépôt se lit sans nous (`lot3c/wave-6-document-the-repository`)
 
-- [ ] **6.1** `README` : comment vérifier une archive **sans koffr** — `jq` + `sha256sum` contre
+- [x] **6.1** `README` : comment vérifier une archive **sans koffr** — `jq` + `sha256sum` contre
       `sha256_stored` —, et pourquoi le manifeste ne suit pas un `verify` en échec (`A-24`, décision
       du 2026-10-08). Le geste est **mesuré** : il a démasqué l'archive corrompue en séance.
-- [ ] **6.2** `README` : ce qu'un dépôt volé livre, nommément — bases, moteur, version exacte du
+- [x] **6.2** `README` : ce qu'un dépôt volé livre, nommément — bases, moteur, version exacte du
       serveur, horodatages, tailles, chemin de l'outil, clés publiques — et pourquoi c'est voulu
       (§ 6 confirmé le 2026-10-08).
-- [ ] **6.3** `scripts/check-inventory.sh` : ajouter le contrôle d'empreinte au contrôle de taille.
+- [x] **6.3** `scripts/check-inventory.sh` : ajouter le contrôle d'empreinte au contrôle de taille.
       Le script compare aujourd'hui `size_stored` au fichier ; il comparera aussi `sha256_stored`.
       C'est ce qui a trouvé la corruption en séance, et c'est à une ligne de `sha256sum`.
-- [ ] **6.4** Rejouer les six parcours de `docs/recette/lot-3-scenario.md` sur le parc de recette,
+- [x] **6.4** Rejouer les six parcours de `docs/recette/lot-3-scenario.md` sur le parc de recette,
       et mesurer le binaire. Écart attendu : faible. Marge actuelle : 13 Mio sous `E-117`.
-- [ ] **6.5** Vague verte : `verify`, commit `docs: read an archive repository without koffr, and what it reveals`.
+- [x] **6.5** Vague verte : `verify`, commit `docs: read an archive repository without koffr, and what it reveals`.
 
 ## Vérification de bout en bout
 
@@ -402,5 +403,27 @@ ce cas, par `errFleetInTrouble`, ce qui est un changement de comportement à ann
 sans, elle dit `no` pour PostgreSQL, `yes` pour MariaDB, la phrase nomme la majeure à installer et
 le code est 1. Et `koffr verify` sur une archive à `verified = none` dit que sa structure n'a
 jamais été contrôlée, au lieu d'affirmer qu'elle l'a été au vol.
+
+### Vague 6 — 2026-10-08
+
+**Le contrôle d'empreinte du script a été vu échouer.** `check-inventory.sh` comparait la taille
+annoncée au fichier ; il compare maintenant aussi `sha256_stored`, parce qu'un octet changé en place
+ne change pas la taille — ce qu'`A-24` avait rendu visible. Prouvé en sabotant une copie du script :
+`announces the checksum 6547ac91…, the archive hashes to f742f787…`, **code 1**.
+
+**Un job en échec ne décrit plus d'archive.** Constaté en rejouant le parcours 4 : sous l'erreur du
+dump mort, l'écran affichait encore `archive …`, `0 bytes stored`, une empreinte vide et une liste
+de destinations vide. Le chemin est choisi avant le premier octet ; il ne veut pas dire qu'un
+fichier existe. `Result.Wrote()` le dit, et `renderBackup` s'y tient. Même famille qu'`A-20` : un
+écran qui annonce ce qui n'a pas eu lieu.
+
+**Binaire mesuré** : 17,3 / 16,4 / 16,8 Mio pour les trois cibles, **inchangé** depuis la fin du
+lot 3. Marge : 12,7 Mio sous `E-117`.
+
+**Les six parcours rejoués sur le parc de recette**, dans l'ordre du scénario. Les quatre états de
+`koffr list` vus côte à côte — `yes, in full`, `no — never checked`, `FAILED`,
+`not in the catalogue` —, l'inventaire rendu par `jq` seul avec les horodatages en `+02:00`, le
+contrôle d'empreinte attrapant l'archive corrompue, et aucun identifiant de connexion dans tout le
+dépôt sur six motifs cherchés.
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.

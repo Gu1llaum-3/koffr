@@ -19,6 +19,22 @@ Durée attendue : une heure, préparation des bases non comprise.
   c'est un cas qu'on veut voir.
 - Prépare : le propriétaire.
 
+## Ce que les corrections ont changé (2026-10-08)
+
+Ce scénario a été joué une première fois le 2026-10-08 ; il a trouvé onze anomalies, corrigées dans
+`docs/plans/lot-3-corrections.md`. Qui le rejoue verra donc, **différent de ce qui suit** :
+
+- une archive écrite avant le lot 3 apparaît dans `koffr list`, marquée **`not in the catalogue`**,
+  et non « non vérifiée » : koffr n'a aucune trace de l'avoir contrôlée (`A-19`, `CAT-06`) ;
+- `koffr list` et `koffr verify` affichent l'heure de `agent.timezone` avec son décalage, et le
+  manifeste aussi (`A-23`) ; le champ `format` du manifeste vaut **`pg_custom`** (`A-22`) ;
+- `koffr list` porte deux colonnes de plus, **`TOOK`** et **`DUMPED`** ;
+- `koffr doctor` porte une colonne **`VERIFIABLE`** et **échoue** sur une machine sans `pg_restore`
+  (`A-26`) ;
+- `koffr list --destination <inconnue>` **refuse**, code 1 (`A-27`) ;
+- `koffr verify` d'une archive jamais contrôlée dit que sa structure n'a **jamais** été vérifiée
+  (`A-25`).
+
 ## Ce qui est voulu et pourrait passer pour un bug
 
 | Constat | Pourquoi c'est voulu |
@@ -30,7 +46,9 @@ Durée attendue : une heure, préparation des bases non comprise.
 | Aucune revérification périodique des vieilles archives | `E-065`, lot 6 — et elle ne portera que sur l'empreinte, pour la raison d'ADR-0017 |
 | Une seule destination possible | S3 et SFTP au lot 4 |
 | `koffr restore` n'existe pas | Lot 4 |
-| Les archives du lot 2 n'ont pas de manifeste | Elles ont été écrites avant. Rien ne les rattrape : `koffr list` doit les montrer **non vérifiées**, pas les cacher |
+| Les archives du lot 2 n'ont pas de manifeste | Elles ont été écrites avant. Rien ne les rattrape : depuis `A-19`, `koffr list` les montre **`not in the catalogue`** — ni vérifiées, ni cachées |
+| Le manifeste ne suit pas un `koffr verify` en échec | `A-24` : le manifeste est l'instantané de la sauvegarde, pas un état vivant. Il porte `sha256_stored`, et `jq` + `sha256sum` démasquent la corruption sans koffr — le `README` le documente |
+| La lecture d'une destination n'écrit **rien** au catalogue | `N-1` du plan de corrections : le catalogue reste la trace de ce que **ce** koffr a fait, la destination reste la vérité du dépôt (ADR-0006) |
 
 ## Parcours
 
