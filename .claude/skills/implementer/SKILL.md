@@ -56,7 +56,11 @@ ferait tomber — et le vérifier. Deux pièges vus en vrai :
   `stderr` intervertis, et le test est vert pendant que la machine écrit sur la mauvaise sortie. Un
   harnais est du code, il se relit comme le reste ;
 - la **fixture est trop petite** pour que le défaut se voie : une table de trois lignes ne montre
-  pas qu'un dump était déjà compressé. Quand la règle parle de volume, la fixture en a.
+  pas qu'un dump était déjà compressé. Quand la règle parle de volume, la fixture en a ;
+- le test ne regarde que le **chemin nominal** : une règle qui porte sur ce que le produit **dit**
+  — une étape rapportée, un message, une colonne — se teste aussi quand le travail **échoue**. Au
+  lot 3, une mention « pas dans cette version » n'était effacée que par la réussite, de sorte que
+  tout job en échec l'affichait, dans la version qui l'implémentait.
 
 **Une règle de lint qu'on assouplit s'accompagne de la garde qui la remplace, le jour même.**
 ADR-0013 a ouvert `database/sql` à `internal/engine` ; `internal/engine/queries_test.go` lit les
