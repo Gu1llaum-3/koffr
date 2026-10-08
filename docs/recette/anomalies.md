@@ -144,6 +144,7 @@ n° 4 atteint, n° 5 atteint, **n° 6 non atteint** (`A-20`).
 3. **Métadonnées en clair d'un dépôt volé** — position à confirmer, en sachant que `server_version`
    donne la version **exacte** du serveur et `tool.path` l'arborescence de la machine.
 4. `Q-02` reste ouverte, comme prévu : elle demande S3, donc la recette du lot 4.
+| A-30 | lot 3, correction 2026-10-08 | trouvée en corrigeant `A-21` | **En mode flux, un dump mort passait inaperçu.** `stream` fermait le dump par `defer func() { _ = dump.Close() }()`, or `Close` est ce qui attend le sous-process et transforme un code de sortie non nul en erreur. Un `pg_dump` qui meurt après que son tube a atteint la fin de fichier laissait une archive **tronquée** que koffr écrivait, vérifiait et appelait sauvegarde — `pg_restore --list` rend 0 sur un dump tronqué, mesuré au lot 3. Constaté par le test : sept étapes faites et `Verification:{Checked:true ChecksumOK:true StructureOK:true}` sur un dump mort. Brèche de `P4`. | **bloquant** | La fermeture du dump est lue dans les deux modes, et son code de sortie fait échouer l'**étape du dump** | `lot3c/wave-1-no-deferred-step` |
 
 **`A-19` à `A-29` tranchées le 2026-10-08** par le propriétaire, en session interactive, avec les
 deux décisions que le scénario lui réservait : les **métadonnées en clair** d'un dépôt volé sont

@@ -330,12 +330,6 @@ func renderBackup(cmd *cobra.Command, done backup.Result) {
 	say(cmd, "sha256   %s\n", done.SHA256Stored)
 	say(cmd, "sent to  %s\n", strings.Join(done.Destinations, ", "))
 
-	for _, outcome := range done.Steps {
-		if outcome.Deferred != "" {
-			say(cmd, "pending  %s — %s\n", outcome.Step, outcome.Deferred)
-		}
-	}
-
 	for _, warning := range done.Warnings {
 		warn(cmd, "%s\n", warning)
 	}
@@ -361,9 +355,6 @@ func (j slogJournal) Step(entry backup.JobStep) {
 	switch {
 	case entry.Failed != nil:
 		j.logger.Error("step failed", append(attributes, slog.String("error", entry.Failed.Error()))...)
-
-	case entry.Deferred != "":
-		j.logger.Info("step deferred", append(attributes, slog.String("deferred", entry.Deferred))...)
 
 	default:
 		j.logger.Info("step done", attributes...)

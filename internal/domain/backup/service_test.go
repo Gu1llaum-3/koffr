@@ -20,9 +20,9 @@ import (
 )
 
 // BKP-06 — the seven steps of E-024 happen **in that order**, and the result
-// says so. The last two are not in this release: they are reported as deferred,
-// named, and never as done. A job that claims to have verified what it did not
-// is the failure mode § 2 P3 exists to prevent.
+// says so. All seven run at this release; a job that claims to have verified
+// what it did not is the failure mode § 2 P3 exists to prevent, and a job that
+// declares a step absent in a release that implements it is `A-20`.
 func TestBKP06TheSevenStepsHappenInTheOrderOfTheSpecification(t *testing.T) {
 	world := newWorld(t)
 
@@ -51,17 +51,10 @@ func TestBKP06TheSevenStepsHappenInTheOrderOfTheSpecification(t *testing.T) {
 		}
 	}
 
-	// The manifest is written since the wave 3 of the lot 3; the verification
-	// arrives at the wave 4. What is not implemented **says so**.
-	if !result.Steps[6].Done {
-		t.Errorf("the manifest step did not run: %+v", result.Steps[6])
-	}
-
-	if result.Steps[5].Done {
-		t.Errorf("the verification reported itself done, and it is not implemented")
-	}
-	if !strings.Contains(result.Steps[5].Deferred, "3") {
-		t.Errorf("the verification does not say which lot brings it: %q", result.Steps[5].Deferred)
+	for _, outcome := range result.Steps[5:] {
+		if !outcome.Done {
+			t.Errorf("the step %q did not run: %+v", outcome.Step, outcome)
+		}
 	}
 }
 
@@ -226,6 +219,7 @@ func newWorld(t *testing.T) *world {
 		history:     &fakeHistory{},
 		destination: newDestination(),
 		manifester:  &fakeManifester{},
+		verifier:    &fakeVerifier{},
 	}
 }
 
@@ -265,7 +259,12 @@ func (f *fakeResolver) Resolve(context.Context, string) (backup.Resolution, erro
 }
 
 type fakeDumper struct {
-	fail     error
+	fail error
+
+	// closeFail is what the sub-process said when it exited, which a real dump
+	// reports from Close and not from Read (`BKP-25`, `BKP-27`).
+	closeFail error
+
 	hold     chan struct{}
 	running  chan struct{}
 	announce sync.Once
@@ -281,8 +280,20 @@ func (f *fakeDumper) Dump(context.Context, backup.Resolution, backup.Request) (i
 		<-f.hold
 	}
 
-	return io.NopCloser(strings.NewReader(dumped)), nil
+	// A real dump reports the exit status of its sub-process from Close, not
+	// from Read: nothing is wrong until the tool has exited (`BKP-25`).
+	return closingWith{Reader: strings.NewReader(dumped), exit: f.closeFail}, nil
 }
+
+// closingWith is a dump that reads to its end and **then** says what the tool
+// said when it exited — exactly what internal/engine does. A nil exit is the
+// ordinary case.
+type closingWith struct {
+	io.Reader
+	exit error
+}
+
+func (c closingWith) Close() error { return c.exit }
 
 // started waits until the dump of the first job is under way, so the second job
 // really meets a held lock rather than racing it.
@@ -518,8 +529,8 @@ func TestTheManifestIsWrittenAfterTheArchive(t *testing.T) {
 		t.Errorf("written in the order %v, want the archive then its manifest", order)
 	}
 
-	if !result.Steps[6].Done || result.Steps[6].Deferred != "" {
-		t.Errorf("the manifest step is still declared absent: %+v", result.Steps[6])
+	if !result.Steps[6].Done {
+		t.Errorf("the manifest step did not run: %+v", result.Steps[6])
 	}
 }
 
@@ -641,9 +652,6 @@ func TestBKP06TheSevenStepsAllRunNow(t *testing.T) {
 		if !outcome.Done {
 			t.Errorf("the step %q did not run", outcome.Step)
 		}
-		if outcome.Deferred != "" {
-			t.Errorf("the step %q still says it is not in this release: %q", outcome.Step, outcome.Deferred)
-		}
 	}
 }
 
@@ -715,5 +723,128 @@ func TestTheManifestCarriesWhatTheVerificationConcluded(t *testing.T) {
 	}
 	if !recorder.seen.Steps[5].Done {
 		t.Error("the manifest was rendered before the verification step was marked")
+	}
+}
+
+// BKP-24 — **no step is ever declared absent**, not on the nominal path and not
+// when the job fails before reaching it.
+//
+// `A-20`: a job that died at the dump still printed `not in this release:
+// verification arrives at the lot 3`, in a release that **is** the lot 3. The
+// mention was seeded into every fresh result and only the happy path cleared
+// it. The test reads the outcomes the way an operator reads the screen — by the
+// words — so that it keeps its meaning whatever the field ends up being called.
+func TestBKP24NoStepSaysItIsNotInThisRelease(t *testing.T) {
+	shapes := []struct {
+		name   string
+		break_ func(*world)
+	}{
+		{"a job that runs through", func(*world) {}},
+		{"a job that fails at the dump", func(w *world) {
+			w.dumper.fail = errors.New("pg_dump exited with 1: connection refused")
+		}},
+		{"a job whose packing fails", func(w *world) {
+			w.packer.fail = errors.New("zstd gave up")
+		}},
+	}
+
+	for _, shape := range shapes {
+		t.Run(shape.name, func(t *testing.T) {
+			world := newWorld(t)
+			world.verifier = &fakeVerifier{}
+			shape.break_(world)
+
+			result, _ := world.service().Run(t.Context(), request())
+
+			rendered := fmt.Sprintf("%+v", result.Steps)
+			for _, forbidden := range []string{"not in this release", "arrives at the lot"} {
+				if strings.Contains(rendered, forbidden) {
+					t.Errorf("a step still says %q:\n%s", forbidden, rendered)
+				}
+			}
+		})
+	}
+}
+
+// BKP-25 — when the dump sub-process **dies while the pipeline reads it**, the
+// step reported is `dump`, not the one that happened to be reading.
+//
+// `A-21`: the journal wrote `step dump: done`, then `step compression: failed —
+// /usr/bin/pg_dump failed: exit status 1`. Both lines were true and together
+// they sent the operator to the wrong place. The exit status of a dump belongs
+// to the dump.
+func TestBKP25ADumpThatDiesIsReportedOnTheDumpStep(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = &fakeVerifier{}
+	journal := &recordingJournal{}
+	world.journal = journal
+	world.dumper.closeFail = errors.New("/usr/bin/pg_dump failed: exit status 1")
+
+	_, err := world.service().Run(t.Context(), request())
+	if err == nil {
+		t.Fatal("a job whose dump exited non-zero reported success")
+	}
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Errorf("the failure does not carry what the tool said:\n%v", err)
+	}
+
+	failed := failedStepOf(journal)
+	if failed != backup.StepDump {
+		t.Errorf("the journal blames %q, want %q:\n%s", failed, backup.StepDump, journal)
+	}
+}
+
+// BKP-27 — and the same holds **in stream mode**, where the dump is closed by a
+// deferred call whose error used to go nowhere.
+//
+// `A-30`, found while correcting `A-21`: a `pg_dump` that exits non-zero after
+// its pipe reached EOF left a truncated archive that koffr wrote, verified and
+// called a backup — `pg_restore --list` returns 0 on a truncated custom dump,
+// measured at the lot 3. `P4` says nothing is a backup until it is checked; a
+// check that cannot see a dead dump checks nothing.
+func TestBKP27AStreamedDumpThatDiesFailsTheJobToo(t *testing.T) {
+	world := newWorld(t)
+	world.staging = backup.Stream
+	world.verifier = &fakeVerifier{}
+	world.dumper.closeFail = errors.New("/usr/bin/pg_dump failed: exit status 1")
+
+	result, err := world.service().Run(t.Context(), request())
+	if err == nil {
+		t.Fatalf("a streamed job whose dump exited non-zero reported success: %+v", result)
+	}
+	if !strings.Contains(err.Error(), "exit status 1") {
+		t.Errorf("the failure does not carry what the tool said:\n%v", err)
+	}
+}
+
+// failedStepOf is the step the journal blames, or the empty step when it blames
+// none.
+func failedStepOf(journal *recordingJournal) backup.Step {
+	for _, entry := range journal.entries {
+		if entry.Failed != nil {
+			return entry.Step
+		}
+	}
+
+	return ""
+}
+
+// BKP-28 — an archive nobody was wired to check is **not** a backup.
+//
+// `P4`, and the hole that `A-20` was hiding: while the verification declared
+// itself absent, a service built without a verifier produced a job that
+// reported success with step 06 silently unmarked. With the mention gone, the
+// silence has to become a refusal.
+func TestBKP28AnArchiveNothingCheckedIsNotABackup(t *testing.T) {
+	world := newWorld(t)
+	world.verifier = nil
+
+	result, err := world.service().Run(t.Context(), request())
+	if !errors.Is(err, backup.ErrNotVerified) {
+		t.Fatalf("a job nothing verified reported %v, want ErrNotVerified:\n%+v", err, result)
+	}
+
+	if result.Steps[5].Done {
+		t.Error("the verification reported itself done, and nothing ran it")
 	}
 }
