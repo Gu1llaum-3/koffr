@@ -134,3 +134,23 @@ func plantedArchive(t *testing.T, on site, which string) catalog.Backup {
 		Locations: []catalog.Location{{Destination: "local", Path: path}},
 	}
 }
+
+// A-23 — and `koffr verify` renders the same zone, in the same format. Two
+// commands that print the same kind of thing two different ways make an
+// operator compare apples with pears.
+func TestVerifyRendersTheDeclaredTimezone(t *testing.T) {
+	site := newSite(t)
+	book := &fakeCatalog{backups: []catalog.Backup{plantedArchive(t, site, "sound")}}
+
+	out, errs, err := executeWith(t, book, site.args("verify", "01K5SOUND")...)
+	if err != nil {
+		t.Fatalf("verify: %v\n%s", err, errs)
+	}
+
+	if !strings.Contains(out, "+02:00") {
+		t.Errorf("the verification does not render Europe/Paris:\n%s", out)
+	}
+	if strings.Contains(out, "Z\n") {
+		t.Errorf("the verification still renders UTC:\n%s", out)
+	}
+}

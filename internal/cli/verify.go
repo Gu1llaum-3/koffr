@@ -77,7 +77,7 @@ func findArchive(ctx context.Context, book catalog.Catalog, id string) (catalog.
 // dump streamed past, at backup time, and saying so is part of the command —
 // an operator who believes everything was re-checked would be wrong.
 func verifyArchive(cmd *cobra.Command, book catalog.Catalog, archive catalog.Backup) error {
-	stores, err := storesFor(cmd, archive)
+	stores, in, err := storesFor(cmd, archive)
 	if err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func verifyArchive(cmd *cobra.Command, book catalog.Catalog, archive catalog.Bac
 	say(cmd, "structure  not replayed: the archive is encrypted and the private key that would\n"+
 		"           open it is not on this machine, by design. It was checked while the dump\n"+
 		"           streamed past, when the backup was taken (ADR-0017)\n")
-	say(cmd, "verified   %s\n", at.UTC().Format(time.RFC3339))
+	say(cmd, "verified   %s\n", moment(at, in))
 
 	return nil
 }
@@ -134,10 +134,12 @@ type heldArchive struct {
 // storesFor builds a store per destination the archive says it is on. A
 // destination the configuration no longer declares is reported, not ignored:
 // an archive nobody can reach is exactly what a verification is for.
-func storesFor(cmd *cobra.Command, archive catalog.Backup) ([]heldArchive, error) {
-	loaded, err := loadResolved(cmd)
+func storesFor(cmd *cobra.Command, archive catalog.Backup) ([]heldArchive, *time.Location, error) {
+	// Re-reading an archive needs no secret: the destination is a path, and the
+	// archive is encrypted for keys koffr does not hold (CFG-09, `N-9`).
+	loaded, err := loadShape(cmd)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	declared := map[string]bool{}
@@ -149,7 +151,7 @@ func storesFor(cmd *cobra.Command, archive catalog.Backup) ([]heldArchive, error
 
 	for _, location := range archive.Locations {
 		if !declared[location.Destination] {
-			return nil, fmt.Errorf("the archive %s is on %q, which the configuration no longer declares",
+			return nil, nil, fmt.Errorf("the archive %s is on %q, which the configuration no longer declares",
 				archive.ID, location.Destination)
 		}
 
@@ -157,7 +159,7 @@ func storesFor(cmd *cobra.Command, archive catalog.Backup) ([]heldArchive, error
 			ID: archive.Database, Destinations: []string{location.Destination},
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		held = append(held, heldArchive{
@@ -166,10 +168,10 @@ func storesFor(cmd *cobra.Command, archive catalog.Backup) ([]heldArchive, error
 	}
 
 	if len(held) == 0 {
-		return nil, fmt.Errorf("the catalogue says the archive %s is nowhere", archive.ID)
+		return nil, nil, fmt.Errorf("the catalogue says the archive %s is nowhere", archive.ID)
 	}
 
-	return held, nil
+	return held, loaded.Location(), nil
 }
 
 // checksumOf hashes what is really on the destination.

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -28,7 +29,7 @@ func newListCommand() *cobra.Command {
 				filter.Database = args[0]
 			}
 
-			lister, err := listerFor(cmd, book)
+			lister, in, err := listerFor(cmd, book)
 			if err != nil {
 				return err
 			}
@@ -38,7 +39,7 @@ func newListCommand() *cobra.Command {
 				return fmt.Errorf("list the archives: %w", err)
 			}
 
-			renderArchives(cmd, found)
+			renderArchives(cmd, found, in)
 
 			return nil
 		},
@@ -75,7 +76,7 @@ func verificationLabel(line catalog.Listed) string {
 	}
 }
 
-func renderArchives(cmd *cobra.Command, found []catalog.Listed) {
+func renderArchives(cmd *cobra.Command, found []catalog.Listed, in *time.Location) {
 	if len(found) == 0 {
 		say(cmd, "no archive, neither in the catalogue nor on the destinations\n")
 
@@ -90,7 +91,7 @@ func renderArchives(cmd *cobra.Command, found []catalog.Listed) {
 		_, _ = fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			archive.ID,
 			archive.Database,
-			archive.StartedAt.UTC().Format("2006-01-02 15:04Z"),
+			moment(archive.StartedAt, in),
 			humanBytes(archive.StoredBytes),
 			verificationLabel(archive),
 			destinationsOfArchive(archive),

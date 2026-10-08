@@ -62,11 +62,30 @@ type Run struct {
 	Recipients    []string
 }
 
+// FormatOf is the name the § 5.3 gives to the shape of a dump. It is **not**
+// the extension of the archive file: `pg_custom` is a format, `pgc` is a file
+// name, and letting one serve as both is `A-22` (`N-4`).
+func FormatOf(engine string) string {
+	if engine == "postgresql" {
+		return "pg_custom"
+	}
+
+	return "sql"
+}
+
 // ManifestOf assembles the manifest of a finished backup.
-func ManifestOf(backup Backup, database Database, run Run) Manifest {
+//
+// `in` is the zone the operator declared in `agent.timezone`. The base keeps
+// UTC and one representation; the manifest carries the local offset, which is
+// what the § 5.3 shows and what ADR-0006 says (`A-23`).
+func ManifestOf(backup Backup, database Database, run Run, in *time.Location) Manifest {
+	if in == nil {
+		in = time.UTC
+	}
+
 	manifest := Manifest{
 		BackupID: backup.ID, DatabaseID: backup.Database, Engine: database.Engine,
-		StartedAt:     backup.StartedAt.UTC().Format(time.RFC3339),
+		StartedAt:     backup.StartedAt.In(in).Format(time.RFC3339),
 		ServerVersion: run.ServerVersion, Tool: run.Tool,
 		Format: run.Format, Pipeline: run.Pipeline, Staging: run.Staging,
 		SizeRaw: backup.RawBytes, SizeStored: backup.StoredBytes,
@@ -84,7 +103,7 @@ func ManifestOf(backup Backup, database Database, run Run) Manifest {
 	}
 
 	if !backup.VerifiedAt.IsZero() && manifest.Verified.Checksum {
-		manifest.Verified.At = backup.VerifiedAt.UTC().Format(time.RFC3339)
+		manifest.Verified.At = backup.VerifiedAt.In(in).Format(time.RFC3339)
 	}
 
 	return manifest

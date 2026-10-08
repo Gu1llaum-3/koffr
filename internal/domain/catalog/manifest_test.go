@@ -20,7 +20,7 @@ import (
 func TestCAT02EverythingARestoreNeedsSurvivesInTheManifest(t *testing.T) {
 	original := aBackupEntry()
 
-	manifest := catalog.ManifestOf(original, aDatabase(), aRun())
+	manifest := catalog.ManifestOf(original, aDatabase(), aRun(), time.UTC)
 
 	// Through JSON, because that is how it reaches the destination.
 	written, err := json.Marshal(manifest)
@@ -71,7 +71,7 @@ func TestCAT02TheVerificationStateTravelsWithTheArchive(t *testing.T) {
 	unverified := aBackupEntry()
 	unverified.Verified = catalog.NotVerified
 
-	manifest := catalog.ManifestOf(unverified, aDatabase(), aRun())
+	manifest := catalog.ManifestOf(unverified, aDatabase(), aRun(), time.UTC)
 
 	if manifest.Verified.Checksum || manifest.Verified.Structure {
 		t.Error("an unverified archive claims a verification in its manifest")
@@ -81,7 +81,7 @@ func TestCAT02TheVerificationStateTravelsWithTheArchive(t *testing.T) {
 	verified.Verified = catalog.Structure
 	verified.VerifiedAt = when().Add(3 * time.Minute)
 
-	full := catalog.ManifestOf(verified, aDatabase(), aRun())
+	full := catalog.ManifestOf(verified, aDatabase(), aRun(), time.UTC)
 
 	if !full.Verified.Checksum || !full.Verified.Structure {
 		t.Error("a fully verified archive does not say so in its manifest")
@@ -171,7 +171,7 @@ func TestCAT03TheMomentsAreRFC3339UTC(t *testing.T) {
 	entry := aBackupEntry()
 	entry.StartedAt = time.Date(2026, 9, 23, 2, 0, 3, 0, time.FixedZone("CEST", 2*3600))
 
-	manifest := catalog.ManifestOf(entry, aDatabase(), aRun())
+	manifest := catalog.ManifestOf(entry, aDatabase(), aRun(), time.UTC)
 
 	if !strings.HasSuffix(manifest.StartedAt, "Z") {
 		t.Errorf("started_at is not UTC: %s", manifest.StartedAt)
@@ -201,7 +201,7 @@ func TestCAT04TheManifestCarriesNoCredential(t *testing.T) {
 	run := aRun()
 	run.Tool.Argv = append(run.Tool.Argv, "--dbname=boutique")
 
-	written, err := json.Marshal(catalog.ManifestOf(aBackupEntry(), database, run))
+	written, err := json.Marshal(catalog.ManifestOf(aBackupEntry(), database, run, time.UTC))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestCAT04AStolenRepositoryGivesUpMetadataOnly(t *testing.T) {
 func renderedManifest(t *testing.T, entry catalog.Backup) map[string]any {
 	t.Helper()
 
-	written, err := json.Marshal(catalog.ManifestOf(entry, aDatabase(), aRun()))
+	written, err := json.Marshal(catalog.ManifestOf(entry, aDatabase(), aRun(), time.UTC))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -253,4 +253,89 @@ func renderedManifest(t *testing.T, entry catalog.Backup) map[string]any {
 	}
 
 	return fields
+}
+
+// CAT-08 — the manifest carries the time in the **declared zone**, with its
+// offset, as the § 5.3 shows it: `"started_at": "2026-09-18T02:00:03+02:00"`.
+//
+// `A-23`: everything was written in UTC while `agent.timezone: Europe/Paris`
+// was declared, and ADR-0006 says the base keeps UTC while the display and the
+// manifest render the declared zone. A `Z` is not wrong, it is a different
+// zone — and an operator reading `11:58Z` has to convert in their head to find
+// the backup they took at two in the morning.
+func TestCAT08TheManifestRendersTheDeclaredZone(t *testing.T) {
+	entry := aBackupEntry()
+	entry.StartedAt = time.Date(2026, 9, 18, 0, 0, 3, 0, time.UTC)
+	entry.FinishedAt = entry.StartedAt.Add(3 * time.Minute)
+	entry.Verified, entry.VerifiedAt = catalog.Structure, entry.StartedAt.Add(3*time.Minute)
+
+	cases := []struct {
+		zone     string
+		started  string
+		verified string
+	}{
+		{"Europe/Paris", "2026-09-18T02:00:03+02:00", "2026-09-18T02:03:03+02:00"},
+		{"UTC", "2026-09-18T00:00:03Z", "2026-09-18T00:03:03Z"},
+		// A zone whose offset is not a whole number of hours: this is where a
+		// naive format breaks.
+		{"Asia/Kathmandu", "2026-09-18T05:45:03+05:45", "2026-09-18T05:48:03+05:45"},
+	}
+
+	for _, want := range cases {
+		t.Run(want.zone, func(t *testing.T) {
+			in, err := time.LoadLocation(want.zone)
+			if err != nil {
+				t.Fatalf("load %s: %v", want.zone, err)
+			}
+
+			manifest := catalog.ManifestOf(entry, aDatabase(), aRun(), in)
+
+			if manifest.StartedAt != want.started {
+				t.Errorf("started_at = %q, want %q", manifest.StartedAt, want.started)
+			}
+			if manifest.Verified.At != want.verified {
+				t.Errorf("verified.at = %q, want %q", manifest.Verified.At, want.verified)
+			}
+		})
+	}
+}
+
+// And a manifest written in a declared zone is still read back to the same
+// instant: the offset is information, not decoration.
+func TestAManifestReadsBackToTheSameInstant(t *testing.T) {
+	entry := aBackupEntry()
+	entry.StartedAt = time.Date(2026, 9, 18, 0, 0, 3, 0, time.UTC)
+
+	paris, err := time.LoadLocation("Europe/Paris")
+	if err != nil {
+		t.Fatalf("load Europe/Paris: %v", err)
+	}
+
+	rebuilt := catalog.ManifestOf(entry, aDatabase(), aRun(), paris).Backup()
+
+	if !rebuilt.StartedAt.Equal(entry.StartedAt) {
+		t.Errorf("read back %v, want the instant %v", rebuilt.StartedAt, entry.StartedAt)
+	}
+}
+
+// CAT-09 — the `format` field is the name the § 5.3 gives it, and **not** the
+// extension of the file.
+//
+// `A-22`: koffr wrote `"format": "pgc"` where the specification writes
+// `"pg_custom"`, because one value was serving as both. They are two different
+// things: one names the shape of the dump, the other names the file (`N-4`).
+func TestCAT09TheFormatIsNamedAsTheSpecificationNamesIt(t *testing.T) {
+	cases := map[string]string{
+		"postgresql": "pg_custom",
+		"mysql":      "sql",
+		"mariadb":    "sql",
+	}
+
+	for engine, want := range cases {
+		t.Run(engine, func(t *testing.T) {
+			if got := catalog.FormatOf(engine); got != want {
+				t.Errorf("FormatOf(%q) = %q, want %q — the § 5.3 names it that", engine, got, want)
+			}
+		})
+	}
 }

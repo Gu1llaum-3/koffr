@@ -182,22 +182,22 @@ Les deux bloquantes d'abord, et la plus simple des deux en premier : elle est le
 
 ### Vague 3 — L'heure est celle qu'on a déclarée (`lot3c/wave-3-declared-timezone`)
 
-- [ ] **3.1** Test d'abord `internal/domain/catalog/manifest_test.go` — **`CAT-08`**, `A-23` : avec
+- [x] **3.1** Test d'abord `internal/domain/catalog/manifest_test.go` — **`CAT-08`**, `A-23` : avec
       `Europe/Paris`, le manifeste écrit `started_at` et `verified.at` **avec le décalage local**,
       comme le § 5.3 le montre ; avec `UTC`, il écrit `Z`. Un fuseau à décalage non entier
       (`Asia/Kathmandu`, `+05:45`) est couvert : c'est là que les formats naïfs cassent.
-- [ ] **3.2** Test — **`CAT-09`**, `A-22` : le manifeste écrit `"format": "pg_custom"` pour
+- [x] **3.2** Test — **`CAT-09`**, `A-22` : le manifeste écrit `"format": "pg_custom"` pour
       PostgreSQL et `"sql"` pour MySQL et MariaDB, **quelle que soit** l'extension du fichier
       (`N-4`). Le test énumère les deux familles et vérifie que le nom de fichier, lui, ne change
       pas.
-- [ ] **3.3** Test `internal/cli/list_test.go` et `verify_test.go` — `koffr list` et `koffr verify`
+- [x] **3.3** Test `internal/cli/list_test.go` et `verify_test.go` — `koffr list` et `koffr verify`
       rendent l'heure de `agent.timezone`, dans **un seul** format. Le test pose un fuseau et lit la
       sortie que l'exploitant lit.
-- [ ] **3.4** `N-3` : le fuseau est résolu dans `cmd/koffr` et passé à `internal/cli` ; aucun
+- [x] **3.4** `N-3` : le fuseau est résolu dans `cmd/koffr` et passé à `internal/cli` ; aucun
       `time.Local` nulle part. Une garde de source, sur le modèle des quatre déjà en place, refuse
       `time.Local` hors `internal/config`.
-- [ ] **3.5** `internal/domain/catalog/rules.md` : `CAT-08`, `CAT-09`.
-- [ ] **3.6** Vague verte : `verify`, commit `fix(catalog): render time in the declared timezone, and name the format as the spec does`.
+- [x] **3.5** `internal/domain/catalog/rules.md` : `CAT-08`, `CAT-09`.
+- [x] **3.6** Vague verte : `verify`, commit `fix(catalog): render time in the declared timezone, and name the format as the spec does`.
 
 ### Vague 4 — Ce que le journal et le catalogue gardent (`lot3c/wave-4-journal-and-jobs`)
 
@@ -340,5 +340,26 @@ pointaient sur des chemins (`boutique/2026/09/a.pgc.zst.age`) que `F5.5` ne déc
 lecture du dépôt ne sait donc pas identifier. Elles ont été réécrites au chemin déterministe, et
 **les fichiers sont réellement déposés** : une fixture qui ne remplissait que le catalogue
 décrivait un dépôt ayant perdu ses fichiers.
+
+### Vague 3 — 2026-10-08
+
+**`N-3` amendée.** Le plan la faisait résoudre dans `cmd/koffr` et voyager jusqu'à `internal/cli`.
+Inutile : `config.Config.Location()` existe depuis le lot 0, et `internal/cli` tient déjà la
+configuration chargée. Le fuseau vient donc de là. `AR-05` est intacte — `internal/config` reste le
+seul à lire l'environnement — et il y a un câblage de moins. *Exclut* toujours : un `time.Local`
+implicite, et c'est ce que la garde tient.
+
+**La garde de `3.4` lit l'arbre syntaxique, pas le texte.** Première version écrite en `grep` : elle
+s'est signalée **elle-même**, non pas sur son code mais sur la **phrase de commentaire** qui explique
+ce qu'elle interdit. Deuxième essai, en écrivant les motifs par concaténation : même résultat, pour
+la même raison. Elle inspecte désormais les `SelectorExpr` nommés `Local`, et sa fixture violante
+est un fichier planté dans un répertoire temporaire — un contrôle qu'on n'a pas vu échouer ne prouve
+rien (`CLAUDE.md`).
+
+**Un seul format d'horodatage** : `2006-01-02 15:04 -07:00`, rendu par `moment()` dans
+`internal/cli/streams.go`, employé par `koffr list` et par `koffr verify`.
+
+**`storesFor` ne résout plus les secrets non plus** : relire une archive demande un chemin, et
+l'archive est chiffrée pour des clés que koffr ne détient pas. Même raison que `N-9`.
 
 Rempli par `/executer-plan` : échecs, décisions `N-n` ajoutées en route, écarts au plan, datés.

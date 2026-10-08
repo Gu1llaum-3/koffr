@@ -243,3 +243,25 @@ func TestListWorksWhenASecretCannotBeRead(t *testing.T) {
 		t.Errorf("the listing stopped at a password it did not need:\n%s", out)
 	}
 }
+
+// A-23 — the listing renders the **declared** zone, not UTC. ADR-0006 keeps one
+// representation in the base and converts at the display; the § 5.3 shows the
+// local offset. An operator reading `02:00Z` has to convert in their head to
+// find the backup they took at two in the morning, and gets it wrong twice a
+// year.
+func TestListRendersTheDeclaredTimezone(t *testing.T) {
+	site := newSite(t) // its configuration declares Europe/Paris
+	book := &fakeCatalog{backups: threeArchives()}
+	site.place(t, book.backups...)
+
+	out := listWith(t, book, site.args("list")...)
+
+	// 2026-09-25T02:00:03Z in Paris is 04:00 with a +02:00 offset.
+	line := lineOf(out, "01K5A")
+	if !strings.Contains(line, "04:00") || !strings.Contains(line, "+02:00") {
+		t.Errorf("the listing does not render Europe/Paris:\n%s", line)
+	}
+	if strings.Contains(line, "02:00Z") {
+		t.Errorf("the listing still renders UTC:\n%s", line)
+	}
+}
