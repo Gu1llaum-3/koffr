@@ -676,14 +676,15 @@ func TestTheVerificationHappensBetweenTheWriteAndTheManifest(t *testing.T) {
 	}
 }
 
-type fakeVerifier struct{ refuse string }
+type fakeVerifier struct{ refuse, detail string }
 
 func (f *fakeVerifier) Watch(backup.Resolution) (backup.StructureWatcher, error) {
-	return &fakeWatch{refuse: f.refuse}, nil
+	return &fakeWatch{refuse: f.refuse, detail: f.detail}, nil
 }
 
 type fakeWatch struct {
 	refuse string
+	detail string
 	seen   int
 }
 
@@ -694,7 +695,11 @@ func (f *fakeWatch) Conclude(context.Context) (bool, string) {
 		return false, f.refuse
 	}
 
-	return true, "TOC Entries: 24"
+	if f.detail != "" {
+		return true, f.detail
+	}
+
+	return true, "24 table-of-contents entries"
 }
 
 type recordingManifester struct{ seen backup.Result }

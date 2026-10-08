@@ -77,6 +77,35 @@ func (c *Catalog) RecordBackup(ctx context.Context, backup catalog.Backup) error
 		verified = catalog.NotVerified
 	}
 
+	// A backup is produced by a job, and the schema has carried that table
+	// since the lot 0 without ever receiving a row (`A-28`). The scheduler of
+	// the lot 5 and the alerts of the lot 6 read it; a history that starts
+	// empty starts wrong. The row goes in first: `backups.job_id` references
+	// it, and the foreign key is on.
+	if backup.Job != "" {
+		const insertJob = `
+INSERT INTO jobs (id, kind, database_id, status, started_at, finished_at, duration_ms,
+                  exit_code, created_at, updated_at)
+VALUES (?, 'backup', ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (id) DO UPDATE SET
+  status = excluded.status, finished_at = excluded.finished_at,
+  duration_ms = excluded.duration_ms, exit_code = excluded.exit_code,
+  updated_at = excluded.updated_at`
+
+		status, exit := "succeeded", 0
+		if backup.Verified == catalog.Failed {
+			status, exit = "failed", 1
+		}
+
+		if _, err := transaction.ExecContext(ctx, insertJob,
+			backup.Job, backup.Database, status,
+			stamp(backup.StartedAt), nullableStamp(backup.FinishedAt),
+			durationOf(backup), exit, stamp(backup.StartedAt), stamp(backup.StartedAt),
+		); err != nil {
+			return fmt.Errorf("record the job %s of %s: %w", backup.Job, backup.Database, err)
+		}
+	}
+
 	const insertBackup = `
 INSERT INTO backups (id, database_id, job_id, started_at, finished_at,
                      size_bytes, stored_bytes, sha256_raw, sha256_stored,
@@ -114,6 +143,17 @@ VALUES (?, ?, 'stored', ?, ?, ?, ?, ?)`
 	}
 
 	return nil
+}
+
+// durationOf is how long the job took, in milliseconds, or NULL when it never
+// finished. The schema already carries it on the job: nothing needs a column
+// of its own (ADR-0006 — integers, milliseconds, no floating point anywhere).
+func durationOf(backup catalog.Backup) any {
+	if backup.FinishedAt.IsZero() || backup.FinishedAt.Before(backup.StartedAt) {
+		return nil
+	}
+
+	return backup.FinishedAt.Sub(backup.StartedAt).Milliseconds()
 }
 
 // SetVerification records what a verification concluded.
