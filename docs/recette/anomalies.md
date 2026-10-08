@@ -151,3 +151,30 @@ deux décisions que le scénario lui réservait : les **métadonnées en clair**
 confirmées telles quelles — un manifeste lisible est ce qui rend le dépôt exploitable quand koffr a
 disparu — et `koffr list` gagne **la durée du job** et **la taille brute du dump**, à côté de la
 taille stockée. Corrections regroupées dans **`docs/plans/lot-3-corrections.md`**.
+
+## Rejeu du lot 3, après les corrections — 2026-10-08
+
+Les six parcours rejoués sur le même parc Docker, avec le binaire de `lot3c`. **Les douze anomalies
+`A-19` à `A-30` sont corrigées**, et le critère de sortie n° 6 du lot — « `koffr backup` ne déclare
+plus aucune étape absente » — est tenu, y compris sur le chemin d'échec, qui était le défaut.
+
+| Parcours | Résultat |
+| --- | --- |
+| 1 Le catalogue | ✅ `TOOK` et `DUMPED` ajoutées, heures en `+02:00`, empreintes de configuration en place |
+| 2 Vérifié ou non | ✅ **quatre états côte à côte**, distincts par les mots seuls : `yes, in full`, `no — never checked`, `FAILED`, `not in the catalogue` — ce dernier produit par le **vrai binaire du lot 2** |
+| 3 L'archive est relue | ✅ une archive saine passe ; un octet changé échoue avec les deux empreintes ; sur une archive jamais contrôlée, `koffr verify` dit que sa structure n'a **jamais** été vérifiée (`A-25`) |
+| 4 Un dump qui n'en est pas un | ✅ le journal écrit `step failed / step=dump` (`A-21`), **aucune** étape déclarée absente (`A-20`), et l'écran ne décrit plus d'archive là où rien n'a été écrit |
+| 5 Inventaire sans koffr | ✅ `jq` seul, horodatages avec décalage local, `format: pg_custom` ; et le contrôle `jq` + `sha256sum` **attrape l'archive corrompue**, ce que `check-inventory.sh` fait désormais aussi |
+| 6 Stockage compromis | ✅ six motifs cherchés — mot de passe, utilisateur, hôte, port, clé — **rien** dans tout le dépôt |
+
+**Décisions de la session**, prises par le propriétaire le 2026-10-08 après avoir vu l'écran :
+
+1. **`koffr list` garde ses 123 colonnes.** `TOOK` et `DUMPED` restent : voir une sauvegarde
+   s'allonger avant qu'elle ne déborde de sa fenêtre vaut la largeur.
+2. **`not in the catalogue` se lit sans explication** et reste tel quel. La colonne répond
+   « cette archive est-elle vérifiée ? », et la réponse honnête, pour une archive que koffr n'a
+   jamais vue, est qu'il n'en sait rien.
+
+**Ce que le rejeu laisse dans le fichier de journal** : les occurrences de `koffr_backup` et de
+« not in this release » qui y restent datent des exécutions **d'avant la correction** et du binaire
+du **lot 2**, qui dit vrai en le disant. Le binaire corrigé n'en écrit aucune.
